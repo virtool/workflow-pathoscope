@@ -12,12 +12,12 @@ PACKAGES = find_packages(exclude="tests")
 
 
 INSTALL_REQUIRES = [
-    "virtool-workflow==0.1.1"
+    "virtool-workflow==0.1.2"
 ]
 
 setup(
     name="vt-workflow-pathoscope",
-    version="0.1.2",
+    version="0.1.0",
     description="A workflow for detecting viruses in high-throughput sequencing (HTS) libraries.",
     long_description=Path("README.md").read_text(),
     long_description_content_type="text/markdown",
