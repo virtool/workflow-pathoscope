@@ -7,14 +7,12 @@ import shutil
 import numpy as np
 from typing import Tuple
 
+
 def rescale_samscore(u: dict, nu: dict, max_score: float, min_score: float) -> Tuple[dict, dict]:
     """
 
-    :param u:
-    :param nu:
-    :param max_score:
-    :param min_score:
-    :return:
+    Calculates a scaling factor based on the max and min scores (from build matrix function) then replaces p_scores in u
+    and nu with scaled value. (add more)
     """
 
     if min_score < 0:
@@ -43,7 +41,6 @@ def rescale_samscore(u: dict, nu: dict, max_score: float, min_score: float) -> T
     return u, nu
 
 
-
 def find_sam_align_score(fields: list) -> float:
     """
     Find the Bowtie2 alignment score for the given split line (``fields``).
@@ -52,10 +49,8 @@ def find_sam_align_score(fields: list) -> float:
     work for other aligners.
 
     :param fields: a line that has been split on "\t"
-    :type fields: list
 
     :return: the alignment score
-    :rtype: float
 
     """
     read_length = float(len(fields[9]))
@@ -68,12 +63,20 @@ def find_sam_align_score(fields: list) -> float:
 
     raise ValueError("Could not find alignment score")
 
-def build_matrix(vta_path, p_score_cutoff = 0.01):
+
+def build_matrix(vta_path, p_score_cutoff = 0.01) -> Tuple[dict, dict, list, list]:
+    """
+    Gets read_id, ref_id, and p_score from file in vta_path. These values are then used to create dictionaries u and nu.
+    U then rescaled and trimmed down to only contain the ref_index and p_score and the p_scosre within nu is normalized
+    before the returning the final u and nu.
+
+    The refs and reads are lists containing the ref and read i.d.'s from the file in vta_path.   
+    """
     u = {}
     nu = {}
     refs = []
     reads = []
-    p_score_list= []
+    p_score_list = []
     h_read_id = {}
     h_ref_id = {}
     ref_count = 0
@@ -96,7 +99,6 @@ def build_matrix(vta_path, p_score_cutoff = 0.01):
                     ref_count += 1
 
                 read_index = h_read_id.get(read_id, -1)
-
 
                 if read_index == -1:
                     # hold on this new read. first, wrap previous read profile and see if any previous read has a same
@@ -124,13 +126,12 @@ def build_matrix(vta_path, p_score_cutoff = 0.01):
                     if p_score > nu[read_index][3]:
                         nu[read_index][3] = p_score
         min_score = min(0, np.amin(p_score_list))
-        max_score =max(0, np.amax(p_score_list))
+        max_score = max(0, np.amax(p_score_list))
 
     u, nu = rescale_samscore(u, nu, max_score, min_score)
     for read_index in u:
         # keep ref_index and score only
         u[read_index] = [u[read_index][0][0], u[read_index][1][0]]
-
 
     for read_index in nu:
         p_score_sum = sum(p_score_list)
@@ -139,8 +140,8 @@ def build_matrix(vta_path, p_score_cutoff = 0.01):
 
     return u, nu, refs, reads
 
-def em(u: dict, nu: dict, genomes: list, max_iter: int, epsilon: float, pi_prior: float, theta_prior: float) -> Tuple[list, list, list, dict]:
 
+def em(u: dict, nu: dict, genomes: list, max_iter: int, epsilon: float, pi_prior: float, theta_prior: float) -> Tuple[list, list, list, dict]:
 
     genome_count = len(genomes)
     pi = [1. / genome_count] * genome_count
@@ -257,7 +258,7 @@ def find_updated_score(nu: dict, read_index: int, ref_index: int) -> float:
     return updated_pscore
 
 
-def compute_best_hit(u: dict, nu: dict, refs: list, reads:list) -> Tuple[list, list, list, list]:
+def compute_best_hit(u: dict, nu: dict, refs: list, reads: list) -> Tuple[list, list, list, list]:
 
     ref_count = len(refs)
 
@@ -294,9 +295,15 @@ def compute_best_hit(u: dict, nu: dict, refs: list, reads:list) -> Tuple[list, l
     ref_count = len(refs)
     read_count = len(reads)
 
-    best_hit = [best_hit_reads[k] / read_count for k in range(ref_count)]
-    level_1 = [level_1_reads[k] / read_count for k in range(ref_count)]
-    level_2 = [level_2_reads[k] / read_count for k in range(ref_count)]
+    for k in range(ref_count):
+        best_hit = [best_hit_reads[k] / read_count]
+        level_1 = [level_1_reads[k] / read_count]
+        level_2 = [level_2_reads[k] / read_count]
+
+
+    #best_hit = [best_hit_reads[k] / read_count for k in range(ref_count)]
+    #level_1 = [level_1_reads[k] / read_count for k in range(ref_count)]
+    #level_2 = [level_2_reads[k] / read_count for k in range(ref_count)]
 
     print ("best hit reads", type(best_hit_reads), "best hit", type(best_hit), "level1", type(level_1), "level2", type(level_2))
 
