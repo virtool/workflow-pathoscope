@@ -5,7 +5,19 @@ import math
 import os
 import shutil
 import numpy as np
-from typing import Tuple
+from typing import Tuple, List, Dict
+from dataclasses import dataclass
+
+
+@dataclass
+class ReadIndex:
+    ref_index: List[int]
+    p_score_list: List[float]
+    p_score: float
+
+
+def convert_read_index(u: dict) -> Dict[str, ReadIndex]:
+    return { key: ReadIndex(ref_index=value[0][1], p_score_list=value[1][0], p_score=value[2]) for key, value in u.items() }
 
 
 def rescale_samscore(u: dict, nu: dict, max_score: float, min_score: float) -> Tuple[dict, dict]:
@@ -13,18 +25,16 @@ def rescale_samscore(u: dict, nu: dict, max_score: float, min_score: float) -> T
     Calculates a scaling factor based on the max and min scores (from build matrix function) then replaces p_scores in u
     and nu with scaled value. (add more)
     """
+    scaling_factor = 100.0 / (max_score - min_score) if min_score < 0 else 100.0 / max_score
 
-    if min_score < 0:
-        scaling_factor = 100.0 / max_score - min_score
-    else:
-        scaling_factor = 100.0 / max_score
+    u_matrix = convert_read_index(u)
 
-    for read_index in u:
+    for read in u_matrix.values():
+        #u[read_index] = [[ref_index], [p_score], p_score, p_score]
         if min_score < 0:
-            u[read_index][1][0] = u[read_index][1][0] - min_score
+            read.p_score -= min_score
 
-        u[read_index][1][0] = math.exp(u[read_index][1][0] * scaling_factor)
-        u[read_index][3] = u[read_index][1][0]
+        read.p_score = math.exp(read.p_score * scaling_factor)
 
     for read_index in nu:
         nu[read_index][3] = 0.0
@@ -43,14 +53,10 @@ def rescale_samscore(u: dict, nu: dict, max_score: float, min_score: float) -> T
 def find_sam_align_score(fields: list) -> float:
     """
     Find the Bowtie2 alignment score for the given split line (``fields``).
-
     Searches the SAM fields for the ``AS:i`` substring and extracts the Bowtie2-specific alignment score. This will not
     work for other aligners.
-
     :param fields: a line that has been split on "\t"
-
     :return: the alignment score
-
     """
     read_length = float(len(fields[9]))
 
@@ -63,10 +69,10 @@ def find_sam_align_score(fields: list) -> float:
     raise ValueError("Could not find alignment score")
 
 
-def build_matrix(vta_path, p_score_cutoff = 0.01) -> Tuple[dict, dict, list, list]:
+def build_matrix(vta_path, p_score_cutoff=0.01) -> Tuple[dict, dict, list, list]:
     """
     Gets read_id, ref_id, and p_score from file in vta_path. These values are then used to create dictionaries u and nu.
-    U then rescaled and trimmed down to only contain the ref_index and p_score and the p_scosre within nu is normalized
+    U then rescaled and trimmed down to only contain the ref_index and p_score and the p_score within nu is normalized
     before the returning the final u and nu.
     The refs and reads are lists containing the ref and read i.d.'s from the file in vta_path.
     """
@@ -75,41 +81,32 @@ def build_matrix(vta_path, p_score_cutoff = 0.01) -> Tuple[dict, dict, list, lis
     refs = []
     reads = []
     p_score_list = []
-    h_read_id = {}
+    read_indexes = {}
     h_ref_id = {}
     ref_count = 0
     read_count = 0
 
-    with open(vta_path, "r") as handle:
-        for line in handle:
+    with open(vta_path, "r") as vta_output:
+        for line in vta_output:
             read_id, ref_id, _, _, p_score = line.rstrip().split(",")
-            p_score = int(float(p_score))
+            p_score = float(p_score)
             p_score_list.append(p_score)
 
             if p_score >= p_score_cutoff:
 
-                ref_index = h_ref_id.get(ref_id, -1)
-
-                if ref_index == -1:
+                if ref_id not in h_ref_id:
                     ref_index = ref_count
                     h_ref_id[ref_id] = ref_index
                     refs.append(ref_id)
                     ref_count += 1
 
-                read_index = h_read_id.get(read_id, -1)
-
-                if read_index == -1:
-                    # hold on this new read. first, wrap previous read profile and see if any previous read has a same
-                    # profile with that!
-                    read_index = read_count
-                    h_read_id[read_id] = read_index
+                if read_id not in read_indexes:
+                    read_indexes[read_id] = read_count
                     reads.append(read_id)
+                    u[read_count] = ReadIndex(ref_index=[ref_index], p_score=p_score, p_score_list=[p_score])
                     read_count += 1
-                    u[read_index] = [[ref_index], [p_score], p_score, p_score]
                 else:
                     if read_index in u:
-                        #myList = ['a', 'b', 'c', 'd']
-                        #>> > for c, element in enumerate(myList):
                         if ref_index == u[read_index][0]:
                             continue
                         nu[read_index] = u[read_index]
@@ -123,8 +120,10 @@ def build_matrix(vta_path, p_score_cutoff = 0.01) -> Tuple[dict, dict, list, lis
 
                     if p_score > nu[read_index][3]:
                         nu[read_index][3] = p_score
-        min_score = min(0, np.amin(p_score_list))
-        max_score = max(0, np.amax(p_score_list))
+
+    min_score = min(0, np.amin(p_score_list))
+    max_score = max(0, np.amax(p_score_list))
+
 
     u, nu = rescale_samscore(u, nu, max_score, min_score)
     for read_index in u:
@@ -137,7 +136,6 @@ def build_matrix(vta_path, p_score_cutoff = 0.01) -> Tuple[dict, dict, list, lis
         nu[read_index][2] = [k / p_score_sum for k in nu[read_index][1]]
 
     return u, nu, refs, reads
-
 
 def em(u: dict, nu: dict, genomes: list, max_iter: int, epsilon: float, pi_prior: float, theta_prior: float) -> Tuple[list, list, list, dict]:
 
@@ -165,12 +163,10 @@ def em(u: dict, nu: dict, genomes: list, max_iter: int, epsilon: float, pi_prior
     nu_total = sum(nu_weights)
 
     prior_weight = max(max_u_weights, max_nu_weights)
-    # EM iterations
     for i in range(max_iter):
         pi_old = pi
         theta_sum = [0 for _ in genomes]
 
-        # E Step
         for j in nu:
             z = nu[j]
             # A set of any genome mapping with j
@@ -230,7 +226,6 @@ def em(u: dict, nu: dict, genomes: list, max_iter: int, epsilon: float, pi_prior
         if cutoff <= epsilon or len(nu) == 1:
             break
 
-    #retuns a tuple of list, list, list, dict
     return init_pi, pi, theta, nu
 
 
@@ -294,11 +289,6 @@ def compute_best_hit(u: dict, nu: dict, refs: list, reads: list) -> Tuple[list, 
         level_1 = [level_1_reads[k] / read_count]
         level_2 = [level_2_reads[k] / read_count]
 
-
-    #best_hit = [best_hit_reads[k] / read_count for k in range(ref_count)]
-    #level_1 = [level_1_reads[k] / read_count for k in range(ref_count)]
-    #level_2 = [level_2_reads[k] / read_count for k in range(ref_count)]
-
     print ("best hit reads", type(best_hit_reads), "best hit", type(best_hit), "level1", type(level_1), "level2", type(level_2))
 
     return best_hit_reads, best_hit, level_1, level_2
@@ -335,7 +325,6 @@ def write_report(path: str, pi:list, refs: list, read_count: int, init_pi: list,
         if i == (len(x10) - 1):
             i += 1
 
-    # Changing the column order here
     tmp = zip(
         x2[:i],
         x1[:i],
@@ -428,8 +417,6 @@ def rewrite_align(u: dict, nu: dict, vta_path: str, p_score_cutoff: float, path:
                 read_index = read_id_dict.get(read_id, -1)
 
                 if read_index == -1:
-                    # hold on this new read
-                    # first, wrap previous read profile and see if any previous read has a same profile with that!
                     read_index = read_count
                     read_id_dict[read_id] = read_index
                     read.append(read_id)
@@ -446,7 +433,7 @@ def rewrite_align(u: dict, nu: dict, vta_path: str, p_score_cutoff: float, path:
 
 
 def calculate_coverage(vta_path: str, ref_lengths: dict) -> dict:
-    #print(type(vta_path),type(ref_lengths))
+
     coverage_dict = dict()
     pos_length_list = list()
 
@@ -468,7 +455,6 @@ def calculate_coverage(vta_path: str, ref_lengths: dict) -> dict:
                 coverage_dict[ref_id][i] += 1
             except IndexError:
                 pass
-    #print (type(coverage_dict))
 
     return coverage_dict
 
