@@ -30,7 +30,6 @@ def rescale_samscore(u: dict, nu: dict, max_score: float, min_score: float) -> T
     u_matrix = convert_read_index(u)
 
     for read in u_matrix.values():
-        #u[read_index] = [[ref_index], [p_score], p_score, p_score]
         if min_score < 0:
             read.p_score -= min_score
 
@@ -124,18 +123,17 @@ def build_matrix(vta_path, p_score_cutoff=0.01) -> Tuple[dict, dict, list, list]
     min_score = min(0, np.amin(p_score_list))
     max_score = max(0, np.amax(p_score_list))
 
-
     u, nu = rescale_samscore(u, nu, max_score, min_score)
+
     for read_index in u:
-        # keep ref_index and score only
         u[read_index] = [u[read_index][0][0], u[read_index][1][0]]
 
     for read_index in nu:
         p_score_sum = sum(p_score_list)
-        # Normalize p_score.
         nu[read_index][2] = [k / p_score_sum for k in nu[read_index][1]]
 
     return u, nu, refs, reads
+
 
 def em(u: dict, nu: dict, genomes: list, max_iter: int, epsilon: float, pi_prior: float, theta_prior: float) -> Tuple[list, list, list, dict]:
 
@@ -198,7 +196,6 @@ def em(u: dict, nu: dict, genomes: list, max_iter: int, epsilon: float, pi_prior
                 # Keep weighted running tally for theta
                 theta_sum[ind[k]] += x_norm[k] * nu[j][3]
 
-
         # M step
         pi_sum = [theta_sum[k] + pi_sum_0[k] for k in range(len(theta_sum))]
         pip = pi_prior * prior_weight
@@ -242,7 +239,6 @@ def find_updated_score(nu: dict, read_index: int, ref_index: int) -> float:
         p_score_sum += p_score
 
     updated_pscore = nu[read_index][2][index]
-
 
     return updated_pscore
 
