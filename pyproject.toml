@@ -1,0 +1,16 @@
+[tool.poetry]
+name = "virtool-workflow-pathoscope"
+version = "0.1.0"
+description = "Virtool's Pathoscope workflow."
+authors = ["Blake Smith <blakeinvictoria@gmail.com>"]
+license = "MIT"
+
+[tool.poetry.dependencies]
+python = "^3.8"
+virtool-workflow = {git = "https://github.com/virtool/virtool-workflow"}
+
+[tool.poetry.dev-dependencies]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
