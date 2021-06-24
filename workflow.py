@@ -91,3 +91,23 @@ async def map_default_isolates(
     )
 
     return f"Mapped reats to OTUs {intermediate.to_otus}"
+
+
+@step
+async def write_isolate_fasta(
+    intermediate,
+    index: Index,
+    proc: int,
+    isolate_path: Path,
+):
+    fasta_path = isolate_path/"isolate_index.fa",
+    intermediate.lengths = await index.write_isolate_fasta(
+        [index.get_otu_id_by_sequence_id(id_) for id_ in intermediate.to_otus],
+        fasta_path,
+        proc
+    )
+
+    intermediate.isolate_fasta_path = fasta_path
+
+    return "Produced isolate fasta file."
+
