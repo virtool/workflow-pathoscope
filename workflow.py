@@ -5,6 +5,7 @@ from typing import List
 import aiofiles
 from virtool_workflow import fixture, step
 from virtool_workflow.analysis.indexes import Index
+from virtool_workflow.analysis.subtractions import Subtraction
 from virtool_workflow.analysis.reads import Reads
 from virtool_workflow.execution.run_subprocess import RunSubprocess
 
@@ -12,6 +13,11 @@ from virtool_workflow.execution.run_subprocess import RunSubprocess
 @fixture
 def index(indexes: List[Index]):
     return indexes[0]
+
+
+@fixture
+def subtraction(subtractions: List[Subtraction]):
+    return subtractions[0]
 
 
 @fixture
@@ -199,3 +205,10 @@ async def map_isolates(
         )
 
     intermediate.isolate_vta_path = vta_path
+
+
+@step
+async def map_subtractions(subtractions):
+    """
+    Map the reads to the subtraction host for the sample.
+    """
