@@ -134,3 +134,68 @@ async def build_isolate_index(
 
     return "Built isolate index."
 
+
+@step
+async def map_isolates(
+    pathoscope,
+    intermediate,
+    reads: Reads,
+    isolate_path: Path,
+    run_subprocess: RunSubprocess,
+    proc: int,
+    p_score_cutoff: float,
+    index: Index,
+):
+    """Map the sample reads to the newly built index."""
+    vta_path = isolate_path/"to_isolates.vta"
+    async with aiofiles.open(vta_path, "w") as f:
+        async def stdout_handler(line):
+            line = line.decode()
+
+            if line[0] == "@" or line == "#":
+                return
+
+            fields = line.split("\t")
+
+            # Bitwise FLAG - 0x4 : segment unmapped
+            if int(fields[1]) & 0x4 == 4:
+                return
+
+            ref_id = fields[2]
+
+            if ref_id == "*":
+                return
+
+            p_score = pathoscope.find_sam_align_score(fields)
+
+            # Skip if the p_score does not meet the minimum cutoff.
+            if p_score < p_score_cutoff:
+                return
+
+            await f.write(",".join([
+                fields[0],  # read_id
+                ref_id,
+                fields[3],  # pos
+                str(len(fields[9])),  # length
+                str(p_score)
+            ]) + "\n")
+
+        await run_subprocess(
+            [
+                "bowtie2",
+                "-p", str(proc),
+                "--no-unal",
+                "--local",
+                "--score-min", "L,20,1.0",
+                "-N", "0",
+                "-L", "15",
+                "-k", "100",
+                "--al", isolate_path/"mapped.fastq",
+                "-x", isolate_path/"isolates",
+                "-U", f"{reads.left},{reads.right}"
+            ],
+            wait=True,
+            stdout_handler=stdout_handler,
+        )
+
+    intermediate.isolate_vta_path = vta_path
