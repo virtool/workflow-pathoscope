@@ -7,7 +7,7 @@ license = "MIT"
 
 [tool.poetry.dependencies]
 python = "^3.8"
-virtool-workflow = {git = "https://github.com/virtool/virtool-workflow"}
+virtool-workflow = {git = "https://github.com/virtool/virtool-workflow", rev = "develop"}
 
 [tool.poetry.dev-dependencies]
 
