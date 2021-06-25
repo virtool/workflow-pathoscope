@@ -3,6 +3,11 @@ import pytest
 from pathlib import Path
 
 
+pytest_plugins = [
+    "tests.path_fixtures"
+]
+
+
 @pytest.fixture
 def test_files_path():
     return Path(__file__).parent / "test_files"
