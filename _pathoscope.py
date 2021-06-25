@@ -490,3 +490,45 @@ async def subtract(target_path, output_path, host_scores):
 def replace_after_subtraction(src, dest):
     os.remove(dest)
     shutil.move(src, dest)
+
+
+def run(vta_path, reassigned_path, p_score_cutoff):
+    u, nu, refs, reads = build_matrix(vta_path)
+    (
+        best_hit_initial_reads,
+        best_hit_initial,
+        level_1_initial,
+        level_2_initial,
+    ) = compute_best_hit(u, nu, refs, reads)
+
+    init_pi, pi, _, nu = em(u, nu, refs, 50, 1e-7, 0, 0)
+
+    (
+        best_hit_final_reads,
+        best_hit_final,
+        level_1_final,
+        level_2_final
+    ) = compute_best_hit(u, nu, refs, reads)
+
+    rewrite_align(
+        u=u,
+        nu=nu,
+        vta_path=vta_path,
+        p_scope_cuttoff=p_score_cutoff,
+        path=reassigned_path
+    )
+
+    return (
+        best_hit_initial_reads,
+        best_hit_initial,
+        level_1_initial,
+        level_2_initial,
+        best_hit_final_reads,
+        best_hit_final,
+        level_1_final,
+        level_2_final,
+        init_pi,
+        pi,
+        refs,
+        reads
+    )
