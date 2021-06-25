@@ -293,4 +293,94 @@ async def subtract_mapping(
 
 @step
 async def run_pathoscope(
+    pathoscope,
+    intermediate,
+    results,
+    run_in_executor,
+    isolate_path: Path,
+    index: Index,
 ):
+    """
+    Run the Pathoscope reassignment algorithm.
+
+    Tab-separated output is written to `pathoscope.tsv`.
+
+    The results are also parsed and saved to `intermediate.coverage`.
+    """
+    reassigned_path = isolate_path / "reassigned.vta"
+    (
+        best_hit_initial_reads,
+        best_hit_initial,
+        level_1_initial,
+        level_2_initial,
+        best_hit_final_reads,
+        best_hit_final,
+        level_1_final,
+        level_2_final,
+        init_pi,
+        pi,
+        refs,
+        reads
+    ) = await run_in_executor(
+        pathoscope.run_patho,
+        intermediate.isolate_vta_path,
+        reassigned_path,
+    )
+
+    read_count = len(reads)
+
+    report_path = isolate_path/"report.tsv"
+    report = await run_in_executor(
+        pathoscope.write_report,
+        report_path,
+        pi,
+        refs,
+        read_count,
+        init_pi,
+        best_hit_initial,
+        best_hit_initial_reads,
+        best_hit_final,
+        best_hit_final_reads,
+        level_1_initial,
+        level_2_initial,
+        level_1_final,
+        level_2_final
+    )
+
+    intermediate.coverage = run_in_executor(
+        pathoscope.calculate_coverage,
+        reassigned_path,
+        intermediate.lengths
+    )
+
+    hits = []
+
+    for sequence_id, hit in report.items():
+        otu_id = index.get_otu_id_by_sequence_id(sequence_id)
+
+        hit["id"] = sequence_id
+
+        # Attach "otu" (id, version) to the hit.
+        hit["otu"] = {
+            "id": otu_id,
+            "version": index.manifest[otu_id]
+        }
+
+        # Get the coverage for the sequence.
+        hit_coverage = intermediate.coverage[sequence_id]
+
+        # Calculate coverage and attach to hit.
+        hit["coverage"] = round(1 - hit_coverage.count(0) / len(hit_coverage), 3)
+
+        # Calculate depth and attach to hit.
+        hit["depth"] = round(sum(hit_coverage) / len(hit_coverage))
+
+        hits.append(hit)
+
+
+
+    results.update({
+        "ready": True,
+        "read_count": read_count,
+        "results": hits
+    })
