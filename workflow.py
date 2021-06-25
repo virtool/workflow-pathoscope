@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from typing import List
 
 import aiofiles
+import shlex
 from virtool_workflow import fixture, step
 from virtool_workflow.analysis.indexes import Index
 from virtool_workflow.analysis.subtractions import Subtraction
@@ -154,6 +155,8 @@ async def map_isolates(
 ):
     """Map the sample reads to the newly built index."""
     vta_path = isolate_path/"to_isolates.vta"
+    mapped_fastq_path = isolate_path/"mapped.fastq"
+    reference_path = isolate_path/"isolates"
     async with aiofiles.open(vta_path, "w") as f:
         async def stdout_handler(line):
             line = line.decode()
@@ -196,8 +199,8 @@ async def map_isolates(
                 "-N", "0",
                 "-L", "15",
                 "-k", "100",
-                "--al", isolate_path/"mapped.fastq",
-                "-x", isolate_path/"isolates",
+                "--al", mapped_fastq_path,
+                "-x", reference_path,
                 "-U", f"{reads.left},{reads.right}"
             ],
             wait=True,
@@ -205,10 +208,89 @@ async def map_isolates(
         )
 
     intermediate.isolate_vta_path = vta_path
+    intermediate.isolate_mapped_fastq_path = mapped_fastq_path
+    intermediate.isolate_bt2_path = reference_path
+
+    return "Mapped sample reads to isolate index."
 
 
 @step
-async def map_subtractions(subtractions):
+async def map_subtractions(
+    pathoscope,
+    intermediate,
+    subtraction: Subtraction,
+    run_subprocess: RunSubprocess,
+    proc: int,
+):
     """
     Map the reads to the subtraction host for the sample.
     """
+
+    to_subtraction = {}
+
+    async def stdout_handler(line):
+        line = line.decode()
+
+        if line[0] == "@" or line == "#":
+            return
+
+        fields = line.split("\t")
+
+        # Bitwise FLAG - 0x4 : segment unmapped
+        if int(fields[1]) & 0x4 == 4:
+            return
+
+        # No ref_id assigned.
+        if fields[2] == "*":
+            return
+
+        to_subtraction[fields[0]] = pathoscope.find_sam_align_score(fields)
+
+    await run_subprocess(
+        [
+            "bowtie2",
+            "--local",
+            "-N", "0",
+            "-p", str(proc),
+            "-x", shlex.quote(str(subtraction.path)),
+            "-U", intermediate.isolate_mapped_fastq_path
+        ],
+        wait=True,
+        stdout_handler=stdout_handler,
+    )
+
+    intermediate.to_subtraction = to_subtraction
+
+    return "Mapped reads to the subtraction host."
+
+
+@step
+async def subtract_mapping(
+    pathoscope,
+    intermediate,
+    results,
+    run_in_executor,
+    isolate_path: Path,
+):
+    output_path = isolate_path/"subtracted.vta"
+
+    subtracted_count = await pathoscope.subtract(
+        intermediate.isolate_vta_path,
+        output_path,
+        intermediate.to_subtraction
+    )
+
+    await run_in_executor(
+        pathoscope.replace_after_subtraction,
+        output_path,
+        intermediate.isolate_vta_path
+    )
+
+    results["subtracted_count"] = subtracted_count
+
+    return "Performed subtraction on subtraction mapped reads."
+
+
+@step
+async def run_pathoscope(
+):
