@@ -292,7 +292,7 @@ async def subtract_mapping(
 
 
 @step
-async def run_pathoscope(
+async def reassignment(
     pathoscope,
     intermediate,
     results,
@@ -370,14 +370,13 @@ async def run_pathoscope(
         hit_coverage = intermediate.coverage[sequence_id]
 
         # Calculate coverage and attach to hit.
-        hit["coverage"] = round(1 - hit_coverage.count(0) / len(hit_coverage), 3)
+        hit["coverage"] = round(
+            1 - hit_coverage.count(0) / len(hit_coverage), 3)
 
         # Calculate depth and attach to hit.
         hit["depth"] = round(sum(hit_coverage) / len(hit_coverage))
 
         hits.append(hit)
-
-
 
     results.update({
         "ready": True,
