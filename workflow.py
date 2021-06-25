@@ -299,6 +299,7 @@ async def reassignment(
     run_in_executor,
     isolate_path: Path,
     index: Index,
+    p_score_cutoff: float,
 ):
     """
     Run the Pathoscope reassignment algorithm.
@@ -322,9 +323,10 @@ async def reassignment(
         refs,
         reads
     ) = await run_in_executor(
-        pathoscope.run_patho,
+        pathoscope.run,
         intermediate.isolate_vta_path,
         reassigned_path,
+        p_score_cutoff,
     )
 
     read_count = len(reads)
@@ -379,7 +381,10 @@ async def reassignment(
         hits.append(hit)
 
     results.update({
-        "ready": True,
         "read_count": read_count,
         "results": hits
     })
+
+    intermediate.reassigned_path = reassigned_path
+
+    return "Pathoscope run finished."
