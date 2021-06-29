@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 pytest_plugins = [
-    "tests.path_fixtures"
+    "tests.path_fixtures",
 ]
 
 
