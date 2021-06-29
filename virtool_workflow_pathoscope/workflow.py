@@ -51,6 +51,7 @@ async def map_default_isolates(
         proc: int,
         p_score_cutoff: float,
         run_subprocess: RunSubprocess,
+        logger,
 ):
     """
     Map reads to the main OTU reference.
@@ -60,6 +61,7 @@ async def map_default_isolates(
 
     async def stdout_handler(line: str):
         line = line.decode()
+        logger.debug(line)
 
         if line[0] == "#" or line[0] == "@":
             return
@@ -85,12 +87,12 @@ async def map_default_isolates(
         [
             "bowtie2",
             "-p", str(proc),
-            "--no-unal"
+            "--no-unal",
             "--local",
             "--score-min", "L,20,1.0",
             "-N", "0",
             "-L", "15",
-            "-x", index.path,
+            "-x", str(index.bowtie_path),
             "-U", f"{reads.left},{reads.right}",
         ],
         wait=True,
@@ -199,8 +201,8 @@ async def map_isolates(
                 "-N", "0",
                 "-L", "15",
                 "-k", "100",
-                "--al", mapped_fastq_path,
-                "-x", reference_path,
+                "--al", str(mapped_fastq_path),
+                "-x", str(reference_path),
                 "-U", f"{reads.left},{reads.right}"
             ],
             wait=True,
