@@ -350,7 +350,7 @@ async def reassignment(
         level_2_final
     )
 
-    intermediate.coverage = run_in_executor(
+    intermediate.coverage = await run_in_executor(
         pathoscope.calculate_coverage,
         reassigned_path,
         intermediate.lengths
@@ -372,6 +372,8 @@ async def reassignment(
         # Get the coverage for the sequence.
         hit_coverage = intermediate.coverage[sequence_id]
 
+        hit["allign"] = hit_coverage
+
         # Calculate coverage and attach to hit.
         hit["coverage"] = round(
             1 - hit_coverage.count(0) / len(hit_coverage), 3)
@@ -387,5 +389,6 @@ async def reassignment(
     })
 
     intermediate.reassigned_path = reassigned_path
+    intermediate.report_path = report_path
 
     return "Pathoscope run finished."
