@@ -372,7 +372,7 @@ async def reassignment(
         # Get the coverage for the sequence.
         hit_coverage = intermediate.coverage[sequence_id]
 
-        hit["allign"] = hit_coverage
+        hit["align"] = hit_coverage
 
         # Calculate coverage and attach to hit.
         hit["coverage"] = round(

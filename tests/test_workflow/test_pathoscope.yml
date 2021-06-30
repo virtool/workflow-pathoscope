@@ -1,6 +1,6 @@
 read_count: 20276
 results:
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -18678,7 +18678,7 @@ results:
   otu:
     id: foobar
     version: 10
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -27441,7 +27441,7 @@ results:
   otu:
     id: foobar
     version: 10
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -29285,7 +29285,7 @@ results:
   otu:
     id: reo
     version: 5
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -32471,7 +32471,7 @@ results:
   otu:
     id: reo
     version: 5
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -34730,7 +34730,7 @@ results:
   otu:
     id: reo
     version: 5
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -38450,7 +38450,7 @@ results:
   otu:
     id: reo
     version: 5
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -39935,7 +39935,7 @@ results:
   otu:
     id: reo
     version: 5
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -40919,7 +40919,7 @@ results:
   otu:
     id: reo
     version: 5
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -43355,7 +43355,7 @@ results:
   otu:
     id: reo
     version: 5
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -61293,7 +61293,7 @@ results:
   otu:
     id: foobar
     version: 10
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -68876,7 +68876,7 @@ results:
   otu:
     id: foobar
     version: 10
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -76237,7 +76237,7 @@ results:
   otu:
     id: foobar
     version: 10
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -83639,7 +83639,7 @@ results:
   otu:
     id: foobar
     version: 10
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -91646,7 +91646,7 @@ results:
   otu:
     id: foobar
     version: 10
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -98528,7 +98528,7 @@ results:
   otu:
     id: baz
     version: 6
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -101921,7 +101921,7 @@ results:
   otu:
     id: foobar
     version: 10
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -109215,7 +109215,7 @@ results:
   otu:
     id: foobar
     version: 10
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -123064,7 +123064,7 @@ results:
   otu:
     id: foobar
     version: 10
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -126857,7 +126857,7 @@ results:
   otu:
     id: foobar
     version: 10
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -129005,7 +129005,7 @@ results:
   otu:
     id: foobar
     version: 10
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -145958,7 +145958,7 @@ results:
   otu:
     id: foobar
     version: 10
-- allign:
+- align:
   - 2
   - 2
   - 2
@@ -146282,7 +146282,7 @@ results:
   otu:
     id: baz
     version: 6
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -150054,7 +150054,7 @@ results:
   otu:
     id: foobar
     version: 10
-- allign:
+- align:
   - 0
   - 0
   - 0
@@ -152666,7 +152666,7 @@ results:
   otu:
     id: foobar
     version: 10
-- allign:
+- align:
   - 0
   - 0
   - 0

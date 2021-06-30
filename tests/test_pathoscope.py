@@ -100,13 +100,13 @@ def test_rewrite_align(tmp_path):
     assert not filecmp.cmp(vta_path, rewrite_path)
 
 
-def test_calculate_coverage(tmp_path, test_sam_path):
+def test_calculate_coverage(tmp_path, sam_path):
     ref_lengths = dict()
 
     shutil.copy(VTA_PATH, tmp_path)
     vta_path = tmp_path / "test.vta"
 
-    with open(test_sam_path, "r") as handle:
+    with open(sam_path, "r") as handle:
         for line in handle:
             if line[0:3] == "@SQ":
                 ref_id = None
