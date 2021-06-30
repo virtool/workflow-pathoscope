@@ -6,7 +6,7 @@ from pathlib import Path
 
 from virtool_workflow_pathoscope import _pathoscope
 
-BASE_PATH = Path.cwd() / "tests" / "test_files" / "pathoscope"
+BASE_PATH = Path.cwd() / "tests" / "test_files"
 BEST_HIT_PATH = Path.cwd() / BASE_PATH / "best_hit"
 EM_PATH = BASE_PATH / "em"
 MATRIX_PATH = BASE_PATH / "ps_matrix"
