@@ -254,7 +254,7 @@ async def map_subtractions(
             "-N", "0",
             "-p", str(proc),
             "-x", shlex.quote(str(subtraction.path)),
-            "-U", intermediate.isolate_mapped_fastq_path
+            "-U", str(intermediate.isolate_mapped_fastq_path)
         ],
         wait=True,
         stdout_handler=stdout_handler,

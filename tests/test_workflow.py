@@ -156,3 +156,25 @@ async def test_map_isolates(tmpdir, scope, indexes_path, snapshot):
     with vta_path.open("r") as f:
         data = sorted([line.rstrip() for line in f])
         snapshot.assert_match(data, "isolates")
+
+
+async def test_map_subtraction(tmpdir, scope, fastq_path, host_path, snapshot):
+    temp_subtraction_path = Path(tmpdir) / "subtraction"
+    temp_subtraction_path.mkdir()
+
+    mapped_fastq_path = temp_subtraction_path/"mapped.fastq"
+
+    shutil.copyfile(fastq_path, mapped_fastq_path)
+
+    scope["subtraction"] = SimpleNamespace(path=host_path)
+
+    scope["intermediate"] = SimpleNamespace(
+        isolate_mapped_fastq_path=mapped_fastq_path,
+    )
+
+    map_subtractions = await scope.bind(workflow.map_subtractions)
+    await map_subtractions()
+
+    lines = sorted(scope["intermediate"].to_subtraction)
+
+    snapshot.assert_match(lines)
