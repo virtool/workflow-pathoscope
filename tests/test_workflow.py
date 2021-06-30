@@ -21,7 +21,44 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.fixture
-async def scope(tmpdir, fastq_path, otu_resource, indexes_path):
+def sequence_otu_map():
+    return {
+        "NC_016509": "foobar",
+        "NC_001948": "foobar",
+        "13TF149_Reovirus_TF1_Seg06": "reo",
+        "13TF149_Reovirus_TF1_Seg03": "reo",
+        "13TF149_Reovirus_TF1_Seg07": "reo",
+        "13TF149_Reovirus_TF1_Seg02": "reo",
+        "13TF149_Reovirus_TF1_Seg08": "reo",
+        "13TF149_Reovirus_TF1_Seg11": "reo",
+        "13TF149_Reovirus_TF1_Seg04": "reo",
+        "NC_004667": "foobar",
+        "NC_003347": "foobar",
+        "NC_003615": "foobar",
+        "NC_003689": "foobar",
+        "NC_011552": "foobar",
+        "KX109927": "baz",
+        "NC_008039": "foobar",
+        "NC_015782": "foobar",
+        "NC_016416": "foobar",
+        "NC_003623": "foobar",
+        "NC_008038": "foobar",
+        "NC_001836": "foobar",
+        "JQ080272": "baz",
+        "NC_017938": "foobar",
+        "NC_008037": "foobar",
+        "NC_007448": "foobar"
+    }
+
+
+@pytest.fixture
+async def scope(
+    tmpdir,
+    fastq_path,
+    otu_resource,
+    indexes_path,
+    sequence_otu_map,
+):
     """Fixture scope for pathoscope workflow tests"""
     async with FixtureScope(analysis_fixtures) as _scope:
         _scope.fixture(fixtures.pathoscope)
@@ -70,7 +107,7 @@ async def scope(tmpdir, fastq_path, otu_resource, indexes_path):
                 "reo": 5,
                 "baz": 6,
             },
-            _sequence_otu_map=otu_resource[0],
+            _sequence_otu_map=sequence_otu_map,
             reference=None,
             path=temp_index_path,
             ready=True,
@@ -196,3 +233,37 @@ async def test_subtract_mapping(tmpdir, vta_path, to_subtraction_path, scope):
     await subtract_mapping()
 
     assert scope["results"]["subtracted_count"] == 4
+
+
+async def test_pathoscope(
+    tmpdir,
+    scope,
+    snapshot,
+    vta_path,
+    ref_lengths_path,
+):
+    temp_vta_path = Path(tmpdir) / "to_isolates.vta"
+    with ref_lengths_path.open("r") as f:
+        scope["intermediate"] = SimpleNamespace(
+            lengths=json.load(f),
+            isolate_vta_path=temp_vta_path,
+        )
+
+    shutil.copyfile(vta_path, temp_vta_path)
+
+    scope["isolate_path"] = Path(tmpdir)
+
+    reassignment = await scope.bind(workflow.reassignment)
+    await reassignment()
+
+    intermediate = scope["intermediate"]
+
+    with intermediate.reassigned_path.open("r") as f:
+        data = sorted([line.rstrip() for line in f])
+        snapshot.assert_match(data)
+
+    with intermediate.report_path.open("r") as f:
+        data = sorted([line.rstrip() for line in f])
+        snapshot.assert_match(data)
+
+    snapshot.assert_match(scope["results"])

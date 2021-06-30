@@ -514,7 +514,7 @@ def run(vta_path, reassigned_path, p_score_cutoff):
         u=u,
         nu=nu,
         vta_path=vta_path,
-        p_scope_cuttoff=p_score_cutoff,
+        p_score_cutoff=p_score_cutoff,
         path=reassigned_path
     )
 
