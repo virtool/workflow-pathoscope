@@ -26,6 +26,7 @@ async def scope(tmpdir, fastq_path, otu_resource, indexes_path):
     async with FixtureScope(analysis_fixtures) as _scope:
         _scope.fixture(fixtures.pathoscope)
         _scope.fixture(workflow.p_score_cutoff)
+        _scope.fixture(workflow.intermediate)
 
         # Create a mock sample fixture
         _scope["sample"] = Sample(
@@ -132,3 +133,26 @@ async def test_map_default_isolates(tmpdir, fastq_path, scope: FixtureScope):
         "NC_004006"
     ])
 
+
+async def test_map_isolates(tmpdir, scope, indexes_path, snapshot):
+    temp_indexes_path = Path(tmpdir)/"index"
+    temp_indexes_path.mkdir()
+
+    for path in indexes_path.iterdir():
+        if "reference" in path.name:
+            logger.info(path)
+            shutil.copyfile(
+                path,
+                temp_indexes_path/path.name.replace("reference", "isolates")
+            )
+
+    scope["isolate_path"] = temp_indexes_path
+
+    map_isolates = await scope.bind(workflow.map_isolates)
+    await map_isolates()
+
+    vta_path = scope["intermediate"].isolate_vta_path
+
+    with vta_path.open("r") as f:
+        data = sorted([line.rstrip() for line in f])
+        snapshot.assert_match(data, "isolates")
