@@ -26,7 +26,6 @@ def intermediate():
     """A namespace for storing intermediate values."""
     return SimpleNamespace(
         to_otus=set(),
-        lengths=None,
     )
 
 
