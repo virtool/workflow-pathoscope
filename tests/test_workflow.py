@@ -238,9 +238,10 @@ async def test_subtract_mapping(tmpdir, vta_path, to_subtraction_path, scope):
 async def test_pathoscope(
     tmpdir,
     scope,
-    snapshot,
     vta_path,
     ref_lengths_path,
+    snapshot,
+    data_regression,
 ):
     temp_vta_path = Path(tmpdir) / "to_isolates.vta"
     with ref_lengths_path.open("r") as f:
@@ -260,10 +261,10 @@ async def test_pathoscope(
 
     with intermediate.reassigned_path.open("r") as f:
         data = sorted([line.rstrip() for line in f])
-        snapshot.assert_match(data)
+        snapshot.assert_match(data, 1)
 
     with intermediate.report_path.open("r") as f:
         data = sorted([line.rstrip() for line in f])
-        snapshot.assert_match(data)
+        snapshot.assert_match(data, 2)
 
-    snapshot.assert_match(scope["results"])
+    data_regression.check(scope["results"])
