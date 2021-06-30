@@ -14,7 +14,7 @@ def test_files_path():
 
 
 @pytest.fixture
-def test_sam_path(test_files_path, tmp_path):
+def sam_path(test_files_path, tmp_path):
     src_path = test_files_path / "test_al.sam"
     dst_path = tmp_path / "test_sam_file"
     dst_path.mkdir()
