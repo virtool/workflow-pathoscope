@@ -178,3 +178,21 @@ async def test_map_subtraction(tmpdir, scope, fastq_path, host_path, snapshot):
     lines = sorted(scope["intermediate"].to_subtraction)
 
     snapshot.assert_match(lines)
+
+
+async def test_subtract_mapping(tmpdir, vta_path, to_subtraction_path, scope):
+    temp_vta_path = Path(tmpdir)/"to_isolates.vta"
+    shutil.copyfile(vta_path, temp_vta_path)
+
+    with to_subtraction_path.open("r") as f:
+        scope["intermediate"] = SimpleNamespace(
+            to_subtraction=json.load(f),
+            isolate_vta_path=temp_vta_path,
+        )
+
+    scope["isolate_path"] = Path(tmpdir)
+
+    subtract_mapping = await scope.bind(workflow.subtract_mapping)
+    await subtract_mapping()
+
+    assert scope["results"]["subtracted_count"] == 4
