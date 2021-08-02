@@ -94,7 +94,6 @@ async def map_default_isolates(
             "-x", str(index.bowtie_path),
             "-U", f"{reads.left},{reads.right}",
         ],
-        wait=True,
         stdout_handler=stdout_handler
     )
 
@@ -204,7 +203,6 @@ async def map_isolates(
                 "-x", str(reference_path),
                 "-U", f"{reads.left},{reads.right}"
             ],
-            wait=True,
             stdout_handler=stdout_handler,
         )
 
@@ -256,7 +254,6 @@ async def map_subtractions(
             "-x", shlex.quote(str(subtraction.path)),
             "-U", str(intermediate.isolate_mapped_fastq_path)
         ],
-        wait=True,
         stdout_handler=stdout_handler,
     )
 
@@ -385,7 +382,7 @@ async def reassignment(
 
     results.update({
         "read_count": read_count,
-        "results": hits
+        "hits": hits
     })
 
     intermediate.reassigned_path = reassigned_path
