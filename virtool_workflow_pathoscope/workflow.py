@@ -136,7 +136,6 @@ async def build_isolate_index(
             intermediate.isolate_fasta_path,
             isolate_path/"isolates",
         ],
-        wait=True
     )
 
     return "Built isolate index."
