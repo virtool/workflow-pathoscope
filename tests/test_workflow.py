@@ -167,7 +167,6 @@ async def test_map_isolates(
     scope,
     indexes_path,
     snapshot,
-    file_regression,
 ):
     temp_indexes_path = Path(tmpdir)/"index"
     temp_indexes_path.mkdir()
@@ -190,7 +189,6 @@ async def test_map_isolates(
     with vta_path.open("r") as f:
         data = sorted([line.rstrip() for line in f])
         snapshot.assert_match(data, "isolates")
-        file_regression.check(f.read())
 
 
 async def test_map_subtraction(
@@ -199,7 +197,6 @@ async def test_map_subtraction(
     fastq_path,
     host_path,
     snapshot,
-    data_regression,
 ):
     temp_subtraction_path = Path(tmpdir) / "subtraction"
     temp_subtraction_path.mkdir()
@@ -220,7 +217,6 @@ async def test_map_subtraction(
     lines = sorted(scope["intermediate"].to_subtraction)
 
     snapshot.assert_match(lines)
-    data_regression.check(lines)
 
 
 async def test_subtract_mapping(tmpdir, vta_path, to_subtraction_path, scope):
@@ -247,8 +243,6 @@ async def test_pathoscope(
     vta_path,
     ref_lengths_path,
     snapshot,
-    data_regression,
-    file_regression,
 ):
     temp_vta_path = Path(tmpdir) / "to_isolates.vta"
     with ref_lengths_path.open("r") as f:
@@ -269,11 +263,9 @@ async def test_pathoscope(
     with intermediate.reassigned_path.open("r") as f:
         data = sorted([line.rstrip() for line in f])
         snapshot.assert_match(data, 1)
-        file_regression.check(f.read())
 
     with intermediate.report_path.open("r") as f:
         data = sorted([line.rstrip() for line in f])
         snapshot.assert_match(data, 2)
-        file_regression.check(f.read())
 
-    data_regression.check(scope["results"])
+    snapshot.assert_match(scope["results"], 3)
