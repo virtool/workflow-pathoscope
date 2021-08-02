@@ -1,5 +1,4 @@
-read_count: 20276
-results:
+hits:
 - align:
   - 0
   - 0
@@ -169179,3 +169178,4 @@ results:
   otu:
     id: foobar
     version: 10
+read_count: 20276

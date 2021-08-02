@@ -11,8 +11,10 @@ virtool-workflow = {git = "https://github.com/virtool/virtool-workflow", rev = "
 
 [tool.poetry.dev-dependencies]
 pytest-aiohttp = "^0.3.0"
+pytest-asyncio = "^0.15.1"
 snapshottest = "0.5.1"
 pytest-regressions = "^2.2.0"
+pytest-instafail = "^0.4.2"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

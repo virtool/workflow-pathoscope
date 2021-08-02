@@ -1,3 +1,7 @@
 .idea
 __pycache__
-**/__pycache__
+__pycache__/*
+virtool_workflow_pathoscope/__pycache__
+virtool_workflow_pathoscope/__pycache__/*
+*.pyc
+

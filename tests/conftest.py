@@ -5,6 +5,7 @@ from pathlib import Path
 
 pytest_plugins = [
     "tests.path_fixtures",
+    "virtool_workflow.testing.fixtures",
 ]
 
 

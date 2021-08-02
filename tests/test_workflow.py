@@ -1,21 +1,17 @@
-import logging
 import json
-import os
+import logging
 import shutil
-
-import pytest
-
-from virtool_workflow_pathoscope import workflow, fixtures
-from virtool_workflow import FixtureScope
-from virtool_workflow.analysis.reads import Reads
-from virtool_workflow.analysis.library_types import LibraryType
-from virtool_workflow.analysis.indexes import Index
-from virtool_workflow.analysis.subtractions import Subtraction
-from virtool_workflow.data_model.samples import Sample
 from pathlib import Path
 from types import SimpleNamespace
-from virtool_workflow.runtime.fixtures import analysis as analysis_fixtures
 
+import pytest
+from fixtures import FixtureScope
+from virtool_workflow.analysis.indexes import Index
+from virtool_workflow.analysis.library_types import LibraryType
+from virtool_workflow.analysis.reads import Reads
+from virtool_workflow.data_model.samples import Sample
+
+from virtool_workflow_pathoscope import fixtures, workflow
 
 logger = logging.getLogger(__name__)
 
@@ -60,13 +56,9 @@ async def scope(
     sequence_otu_map,
 ):
     """Fixture scope for pathoscope workflow tests"""
-    async with FixtureScope(analysis_fixtures) as _scope:
-        _scope.fixture(fixtures.pathoscope)
-        _scope.fixture(workflow.p_score_cutoff)
-        _scope.fixture(workflow.intermediate)
-
+    async with FixtureScope() as scope_:
         # Create a mock sample fixture
-        _scope["sample"] = Sample(
+        scope_["sample"] = Sample(
             id="foobar",
             name="foobar",
             paired=False,
@@ -86,21 +78,20 @@ async def scope(
 
         shutil.copyfile(fastq_path, temp_read_path/"reads_1.fq.gz")
 
-        _scope["reads"] = Reads(
-            sample=_scope["sample"],
+        scope_["reads"] = Reads(
+            sample=scope_["sample"],
             quality={},
             path=temp_read_path
         )
 
-        run_in_executor = await _scope.get_or_instantiate("run_in_executor")
-        run_subprocess = await _scope.get_or_instantiate("_run_subprocess")
-        _scope["run_subprocess"] = run_subprocess
+        run_in_executor = await scope_.get_or_instantiate("run_in_executor")
+        run_subprocess = await scope_.get_or_instantiate("run_subprocess")
 
         # Create a mock index fixture
         temp_index_path = Path(tmpdir) / "indexes"
         shutil.copytree(indexes_path, temp_index_path)
 
-        _scope["index"] = Index(
+        scope_["index"] = Index(
             id="index3",
             manifest={
                 "foobar": 10,
@@ -115,9 +106,9 @@ async def scope(
             _run_subprocess=run_subprocess,
         )
 
-        _scope["logger"] = logger
+        scope_["logger"] = logger
 
-        yield _scope
+        yield scope_
 
 
 @pytest.fixture
