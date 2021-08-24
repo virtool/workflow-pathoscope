@@ -11,7 +11,7 @@ from virtool_workflow.analysis.library_types import LibraryType
 from virtool_workflow.analysis.reads import Reads
 from virtool_workflow.data_model.samples import Sample
 
-from virtool_workflow_pathoscope import fixtures, workflow
+import workflow
 
 logger = logging.getLogger(__name__)
 
