@@ -4,7 +4,7 @@ import pickle
 import filecmp
 from pathlib import Path
 
-from virtool_workflow_pathoscope import _pathoscope
+import pathoscope
 
 BASE_PATH = Path.cwd() / "tests" / "test_files"
 BEST_HIT_PATH = Path.cwd() / BASE_PATH / "best_hit"
@@ -35,7 +35,7 @@ def expected_scores():
 
 
 def test_find_sam_align_score(sam_line, expected_scores):
-    assert _pathoscope.find_sam_align_score(sam_line) == expected_scores["".join(sam_line)]
+    assert pathoscope.find_sam_align_score(sam_line) == expected_scores["".join(sam_line)]
 
 
 def test_build_matrix(tmp_path):
@@ -45,7 +45,7 @@ def test_build_matrix(tmp_path):
     with open(MATRIX_PATH, "rb") as handle:
         expected = pickle.load(handle)
 
-    actual = _pathoscope.build_matrix(vta_path, 0.01)
+    actual = pathoscope.build_matrix(vta_path, 0.01)
 
     assert expected[0] == actual[0]
     assert expected[1] == actual[1]
@@ -61,9 +61,9 @@ def test_em(tmp_path, theta_prior, pi_prior, epsilon, max_iter, expected_em):
     shutil.copy(VTA_PATH, tmp_path)
     vta_path = tmp_path / "test.vta"
 
-    u, nu, refs, _ = _pathoscope.build_matrix(vta_path, 0.01)
+    u, nu, refs, _ = pathoscope.build_matrix(vta_path, 0.01)
 
-    result = _pathoscope.em(u, nu, refs, max_iter, epsilon, pi_prior, theta_prior)
+    result = pathoscope.em(u, nu, refs, max_iter, epsilon, pi_prior, theta_prior)
 
     file_string = "_".join([str(i) for i in ["em", theta_prior, pi_prior, epsilon, max_iter]])
 
@@ -82,7 +82,7 @@ def test_compute_best_hit():
         matrix_tuple = pickle.load(handle)
 
     with open(BEST_HIT_PATH, "rb") as handle:
-        assert pickle.load(handle) == _pathoscope.compute_best_hit(*matrix_tuple)
+        assert pickle.load(handle) == pathoscope.compute_best_hit(*matrix_tuple)
 
 
 def test_rewrite_align(tmp_path):
@@ -94,7 +94,7 @@ def test_rewrite_align(tmp_path):
 
     rewrite_path = tmp_path / "rewrite.vta"
 
-    _pathoscope.rewrite_align(u, nu, vta_path, 0.01, rewrite_path)
+    pathoscope.rewrite_align(u, nu, vta_path, 0.01, rewrite_path)
 
     assert filecmp.cmp(UPDATED_VTA_PATH, rewrite_path)
     assert not filecmp.cmp(vta_path, rewrite_path)
@@ -123,21 +123,21 @@ def test_calculate_coverage(tmp_path, sam_path):
 
                 ref_lengths[ref_id] = length
 
-    _pathoscope.calculate_coverage(vta_path, ref_lengths)
+    pathoscope.calculate_coverage(vta_path, ref_lengths)
 
 
 def test_write_report(tmp_path):
     shutil.copy(VTA_PATH, tmp_path)
     vta_path = tmp_path / "test.vta"
 
-    u, nu, refs, reads = _pathoscope.build_matrix(vta_path, 0.01)
+    u, nu, refs, reads = pathoscope.build_matrix(vta_path, 0.01)
 
     with open(BEST_HIT_PATH, "rb") as handle:
         best_hit_initial_reads, best_hit_initial, level_1_initial, level_2_initial = pickle.load(handle)
 
-    init_pi, pi, _, nu = _pathoscope.em(u, nu, refs, 30, 1e-7, 0, 0)
+    init_pi, pi, _, nu = pathoscope.em(u, nu, refs, 30, 1e-7, 0, 0)
 
-    best_hit_final_reads, best_hit_final, level_1_final, level_2_final = _pathoscope.compute_best_hit(
+    best_hit_final_reads, best_hit_final, level_1_final, level_2_final = pathoscope.compute_best_hit(
         u,
         nu,
         refs,
@@ -146,7 +146,7 @@ def test_write_report(tmp_path):
 
     report_path = tmp_path / "report.tsv"
 
-    _pathoscope.write_report(
+    pathoscope.write_report(
         report_path,
         pi,
         refs,
