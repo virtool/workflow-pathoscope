@@ -1,0 +1,29 @@
+name: Release virtool/pathoscope on DockerHub
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The docker image tag
+        required: true
+        default: 'latest'
+
+jobs:
+  dockerhub:
+    name: Push virtool/pathoscope to DockerHub
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Login
+        uses: docker/login-action@v1
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and Push
+        uses: docker/build-push-action@v2
+        with:
+          push: true
+          tags: virtool/pathoscope:${{ github.event.inputs.tag }}
