@@ -2,13 +2,12 @@
 name = "virtool-workflow-pathoscope"
 version = "0.1.0"
 description = "Virtool's Pathoscope workflow."
-authors = ["Blake Smith <blakeinvictoria@gmail.com>"]
+authors = ["Blake Smith <blakeinvictoria@gmail.com>", "Ian Boyes <igboyes@gmail.com>"]
 license = "MIT"
 
 [tool.poetry.dependencies]
 python = "^3.8"
 virtool-workflow = "^0.6.0"
-
 
 [tool.poetry.dev-dependencies]
 pytest-aiohttp = "^0.3.0"
@@ -17,6 +16,9 @@ pytest-datafiles = "^2.0"
 pytest-instafail = "^0.4.2"
 pytest-regressions = "^2.2.0"
 snapshottest = "0.5.1"
+
+[tool.pytest.ini_options]
+markers = ["datafiles: load datafiles"]
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
