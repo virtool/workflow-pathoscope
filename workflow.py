@@ -1,18 +1,77 @@
 import shlex
 from pathlib import Path
 from types import SimpleNamespace
+from typing import List
 
 import aiofiles
-from virtool_workflow import step
+from virtool_workflow import fixture, step
 from virtool_workflow.analysis.indexes import Index
 from virtool_workflow.analysis.reads import Reads
 from virtool_workflow.analysis.subtractions import Subtraction
 from virtool_workflow.execution.run_subprocess import RunSubprocess
 
+from pathoscope import find_sam_align_score, replace_after_subtraction, subtract, run as run_pathoscope, write_report, \
+    calculate_coverage
+
+
+@fixture
+def index(indexes: List[Index]):
+    return indexes[0]
+
+
+@fixture
+def subtraction(subtractions: List[Subtraction]):
+    return subtractions[0]
+
+
+@fixture
+def intermediate():
+    """A namespace for storing intermediate values."""
+    return SimpleNamespace(
+        to_otus=set(),
+    )
+
+
+@fixture
+def isolate_path(work_path: Path):
+    path = work_path / "isolates"
+    path.mkdir()
+
+    return path
+
+
+@fixture
+def isolate_fasta_path(isolate_path: Path):
+    return isolate_path / "isolate_index.fa"
+
+
+@fixture
+def isolate_fastq_path(isolate_path: Path):
+    return isolate_path / "isolate_mapped.fq"
+
+
+@fixture
+def isolate_index_path(isolate_path: Path):
+    return isolate_path / "isolates"
+
+
+@fixture
+def isolate_vta_path(work_path: Path):
+    return isolate_path / "to_isolates.vta"
+
+
+@fixture
+def subtraction_vta_path(work_path: Path):
+    return work_path / "subtracted.vta"
+
+
+@fixture
+def p_score_cutoff():
+    return 0.01
+
 
 @step
 async def map_default_isolates(
-        pathoscope,
         intermediate: SimpleNamespace,
         reads: Reads,
         index: Index,
@@ -27,8 +86,10 @@ async def map_default_isolates(
     This will be used to identify canididate OTUs.
     """
 
-    async def stdout_handler(line: str):
+    async def stdout_handler(line: bytes):
         logger.debug(line)
+
+        line = line.decode()
 
         if line[0] == "#" or line[0] == "@":
             return
@@ -45,7 +106,7 @@ async def map_default_isolates(
             return
 
         # Skip if the p_score does not meet the minimum cutoff.
-        if pathoscope.find_sam_align_score(fields) < p_score_cutoff:
+        if find_sam_align_score(fields) < p_score_cutoff:
             return
 
         intermediate.to_otus.add(ref_id)
@@ -106,8 +167,6 @@ async def build_isolate_index(
 
 @step
 async def map_isolates(
-        pathoscope,
-        intermediate,
         reads: Reads,
         isolate_fastq_path: Path,
         isolate_index_path: Path,
@@ -117,8 +176,9 @@ async def map_isolates(
         p_score_cutoff: float
 ):
     """Map the sample reads to the newly built index."""
+    count = 0
     async with aiofiles.open(isolate_vta_path, "w") as f:
-        async def stdout_handler(line):
+        async def stdout_handler(line: bytes):
             line = line.decode()
 
             if line[0] == "@" or line == "#":
@@ -128,17 +188,20 @@ async def map_isolates(
 
             # Bitwise FLAG - 0x4 : segment unmapped
             if int(fields[1]) & 0x4 == 4:
+                print("Bitwise")
                 return
 
             ref_id = fields[2]
 
             if ref_id == "*":
+                print("Asterisk")
                 return
 
-            p_score = pathoscope.find_sam_align_score(fields)
+            p_score = find_sam_align_score(fields)
 
             # Skip if the p_score does not meet the minimum cutoff.
             if p_score < p_score_cutoff:
+                print("P")
                 return
 
             await f.write(",".join([
@@ -170,7 +233,6 @@ async def map_isolates(
 
 @step
 async def map_subtractions(
-        pathoscope,
         intermediate: SimpleNamespace,
         subtraction: Subtraction,
         run_subprocess: RunSubprocess,
@@ -181,7 +243,7 @@ async def map_subtractions(
     """
     to_subtraction = {}
 
-    async def stdout_handler(line):
+    async def stdout_handler(line: bytes):
         line = line.decode()
 
         if line[0] == "@" or line == "#":
@@ -197,14 +259,14 @@ async def map_subtractions(
         if fields[2] == "*":
             return
 
-        to_subtraction[fields[0]] = pathoscope.find_sam_align_score(fields)
+        to_subtraction[fields[0]] = find_sam_align_score(fields)
 
     command = [
         "bowtie2",
         "--local",
         "-N", "0",
         "-p", str(proc),
-        "-x", shlex.quote(str(subtraction.path)),
+        "-x", shlex.quote(str(subtraction.bowtie2_index_path)),
         "-U", str(intermediate.isolate_mapped_fastq_path)
     ]
 
@@ -217,24 +279,24 @@ async def map_subtractions(
 
 @step
 async def subtract_mapping(
-        pathoscope,
         intermediate: SimpleNamespace,
+        isolate_vta_path: Path,
         results: dict,
         run_in_executor,
-        isolate_path: Path,
+        work_path: Path
 ):
-    output_path = isolate_path / "subtracted.vta"
+    output_path = work_path / "subtracted.vta"
 
-    subtracted_count = await pathoscope.subtract(
-        intermediate.isolate_vta_path,
+    subtracted_count = await subtract(
+        isolate_vta_path,
         output_path,
         intermediate.to_subtraction
     )
 
     await run_in_executor(
-        pathoscope.replace_after_subtraction,
+        replace_after_subtraction,
         output_path,
-        intermediate.isolate_vta_path
+        isolate_vta_path
     )
 
     results["subtracted_count"] = subtracted_count
@@ -244,7 +306,6 @@ async def subtract_mapping(
 
 @step
 async def reassignment(
-        pathoscope,
         intermediate,
         results,
         run_in_executor,
@@ -274,7 +335,7 @@ async def reassignment(
         refs,
         reads
     ) = await run_in_executor(
-        pathoscope.run,
+        run_pathoscope,
         intermediate.isolate_vta_path,
         reassigned_path,
         p_score_cutoff,
@@ -284,7 +345,7 @@ async def reassignment(
 
     report_path = isolate_path / "report.tsv"
     report = await run_in_executor(
-        pathoscope.write_report,
+        write_report,
         report_path,
         pi,
         refs,
@@ -301,7 +362,7 @@ async def reassignment(
     )
 
     intermediate.coverage = await run_in_executor(
-        pathoscope.calculate_coverage,
+        calculate_coverage,
         reassigned_path,
         intermediate.lengths
     )
