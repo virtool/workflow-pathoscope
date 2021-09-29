@@ -1,0 +1,27 @@
+name: ci
+
+on:
+  pull_request:
+    branches:
+      - "*"
+  push:
+    branches:
+      - "master"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    container:
+      image: virtool/workflow:nightly
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+
+      - name: Run Tests
+        run: |
+          poetry install
+          poetry run pytest
