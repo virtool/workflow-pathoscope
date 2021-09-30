@@ -4,7 +4,6 @@ COPY workflow.py .
 COPY pathoscope.py .
 
 FROM base as test
-WORKDIR /app
 RUN ["pip", "install", "poetry"]
 COPY poetry.lock .
 COPY pyproject.toml .

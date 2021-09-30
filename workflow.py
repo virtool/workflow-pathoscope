@@ -176,7 +176,6 @@ async def map_isolates(
         p_score_cutoff: float
 ):
     """Map the sample reads to the newly built index."""
-    count = 0
     async with aiofiles.open(isolate_vta_path, "w") as f:
         async def stdout_handler(line: bytes):
             line = line.decode()
@@ -188,20 +187,17 @@ async def map_isolates(
 
             # Bitwise FLAG - 0x4 : segment unmapped
             if int(fields[1]) & 0x4 == 4:
-                print("Bitwise")
                 return
 
             ref_id = fields[2]
 
             if ref_id == "*":
-                print("Asterisk")
                 return
 
             p_score = find_sam_align_score(fields)
 
             # Skip if the p_score does not meet the minimum cutoff.
             if p_score < p_score_cutoff:
-                print("P")
                 return
 
             await f.write(",".join([
@@ -309,9 +305,10 @@ async def reassignment(
         intermediate,
         results,
         run_in_executor,
-        isolate_path: Path,
+        isolate_vta_path: Path,
         index: Index,
         p_score_cutoff: float,
+        work_path: Path
 ):
     """
     Run the Pathoscope reassignment algorithm.
@@ -320,7 +317,8 @@ async def reassignment(
 
     The results are also parsed and saved to `intermediate.coverage`.
     """
-    reassigned_path = isolate_path / "reassigned.vta"
+    reassigned_path = work_path / "reassigned.vta"
+
     (
         best_hit_initial_reads,
         best_hit_initial,
@@ -336,14 +334,15 @@ async def reassignment(
         reads
     ) = await run_in_executor(
         run_pathoscope,
-        intermediate.isolate_vta_path,
+        isolate_vta_path,
         reassigned_path,
         p_score_cutoff,
     )
 
     read_count = len(reads)
 
-    report_path = isolate_path / "report.tsv"
+    report_path = work_path / "report.tsv"
+
     report = await run_in_executor(
         write_report,
         report_path,

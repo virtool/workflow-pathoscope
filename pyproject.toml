@@ -10,6 +10,7 @@ python = "^3.8"
 virtool-workflow = "^0.6.0"
 
 [tool.poetry.dev-dependencies]
+pytest = "^6.2.0"
 pytest-aiohttp = "^0.3.0"
 pytest-asyncio = "^0.15.1"
 pytest-datafiles = "^2.0"
