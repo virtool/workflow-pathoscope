@@ -1,8 +1,10 @@
-import pytest
-import shutil
-import pickle
 import filecmp
+import pickle
+import shutil
 from pathlib import Path
+from typing import Dict, Any
+
+import pytest
 
 import pathoscope
 
@@ -16,6 +18,10 @@ TSV_PATH = BASE_PATH / "report.tsv"
 UNU_PATH = BASE_PATH / "unu"
 UPDATED_VTA_PATH = BASE_PATH / "updated.vta"
 VTA_PATH = BASE_PATH / "test.vta"
+
+
+def convert_int_keys_to_str(str_keyed_dict: Dict[int, Any]) -> Dict[str, Any]:
+    return {str(key): value for key, value in str_keyed_dict.items()}
 
 
 @pytest.fixture(scope="session")
@@ -38,7 +44,7 @@ def test_find_sam_align_score(sam_line, expected_scores):
     assert pathoscope.find_sam_align_score(sam_line) == expected_scores["".join(sam_line)]
 
 
-def test_build_matrix(tmp_path):
+def test_build_matrix(data_regression, tmp_path):
     shutil.copy(VTA_PATH, tmp_path)
     vta_path = tmp_path / "test.vta"
 
@@ -46,24 +52,33 @@ def test_build_matrix(tmp_path):
         expected = pickle.load(handle)
 
     actual = pathoscope.build_matrix(vta_path, 0.01)
+    u, nu, refs, reads = actual
+
+    data_regression.check([
+        u,
+        nu,
+        sorted(refs),
+        sorted(reads)
+    ])
 
     assert expected[0] == actual[0]
     assert expected[1] == actual[1]
-
     assert sorted(expected[2]) == sorted(actual[2])
     assert sorted(expected[3]) == sorted(actual[3])
+
 
 @pytest.mark.parametrize("theta_prior", [0, 1e-5])
 @pytest.mark.parametrize("pi_prior", [0, 1e-5])
 @pytest.mark.parametrize("epsilon", [1e-6, 1e-7, 1e-8])
 @pytest.mark.parametrize("max_iter", [5, 10, 20, 30])
-def test_em(tmp_path, theta_prior, pi_prior, epsilon, max_iter, expected_em):
+def test_em(data_regression, tmp_path, theta_prior, pi_prior, epsilon, max_iter, expected_em):
     shutil.copy(VTA_PATH, tmp_path)
     vta_path = tmp_path / "test.vta"
 
     u, nu, refs, _ = pathoscope.build_matrix(vta_path, 0.01)
 
     result = pathoscope.em(u, nu, refs, max_iter, epsilon, pi_prior, theta_prior)
+    init_pi, pi, theta, updated_nu = result
 
     file_string = "_".join([str(i) for i in ["em", theta_prior, pi_prior, epsilon, max_iter]])
 
@@ -72,8 +87,16 @@ def test_em(tmp_path, theta_prior, pi_prior, epsilon, max_iter, expected_em):
 
     assert result[3] == expected_em[file_string][3]
 
+    data_regression.check([
+        sorted(init_pi),
+        sorted(pi),
+        sorted(theta),
+        updated_nu
+    ])
 
-def test_compute_best_hit():
+
+
+def test_compute_best_hit(data_regression):
     """
     Test that :meth:`compute_best_hit` gives the expected result given some input data.
 
@@ -81,11 +104,10 @@ def test_compute_best_hit():
     with open(MATRIX_PATH, "rb") as handle:
         matrix_tuple = pickle.load(handle)
 
-    with open(BEST_HIT_PATH, "rb") as handle:
-        assert pickle.load(handle) == pathoscope.compute_best_hit(*matrix_tuple)
+    data_regression.check(pathoscope.compute_best_hit(*matrix_tuple))
 
 
-def test_rewrite_align(tmp_path):
+def test_rewrite_align(file_regression, tmp_path):
     with open(UNU_PATH, "rb") as f:
         u, nu = pickle.load(f)
 
@@ -95,6 +117,9 @@ def test_rewrite_align(tmp_path):
     rewrite_path = tmp_path / "rewrite.vta"
 
     pathoscope.rewrite_align(u, nu, vta_path, 0.01, rewrite_path)
+
+    with open(rewrite_path, "r") as f:
+        file_regression.check(f.read())
 
     assert filecmp.cmp(UPDATED_VTA_PATH, rewrite_path)
     assert not filecmp.cmp(vta_path, rewrite_path)
@@ -126,7 +151,7 @@ def test_calculate_coverage(tmp_path, sam_path):
     pathoscope.calculate_coverage(vta_path, ref_lengths)
 
 
-def test_write_report(tmp_path):
+def test_write_report(file_regression, tmp_path):
     shutil.copy(VTA_PATH, tmp_path)
     vta_path = tmp_path / "test.vta"
 
@@ -162,7 +187,5 @@ def test_write_report(tmp_path):
         level_2_final
     )
 
-    assert filecmp.cmp(report_path, TSV_PATH)
-
-
-
+    with open(report_path, "r") as f:
+        file_regression.check(f.read())
