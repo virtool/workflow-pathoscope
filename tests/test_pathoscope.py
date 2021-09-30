@@ -95,7 +95,6 @@ def test_em(data_regression, tmp_path, theta_prior, pi_prior, epsilon, max_iter,
     ])
 
 
-
 def test_compute_best_hit(data_regression):
     """
     Test that :meth:`compute_best_hit` gives the expected result given some input data.

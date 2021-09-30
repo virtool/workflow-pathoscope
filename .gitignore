@@ -4,4 +4,4 @@ __pycache__/*
 virtool_workflow_pathoscope/__pycache__
 virtool_workflow_pathoscope/__pycache__/*
 *.pyc
-
+.DS_store
