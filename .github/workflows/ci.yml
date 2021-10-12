@@ -3,25 +3,40 @@ name: ci
 on:
   pull_request:
     branches:
-      - "*"
+      - "main"
   push:
     branches:
-      - "master"
+      - "main"
 
 jobs:
   test:
-    runs-on: ubuntu-latest
-
+    runs-on: ubuntu-20.04
     container:
       image: virtool/workflow:nightly
-
     steps:
-      - uses: actions/checkout@v2
-
+      - name: Checkout
+        uses: actions/checkout@v2
       - name: Install Poetry
         uses: snok/install-poetry@v1
-
       - name: Run Tests
         run: |
           poetry install
           poetry run pytest
+  release:
+    if: github.event.name == "push"
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Setup NodeJS
+        uses: actions/setup-node@v1
+        with:
+          node-version: 14
+      - name: Install semantic-release
+        run: npm i semantic-release@v18.0.0 conventional-changelog-conventionalcommits@4.6.1
+      - name: Release
+        env:
+          GITHUB_USERNAME: ${{ secrets.GH_USERNAME }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: npx semantic-release
+      
