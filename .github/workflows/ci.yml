@@ -9,6 +9,13 @@ on:
       - "main"
 
 jobs:
+  commitlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - uses: wagoid/commitlint-github-action@v4
   test:
     runs-on: ubuntu-20.04
     container:
