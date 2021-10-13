@@ -23,8 +23,8 @@ jobs:
           poetry install
           poetry run pytest
   release:
-    if: github.event.name == "push"
     runs-on: ubuntu-20.04
+    needs: test
     if: github.event_name == "push"
     steps:
       - name: Checkout
