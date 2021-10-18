@@ -7,7 +7,7 @@ license = "MIT"
 
 [tool.poetry.dependencies]
 python = "^3.8"
-virtool-workflow = "^0.6.0"
+virtool-workflow = "^1.0.0"
 
 [tool.poetry.dev-dependencies]
 pytest = "^6.2.0"
