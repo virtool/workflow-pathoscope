@@ -56,7 +56,7 @@ def isolate_index_path(isolate_path: Path):
 
 
 @fixture
-def isolate_vta_path(work_path: Path):
+def isolate_vta_path(isolate_path: Path):
     return isolate_path / "to_isolates.vta"
 
 
