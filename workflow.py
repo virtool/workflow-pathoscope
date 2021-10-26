@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from typing import List
 
 import aiofiles
-from virtool_workflow import fixture, step
+from virtool_workflow import fixture, step, hooks
 from virtool_workflow.analysis.indexes import Index
 from virtool_workflow.analysis.reads import Reads
 from virtool_workflow.analysis.subtractions import Subtraction
@@ -68,6 +68,11 @@ def subtraction_vta_path(work_path: Path):
 @fixture
 def p_score_cutoff():
     return 0.01
+
+
+@hooks.on_failure
+async def delete_analysis_document(analysis_provider):
+    await analysis_provider.delete()
 
 
 @step
