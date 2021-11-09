@@ -82,8 +82,9 @@ def index(work_path: Path):
 
 
 @pytest.fixture
-def sample():
-    return Sample(
+def sample(work_path: Path):
+    shutil.copyfile(FASTQ_PATH, work_path / "reads_1.fq.gz")
+    sample_ = Sample(
         id="foobar",
         name="foobar",
         paired=False,
@@ -96,6 +97,14 @@ def sample():
         isolate=None,
         host=None,
     )
+
+    sample_.read_paths = (work_path / "reads_1.fq.gz",)
+
+    return sample_
+
+@pytest.fixture
+def read_file_names(sample):
+    return ",".join(str(p) for p in sample.read_paths)
 
 
 @pytest.fixture
@@ -154,12 +163,12 @@ def ref_lengths():
         return json.load(f)
 
 
-async def test_map_default_isolates(data_regression, sample: Sample, index: Index, run_subprocess):
+async def test_map_default_isolates(data_regression, read_file_names, index: Index, run_subprocess):
     intermediate = SimpleNamespace(to_otus=set())
 
     await map_default_isolates(
         intermediate,
-        sample,
+        read_file_names,
         index,
         2,
         0.01,
@@ -191,7 +200,7 @@ async def test_map_default_isolates(data_regression, sample: Sample, index: Inde
 async def test_map_isolates(
         data_regression,
         index,
-        sample: Sample,
+        read_file_names,
         work_path,
         run_subprocess,
 ):
@@ -207,7 +216,7 @@ async def test_map_isolates(
     isolate_vta_path = work_path / "isolates.vta"
 
     await map_isolates(
-        sample,
+        read_file_names,
         isolate_fastq_path,
         work_path / "isolates",
         isolate_vta_path,
