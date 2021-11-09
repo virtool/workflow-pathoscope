@@ -13,7 +13,8 @@ from virtool_workflow.analysis.reads import Reads
 from virtool_workflow.data_model import NucleotideComposition, Subtraction
 from virtool_workflow.data_model.samples import Sample
 
-from workflow import map_default_isolates, map_subtractions, map_isolates, subtract_mapping, reassignment
+from workflow import (map_default_isolates, map_isolates, map_subtractions,
+                      reassignment, subtract_mapping)
 
 logger = logging.getLogger(__name__)
 
@@ -153,12 +154,12 @@ def ref_lengths():
         return json.load(f)
 
 
-async def test_map_default_isolates(data_regression, reads: Reads, index: Index, run_subprocess):
+async def test_map_default_isolates(data_regression, sample: Sample, index: Index, run_subprocess):
     intermediate = SimpleNamespace(to_otus=set())
 
     await map_default_isolates(
         intermediate,
-        reads,
+        sample,
         index,
         2,
         0.01,
@@ -190,7 +191,7 @@ async def test_map_default_isolates(data_regression, reads: Reads, index: Index,
 async def test_map_isolates(
         data_regression,
         index,
-        reads: Reads,
+        sample: Sample,
         work_path,
         run_subprocess,
 ):
@@ -206,7 +207,7 @@ async def test_map_isolates(
     isolate_vta_path = work_path / "isolates.vta"
 
     await map_isolates(
-        reads,
+        sample,
         isolate_fastq_path,
         work_path / "isolates",
         isolate_vta_path,
@@ -228,13 +229,12 @@ async def test_map_subtraction(
     isolate_fastq_path = work_path / "mapped.fastq"
     shutil.copyfile(FASTQ_PATH, isolate_fastq_path)
 
-    intermediate = SimpleNamespace(
-        isolate_mapped_fastq_path=isolate_fastq_path,
-    )
+    intermediate = SimpleNamespace()
 
     await map_subtractions(
         intermediate,
         subtraction,
+        isolate_fastq_path,
         run_subprocess,
         2
     )
