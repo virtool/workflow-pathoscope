@@ -71,6 +71,10 @@ def subtraction_vta_path(work_path: Path):
 def p_score_cutoff():
     return 0.01
 
+@fixture
+def read_file_names(sample) -> str:
+    return ",".join(str(path) for path in sample.read_paths)
+
 
 @hooks.on_failure
 async def delete_analysis_document(analysis_provider):
@@ -85,7 +89,7 @@ async def upload_results(results, analysis_provider):
 @step
 async def map_default_isolates(
         intermediate: SimpleNamespace,
-        sample,
+        read_file_names: str,
         index: Index,
         proc: int,
         p_score_cutoff: float,
@@ -98,7 +102,6 @@ async def map_default_isolates(
     This will be used to identify candidate OTUs.
 
     """
-    reads = SimpleNamespace(left=sample.read_paths[0], right=sample.read_paths[1])
     async def stdout_handler(line: bytes):
         logger.debug(line)
 
@@ -134,7 +137,7 @@ async def map_default_isolates(
             "-N", "0",
             "-L", "15",
             "-x", str(index.bowtie_path),
-            "-U", f"{reads.left},{reads.right}",
+            "-U", read_file_names,
         ],
         stdout_handler=stdout_handler
     )
@@ -180,7 +183,7 @@ async def build_isolate_index(
 
 @step
 async def map_isolates(
-        sample,
+        read_file_names: str,
         isolate_fastq_path: Path,
         isolate_index_path: Path,
         isolate_vta_path: Path,
@@ -189,7 +192,6 @@ async def map_isolates(
         p_score_cutoff: float
 ):
     """Map the sample reads to the newly built index."""
-    reads = SimpleNamespace(left=sample.read_paths[0], right=sample.read_paths[1])
     async with aiofiles.open(isolate_vta_path, "w") as f:
         async def stdout_handler(line: bytes):
             line = line.decode()
@@ -233,7 +235,7 @@ async def map_isolates(
             "-k", "100",
             "--al", str(isolate_fastq_path),
             "-x", str(isolate_index_path),
-            "-U", f"{reads.left},{reads.right}"
+            "-U", read_file_names
         ]
 
         await run_subprocess(command, stdout_handler=stdout_handler)
