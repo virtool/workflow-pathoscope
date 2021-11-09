@@ -4,14 +4,16 @@ from types import SimpleNamespace
 from typing import List
 
 import aiofiles
-from virtool_workflow import fixture, step, hooks
+from virtool_workflow import fixture, hooks, step
 from virtool_workflow.analysis.indexes import Index
 from virtool_workflow.analysis.reads import Reads
 from virtool_workflow.analysis.subtractions import Subtraction
 from virtool_workflow.execution.run_subprocess import RunSubprocess
 
-from pathoscope import find_sam_align_score, replace_after_subtraction, subtract, run as run_pathoscope, write_report, \
-    calculate_coverage
+from pathoscope import (calculate_coverage, find_sam_align_score,
+                        replace_after_subtraction)
+from pathoscope import run as run_pathoscope
+from pathoscope import subtract, write_report
 
 
 @fixture
@@ -75,10 +77,15 @@ async def delete_analysis_document(analysis_provider):
     await analysis_provider.delete()
 
 
+@hooks.on_result
+async def upload_results(results, analysis_provider):
+    await analysis_provider.upload_result(results)
+
+
 @step
 async def map_default_isolates(
         intermediate: SimpleNamespace,
-        reads: Reads,
+        sample,
         index: Index,
         proc: int,
         p_score_cutoff: float,
@@ -91,6 +98,7 @@ async def map_default_isolates(
     This will be used to identify candidate OTUs.
 
     """
+    reads = SimpleNamespace(left=sample.read_paths[0], right=sample.read_paths[1])
     async def stdout_handler(line: bytes):
         logger.debug(line)
 
@@ -162,8 +170,8 @@ async def build_isolate_index(
         [
             "bowtie2-build",
             "--threads", str(proc),
-            isolate_fasta_path,
-            isolate_index_path
+            str(isolate_fasta_path),
+            str(isolate_index_path)
         ],
     )
 
@@ -172,7 +180,7 @@ async def build_isolate_index(
 
 @step
 async def map_isolates(
-        reads: Reads,
+        sample,
         isolate_fastq_path: Path,
         isolate_index_path: Path,
         isolate_vta_path: Path,
@@ -181,6 +189,7 @@ async def map_isolates(
         p_score_cutoff: float
 ):
     """Map the sample reads to the newly built index."""
+    reads = SimpleNamespace(left=sample.read_paths[0], right=sample.read_paths[1])
     async with aiofiles.open(isolate_vta_path, "w") as f:
         async def stdout_handler(line: bytes):
             line = line.decode()
@@ -236,6 +245,7 @@ async def map_isolates(
 async def map_subtractions(
         intermediate: SimpleNamespace,
         subtraction: Subtraction,
+        isolate_fastq_path,
         run_subprocess: RunSubprocess,
         proc: int,
 ):
@@ -268,7 +278,7 @@ async def map_subtractions(
         "-N", "0",
         "-p", str(proc),
         "-x", shlex.quote(str(subtraction.bowtie2_index_path)),
-        "-U", str(intermediate.isolate_mapped_fastq_path)
+        "-U", str(isolate_fastq_path)
     ]
 
     await run_subprocess(command, stdout_handler=stdout_handler)
