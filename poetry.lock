@@ -438,7 +438,7 @@ pydantic = ">=1.8.2,<2.0.0"
 
 [[package]]
 name = "virtool-workflow"
-version = "1.0.8"
+version = "1.1.0"
 description = "A framework for developing bioinformatics workflows for Virtool."
 category = "main"
 optional = false
@@ -963,8 +963,8 @@ virtool-core = [
     {file = "virtool_core-0.4.0-py3-none-any.whl", hash = "sha256:3fd38d8d97c86ded02c1a9d3cfe770d459195084caba0223c6f247bbe8acafcc"},
 ]
 virtool-workflow = [
-    {file = "virtool-workflow-1.0.8.tar.gz", hash = "sha256:fa32040e22b9ba81b7c3fa45c508a92c5733738ebf8d292012693cecff30c75c"},
-    {file = "virtool_workflow-1.0.8-py3-none-any.whl", hash = "sha256:2064da2c41363b432dc0c3e770457b24339f7a13ea6be4bc227474341f25b79c"},
+    {file = "virtool-workflow-1.1.0.tar.gz", hash = "sha256:2efca7e0c56f6344e486db09583f0a5874e795f1091aa55ad9bb400a2074ba68"},
+    {file = "virtool_workflow-1.1.0-py3-none-any.whl", hash = "sha256:c1fb23ec27bea1a292b14eac2b19b9a012eb3d391f81f2ccb39e704ffe68b2d2"},
 ]
 wasmer = [
     {file = "wasmer-1.0.0-cp36-cp36m-macosx_10_7_x86_64.whl", hash = "sha256:0d755a93184380f9785e1f8269b070f4a4a3285ae0f7f9571cfaf2ea215b102d"},
