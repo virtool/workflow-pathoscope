@@ -93,8 +93,7 @@ async def map_default_isolates(
         index: Index,
         proc: int,
         p_score_cutoff: float,
-        run_subprocess: RunSubprocess,
-        logger,
+        run_subprocess: RunSubprocess
 ):
     """
     Map reads to the main OTU reference.
@@ -103,8 +102,6 @@ async def map_default_isolates(
 
     """
     async def stdout_handler(line: bytes):
-        logger.debug(line)
-
         line = line.decode()
 
         if line[0] == "#" or line[0] == "@":

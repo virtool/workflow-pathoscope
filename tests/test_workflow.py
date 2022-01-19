@@ -16,8 +16,6 @@ from virtool_workflow.data_model.samples import Sample
 from workflow import (map_default_isolates, map_isolates, map_subtractions,
                       reassignment, subtract_mapping)
 
-logger = logging.getLogger(__name__)
-
 TEST_DATA_PATH = Path(__file__).parent / "test_files"
 FASTQ_PATH = TEST_DATA_PATH / "test.fq"
 INDEX_PATH = TEST_DATA_PATH / "index"
@@ -172,8 +170,7 @@ async def test_map_default_isolates(data_regression, read_file_names, index: Ind
         index,
         2,
         0.01,
-        run_subprocess,
-        logger
+        run_subprocess
     )
 
     assert sorted(intermediate.to_otus) == sorted([
@@ -206,7 +203,6 @@ async def test_map_isolates(
 ):
     for path in INDEX_PATH.iterdir():
         if "reference" in path.name:
-            logger.info(path)
             shutil.copyfile(
                 path,
                 work_path / path.name.replace("reference", "isolates")
