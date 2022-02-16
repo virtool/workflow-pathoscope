@@ -1,8 +1,9 @@
-.idea
-__pycache__
-__pycache__/*
-virtool_workflow_pathoscope/__pycache__
-virtool_workflow_pathoscope/__pycache__/*
-*.pyc
 .DS_store
+.idea
+.pytest_cache
 .vscode
+__pycache__
+*.pyc
+
+
+
