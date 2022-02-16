@@ -140,6 +140,7 @@ async def map_default_isolates(
 
 @step
 async def build_isolate_index(
+        index: Index,
         isolate_fasta_path: Path,
         isolate_index_path: Path,
         run_subprocess: RunSubprocess,
