@@ -16,7 +16,7 @@ pytest-asyncio = "^0.15.1"
 pytest-datafiles = "^2.0"
 pytest-instafail = "^0.4.2"
 pytest-regressions = "^2.2.0"
-snapshottest = "0.5.1"
+syrupy = "^1.7.4"
 
 [tool.pytest.ini_options]
 markers = ["datafiles: load datafiles"]

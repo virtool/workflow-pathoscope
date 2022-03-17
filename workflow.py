@@ -1,7 +1,11 @@
+import os
 import shlex
+import shutil
+from collections import defaultdict
+from logging import getLogger
 from pathlib import Path
 from types import SimpleNamespace
-from typing import List
+from typing import Any, Dict, List
 
 import aiofiles
 from virtool_workflow import fixture, hooks, step
@@ -9,8 +13,14 @@ from virtool_workflow.analysis.indexes import Index
 from virtool_workflow.analysis.subtractions import Subtraction
 from virtool_workflow.execution.run_subprocess import RunSubprocess
 
-from pathoscope import calculate_coverage, find_sam_align_score, \
-    replace_after_subtraction, run as run_pathoscope, subtract, write_report
+from pathoscope import (
+    calculate_coverage,
+    find_sam_align_score,
+    run as run_pathoscope,
+    write_report,
+)
+
+logger = getLogger(__name__)
 
 
 @fixture
@@ -27,6 +37,7 @@ def subtraction(subtractions: List[Subtraction]):
 def intermediate():
     """A namespace for storing intermediate values."""
     return SimpleNamespace(
+        isolate_high_scores={},
         to_otus=set(),
     )
 
@@ -86,12 +97,12 @@ async def upload_results(results, analysis_provider):
 
 @step
 async def map_default_isolates(
-        intermediate: SimpleNamespace,
-        read_file_names: str,
-        index: Index,
-        proc: int,
-        p_score_cutoff: float,
-        run_subprocess: RunSubprocess
+    intermediate: SimpleNamespace,
+    read_file_names: str,
+    index: Index,
+    proc: int,
+    p_score_cutoff: float,
+    run_subprocess: RunSubprocess,
 ):
     """
     Map sample reads to all default isolates to identify candidate OTUs.
@@ -99,6 +110,7 @@ async def map_default_isolates(
     This will be used to identify candidate OTUs.
 
     """
+
     async def stdout_handler(line: bytes):
         line = line.decode()
 
@@ -125,27 +137,35 @@ async def map_default_isolates(
     await run_subprocess(
         [
             "bowtie2",
-            "-p", str(proc),
+            "-p",
+            str(proc),
             "--no-unal",
             "--local",
-            "--score-min", "L,20,1.0",
-            "-N", "0",
-            "-L", "15",
-            "-x", str(index.bowtie_path),
-            "-U", read_file_names,
+            "--score-min",
+            "L,20,1.0",
+            "-N",
+            "0",
+            "-L",
+            "15",
+            "-x",
+            str(index.bowtie_path),
+            "-U",
+            read_file_names,
         ],
-        stdout_handler=stdout_handler
+        stdout_handler=stdout_handler,
     )
+
+    logger.info(f"Found {len(intermediate.to_otus)} potential OTUs.")
 
 
 @step
 async def build_isolate_index(
-        index: Index,
-        intermediate: SimpleNamespace,
-        isolate_fasta_path: Path,
-        isolate_index_path: Path,
-        run_subprocess: RunSubprocess,
-        proc: int,
+    index: Index,
+    intermediate: SimpleNamespace,
+    isolate_fasta_path: Path,
+    isolate_index_path: Path,
+    run_subprocess: RunSubprocess,
+    proc: int,
 ):
     """
     Build a mapping index containing all isolates of candidate OTUs.
@@ -153,31 +173,36 @@ async def build_isolate_index(
     intermediate.lengths = await index.write_isolate_fasta(
         [index.get_otu_id_by_sequence_id(id_) for id_ in intermediate.to_otus],
         isolate_fasta_path,
-        proc
+        proc,
     )
 
     await run_subprocess(
         [
             "bowtie2-build",
-            "--threads", str(proc),
+            "--threads",
+            str(proc),
             str(isolate_fasta_path),
-            str(isolate_index_path)
+            str(isolate_index_path),
         ],
     )
 
 
 @step
 async def map_isolates(
-        read_file_names: str,
-        isolate_fastq_path: Path,
-        isolate_index_path: Path,
-        isolate_vta_path: Path,
-        run_subprocess: RunSubprocess,
-        proc: int,
-        p_score_cutoff: float
+    read_file_names: str,
+    intermediate: SimpleNamespace,
+    isolate_fastq_path: Path,
+    isolate_index_path: Path,
+    isolate_vta_path: Path,
+    run_subprocess: RunSubprocess,
+    proc: int,
+    p_score_cutoff: float,
 ):
     """Map sample reads to the all isolate index."""
+    isolate_high_scores = defaultdict(float)
+
     async with aiofiles.open(isolate_vta_path, "w") as f:
+
         async def stdout_handler(line: bytes):
             line = line.decode()
 
@@ -201,45 +226,71 @@ async def map_isolates(
             if p_score < p_score_cutoff:
                 return
 
-            await f.write(",".join([
-                fields[0],  # read_id
-                ref_id,
-                fields[3],  # pos
-                str(len(fields[9])),  # length
-                str(p_score)
-            ]) + "\n")
+            read_id = fields[0]
+
+            if p_score > isolate_high_scores[read_id]:
+                isolate_high_scores[read_id] = p_score
+
+            await f.write(
+                ",".join(
+                    [
+                        read_id,  # read_id
+                        ref_id,
+                        fields[3],  # pos
+                        str(len(fields[9])),  # length
+                        str(p_score),
+                    ]
+                )
+                + "\n"
+            )
 
         command = [
             "bowtie2",
-            "-p", str(proc),
+            "-p",
+            str(proc),
             "--no-unal",
             "--local",
-            "--score-min", "L,20,1.0",
-            "-N", "0",
-            "-L", "15",
-            "-k", "100",
-            "--al", str(isolate_fastq_path),
-            "-x", str(isolate_index_path),
-            "-U", read_file_names
+            "--score-min",
+            "L,20,1.0",
+            "-N",
+            "0",
+            "-L",
+            "15",
+            "-k",
+            "100",
+            "--al",
+            str(isolate_fastq_path),
+            "-x",
+            str(isolate_index_path),
+            "-U",
+            read_file_names,
         ]
 
         await run_subprocess(command, stdout_handler=stdout_handler)
 
-    return "Mapped sample reads to isolate index."
+        intermediate.isolate_high_scores = dict(isolate_high_scores)
 
 
 @step
-async def map_subtractions(
-        intermediate: SimpleNamespace,
-        subtraction: Subtraction,
-        isolate_fastq_path,
-        run_subprocess: RunSubprocess,
-        proc: int,
+async def eliminate_subtraction(
+    intermediate: SimpleNamespace,
+    isolate_fastq_path: Path,
+    isolate_vta_path: Path,
+    proc: int,
+    results: Dict[str, Any],
+    run_in_executor,
+    run_subprocess: RunSubprocess,
+    subtraction: Subtraction,
+    work_path: Path,
 ):
     """
-    Map isolate-mapped reads to the subtraction.
+    Remove reads that map better to a subtraction than to a reference.
     """
-    to_subtraction = {}
+    to_retain_isolate_reads = set(intermediate.isolate_high_scores.keys())
+
+    logger.info(
+        f"Considering {len(to_retain_isolate_reads)} isolate-mapped reads for subtraction."
+    )
 
     async def stdout_handler(line: bytes):
         line = line.decode()
@@ -257,57 +308,68 @@ async def map_subtractions(
         if fields[2] == "*":
             return
 
-        to_subtraction[fields[0]] = find_sam_align_score(fields)
+        read_id = fields[0]
+
+        try:
+            isolate_high_score = intermediate.isolate_high_scores[read_id]
+        except KeyError:
+            # Don't care about subtraction mapping if the read didn't match an isolate.
+            return
+
+        if find_sam_align_score(fields) >= isolate_high_score:
+            to_retain_isolate_reads.remove(read_id)
 
     command = [
         "bowtie2",
         "--local",
-        "-N", "0",
-        "-p", str(proc),
-        "-x", shlex.quote(str(subtraction.bowtie2_index_path)),
-        "-U", str(isolate_fastq_path)
+        "-N",
+        "0",
+        "-p",
+        str(proc),
+        "-x",
+        shlex.quote(str(subtraction.bowtie2_index_path)),
+        "-U",
+        str(isolate_fastq_path),
     ]
 
     await run_subprocess(command, stdout_handler=stdout_handler)
 
-    intermediate.to_subtraction = to_subtraction
+    logger.info(f"Retaining {len(to_retain_isolate_reads)} isolate-read mappings.")
 
-
-@step
-async def subtract_mapping(
-        intermediate: SimpleNamespace,
-        isolate_vta_path: Path,
-        results: dict,
-        run_in_executor,
-        work_path: Path
-):
-    """Discard reads that map better to the subtraction than an OTU."""
     output_path = work_path / "subtracted.vta"
+    subtracted_read_ids = set()
 
-    subtracted_count = await subtract(
-        isolate_vta_path,
-        output_path,
-        intermediate.to_subtraction
-    )
+    async with aiofiles.open(isolate_vta_path, "r") as f_in, aiofiles.open(
+        output_path, "w"
+    ) as f_out:
+        async for line in f_in:
+            read_id = line.split(",")[0]
 
-    await run_in_executor(
-        replace_after_subtraction,
-        output_path,
-        isolate_vta_path
-    )
+            if read_id in to_retain_isolate_reads:
+                await f_out.write(line)
+            else:
+                subtracted_read_ids.add(read_id)
 
+    await run_in_executor(os.remove, isolate_vta_path)
+    await run_in_executor(shutil.move, output_path, isolate_vta_path)
+
+    subtracted_count = len(subtracted_read_ids)
     results["subtracted_count"] = subtracted_count
+
+    logger.info(
+        f"Subtracted {subtracted_count} reads that mapped better to a subtraction."
+    )
 
 
 @step
 async def reassignment(
-        intermediate,
-        results,
-        run_in_executor,
-        isolate_vta_path: Path,
-        index: Index,
-        p_score_cutoff: float,
-        work_path: Path
+    intermediate,
+    results,
+    run_in_executor,
+    isolate_vta_path: Path,
+    index: Index,
+    p_score_cutoff: float,
+    work_path: Path,
 ):
     """
     Run the Pathoscope reassignment algorithm.
@@ -329,7 +391,7 @@ async def reassignment(
         init_pi,
         pi,
         refs,
-        reads
+        reads,
     ) = await run_in_executor(
         run_pathoscope,
         isolate_vta_path,
@@ -355,13 +417,11 @@ async def reassignment(
         level_1_initial,
         level_2_initial,
         level_1_final,
-        level_2_final
+        level_2_final,
     )
 
     intermediate.coverage = await run_in_executor(
-        calculate_coverage,
-        reassigned_path,
-        intermediate.lengths
+        calculate_coverage, reassigned_path, intermediate.lengths
     )
 
     hits = list()
@@ -372,10 +432,7 @@ async def reassignment(
         hit["id"] = sequence_id
 
         # Attach "otu" (id, version) to the hit.
-        hit["otu"] = {
-            "id": otu_id,
-            "version": index.manifest[otu_id]
-        }
+        hit["otu"] = {"id": otu_id, "version": index.manifest[otu_id]}
 
         # Get the coverage for the sequence.
         hit_coverage = intermediate.coverage[sequence_id]
@@ -383,18 +440,14 @@ async def reassignment(
         hit["align"] = hit_coverage
 
         # Calculate coverage and attach to hit.
-        hit["coverage"] = round(
-            1 - hit_coverage.count(0) / len(hit_coverage), 3)
+        hit["coverage"] = round(1 - hit_coverage.count(0) / len(hit_coverage), 3)
 
         # Calculate depth and attach to hit.
         hit["depth"] = round(sum(hit_coverage) / len(hit_coverage))
 
         hits.append(hit)
 
-    results.update({
-        "read_count": read_count,
-        "hits": hits
-    })
+    results.update({"read_count": read_count, "hits": hits})
 
     intermediate.reassigned_path = reassigned_path
     intermediate.report_path = report_path

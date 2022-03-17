@@ -1,5 +1,4 @@
 import json
-import logging
 import shutil
 from pathlib import Path
 from shutil import copytree
@@ -13,15 +12,17 @@ from virtool_workflow.analysis.reads import Reads
 from virtool_workflow.data_model import NucleotideComposition, Subtraction
 from virtool_workflow.data_model.samples import Sample
 
-from workflow import (map_default_isolates, map_isolates, map_subtractions,
-                      reassignment, subtract_mapping)
+from workflow import (
+    eliminate_subtraction,
+    map_default_isolates,
+    map_isolates,
+    reassignment,
+)
 
 TEST_DATA_PATH = Path(__file__).parent / "test_files"
 FASTQ_PATH = TEST_DATA_PATH / "test.fq"
 INDEX_PATH = TEST_DATA_PATH / "index"
-REF_LENGTHS_PATH = TEST_DATA_PATH / "ref_lengths.json"
 SUBTRACTION_PATH = TEST_DATA_PATH / "subtraction"
-TO_SUBTRACTION_PATH = TEST_DATA_PATH / "to_subtraction.json"
 VTA_PATH = TEST_DATA_PATH / "test.vta"
 
 
@@ -35,34 +36,6 @@ def index(work_path: Path):
     index_path = work_path / "indexes/index3"
     shutil.copytree(INDEX_PATH, index_path)
 
-    sequence_otu_map = {
-        "NC_016509": "foobar",
-        "NC_001948": "foobar",
-        "13TF149_Reovirus_TF1_Seg06": "reo",
-        "13TF149_Reovirus_TF1_Seg03": "reo",
-        "13TF149_Reovirus_TF1_Seg07": "reo",
-        "13TF149_Reovirus_TF1_Seg02": "reo",
-        "13TF149_Reovirus_TF1_Seg08": "reo",
-        "13TF149_Reovirus_TF1_Seg11": "reo",
-        "13TF149_Reovirus_TF1_Seg04": "reo",
-        "NC_004667": "foobar",
-        "NC_003347": "foobar",
-        "NC_003615": "foobar",
-        "NC_003689": "foobar",
-        "NC_011552": "foobar",
-        "KX109927": "baz",
-        "NC_008039": "foobar",
-        "NC_015782": "foobar",
-        "NC_016416": "foobar",
-        "NC_003623": "foobar",
-        "NC_008038": "foobar",
-        "NC_001836": "foobar",
-        "JQ080272": "baz",
-        "NC_017938": "foobar",
-        "NC_008037": "foobar",
-        "NC_007448": "foobar"
-    }
-
     return Index(
         id="index3",
         manifest={
@@ -70,7 +43,33 @@ def index(work_path: Path):
             "reo": 5,
             "baz": 6,
         },
-        _sequence_otu_map=sequence_otu_map,
+        _sequence_otu_map={
+            "NC_016509": "foobar",
+            "NC_001948": "foobar",
+            "13TF149_Reovirus_TF1_Seg06": "reo",
+            "13TF149_Reovirus_TF1_Seg03": "reo",
+            "13TF149_Reovirus_TF1_Seg07": "reo",
+            "13TF149_Reovirus_TF1_Seg02": "reo",
+            "13TF149_Reovirus_TF1_Seg08": "reo",
+            "13TF149_Reovirus_TF1_Seg11": "reo",
+            "13TF149_Reovirus_TF1_Seg04": "reo",
+            "NC_004667": "foobar",
+            "NC_003347": "foobar",
+            "NC_003615": "foobar",
+            "NC_003689": "foobar",
+            "NC_011552": "foobar",
+            "KX109927": "baz",
+            "NC_008039": "foobar",
+            "NC_015782": "foobar",
+            "NC_016416": "foobar",
+            "NC_003623": "foobar",
+            "NC_008038": "foobar",
+            "NC_001836": "foobar",
+            "JQ080272": "baz",
+            "NC_017938": "foobar",
+            "NC_008037": "foobar",
+            "NC_007448": "foobar",
+        },
         reference=None,
         path=index_path,
         ready=True,
@@ -87,10 +86,7 @@ def sample(work_path: Path):
         name="foobar",
         paired=False,
         library_type=LibraryType.other,
-        quality={
-            "count": 1337,
-            "length": [78, 101]
-        },
+        quality={"count": 1337, "length": [78, 101]},
         locale=None,
         isolate=None,
         host=None,
@@ -99,6 +95,7 @@ def sample(work_path: Path):
     sample_.read_paths = (work_path / "reads_1.fq.gz",)
 
     return sample_
+
 
 @pytest.fixture
 def read_file_names(sample):
@@ -109,11 +106,7 @@ def read_file_names(sample):
 def reads(work_path: Path):
     shutil.copyfile(FASTQ_PATH, work_path / "reads_1.fq.gz")
 
-    return Reads(
-        sample=sample,
-        quality={},
-        path=work_path
-    )
+    return Reads(sample=sample, quality={}, path=work_path)
 
 
 @pytest.fixture
@@ -157,158 +150,105 @@ async def run_subprocess():
 
 @pytest.fixture
 def ref_lengths():
-    with REF_LENGTHS_PATH.open("r") as f:
+    with (TEST_DATA_PATH / "ref_lengths.json").open("r") as f:
         return json.load(f)
 
 
-async def test_map_default_isolates(data_regression, read_file_names, index: Index, run_subprocess):
+async def test_map_default_isolates(
+    data_regression, read_file_names, index: Index, run_subprocess, snapshot
+):
     intermediate = SimpleNamespace(to_otus=set())
 
     await map_default_isolates(
-        intermediate,
-        read_file_names,
-        index,
-        2,
-        0.01,
-        run_subprocess
+        intermediate, read_file_names, index, 2, 0.01, run_subprocess
     )
 
-    assert sorted(intermediate.to_otus) == sorted([
-        "NC_013110",
-        "NC_017938",
-        "NC_006057",
-        "NC_007448",
-        "JQ080272",
-        "NC_001836",
-        "NC_003347",
-        "NC_016509",
-        "NC_017939",
-        "NC_006056",
-        "NC_003623",
-        "KX109927",
-        "NC_016416",
-        "NC_001948",
-        "NC_021148",
-        "NC_003615",
-        "NC_004006"
-    ])
+    assert sorted(intermediate.to_otus) == snapshot
 
 
 async def test_map_isolates(
-        data_regression,
-        index,
-        read_file_names,
-        work_path,
-        run_subprocess,
+    index,
+    read_file_names,
+    work_path,
+    run_subprocess,
+    snapshot,
 ):
     for path in INDEX_PATH.iterdir():
         if "reference" in path.name:
             shutil.copyfile(
-                path,
-                work_path / path.name.replace("reference", "isolates")
+                path, work_path / path.name.replace("reference", "isolates")
             )
 
+    intermediate = SimpleNamespace(isolate_high_scores={})
     isolate_fastq_path = work_path / "mapped.fq"
     isolate_vta_path = work_path / "isolates.vta"
 
     await map_isolates(
         read_file_names,
+        intermediate,
         isolate_fastq_path,
         work_path / "isolates",
         isolate_vta_path,
         run_subprocess,
         1,
-        0.01
+        0.01,
     )
 
     with isolate_vta_path.open("r") as f:
-        data_regression.check(sorted([line.rstrip() for line in f]))
+        assert sorted(line.rstrip() for line in f) == snapshot
 
+    assert intermediate.isolate_high_scores == snapshot
 
-async def test_map_subtraction(
-        data_regression,
-        subtraction,
-        work_path,
-        run_subprocess
-):
-    isolate_fastq_path = work_path / "mapped.fastq"
-    shutil.copyfile(FASTQ_PATH, isolate_fastq_path)
-
-    intermediate = SimpleNamespace()
-
-    await map_subtractions(
-        intermediate,
-        subtraction,
-        isolate_fastq_path,
-        run_subprocess,
-        2
-    )
-
-    data_regression.check(sorted(intermediate.to_subtraction))
 
 @pytest.mark.datafiles(VTA_PATH)
-async def test_subtract_mapping(
-        file_regression,
-        datafiles,
-        run_in_executor,
-        work_path: Path
+async def test_eliminate_subtraction(
+    datafiles, subtraction, work_path, run_in_executor, run_subprocess
 ):
-    with TO_SUBTRACTION_PATH.open("r") as f:
-        intermediate = SimpleNamespace(
-            to_subtraction=json.load(f)
-        )
+    results = {}
 
-    results = dict()
+    isolate_fastq_path = work_path / "mapped.fastq"
 
-    await subtract_mapping(
+    shutil.copyfile(FASTQ_PATH, isolate_fastq_path)
+
+    with open(TEST_DATA_PATH / "isolate_high_scores.json", "r") as f:
+        intermediate = SimpleNamespace(isolate_high_scores=json.load(f))
+
+    isolate_vta_path = datafiles / "test.vta"
+
+    await eliminate_subtraction(
         intermediate,
-        datafiles / "test.vta",
+        isolate_fastq_path,
+        isolate_vta_path,
+        2,
         results,
         run_in_executor,
-        work_path
+        run_subprocess,
+        subtraction,
+        work_path,
     )
 
     assert results["subtracted_count"] == 4
-
-    with open(work_path / "test.vta", "r") as f:
-        file_regression.check(f.read())
+    assert (work_path / "test.vta").is_file()
+    assert not (work_path / "subtracted.vta").is_file()
 
 
 async def test_pathoscope(
-        data_regression,
-        index,
-        ref_lengths,
-        run_in_executor,
-        work_path: Path
+    index, ref_lengths, run_in_executor, snapshot, work_path: Path
 ):
     isolate_vta_path = work_path / "to_isolates.vta"
 
-    intermediate = SimpleNamespace(
-        lengths=ref_lengths
-    )
+    intermediate = SimpleNamespace(lengths=ref_lengths)
 
     results = dict()
 
     shutil.copyfile(VTA_PATH, isolate_vta_path)
 
     await reassignment(
-        intermediate,
-        results,
-        run_in_executor,
-        isolate_vta_path,
-        index,
-        0.01,
-        work_path
+        intermediate, results, run_in_executor, isolate_vta_path, index, 0.01, work_path
     )
 
     with intermediate.reassigned_path.open("r") as f:
-        reassigned_data = sorted([line.rstrip() for line in f])
+        assert sorted(line.rstrip() for line in f) == snapshot
 
     with intermediate.report_path.open("r") as f:
-        report_data = sorted([line.rstrip() for line in f])
-
-    data_regression.check([
-        reassigned_data,
-        report_data,
-        results
-    ])
+        assert sorted(line.rstrip() for line in f) == snapshot

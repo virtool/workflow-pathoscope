@@ -4,7 +4,6 @@ from pathlib import Path
 
 
 pytest_plugins = [
-    "tests.path_fixtures",
     "virtool_workflow.testing.fixtures",
 ]
 
@@ -26,9 +25,7 @@ def sam_path(test_files_path, tmp_path):
 
 
 def get_sam_lines():
-    path = Path(__file__).parent / "test_files" / "sam_50.sam"
-
-    with open(path, "r") as handle:
+    with open(Path(__file__).parent / "test_files/sam_50.sam", "r") as handle:
         return handle.read().split("\n")[0:-1]
 
 

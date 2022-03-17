@@ -1,11 +1,6 @@
-import collections
 import copy
 import csv
 import math
-import os
-import shutil
-
-import aiofiles
 
 
 def rescale_samscore(u, nu, max_score, min_score):
@@ -139,7 +134,7 @@ def build_matrix(vta_path, p_score_cutoff=0.01):
 def em(u, nu, genomes, max_iter, epsilon, pi_prior, theta_prior):
     genome_count = len(genomes)
 
-    pi = [1. / genome_count] * genome_count
+    pi = [1.0 / genome_count] * genome_count
     init_pi = copy.copy(pi)
     theta = copy.copy(pi)
 
@@ -191,7 +186,7 @@ def em(u, nu, genomes, max_iter, epsilon, pi_prior, theta_prior):
             theta_tmp = [theta[k] for k in ind]
 
             # Calculate non-normalized xs
-            x_tmp = [1. * pi_tmp[k] * theta_tmp[k] * z[1][k] for k in range(len(ind))]
+            x_tmp = [1.0 * pi_tmp[k] * theta_tmp[k] * z[1][k] for k in range(len(ind))]
 
             x_sum = sum(x_tmp)
 
@@ -200,7 +195,7 @@ def em(u, nu, genomes, max_iter, epsilon, pi_prior, theta_prior):
                 x_norm = [0.0 for _ in x_tmp]
             else:
                 # Normalize new xs.
-                x_norm = [1. * k / x_sum for k in x_tmp]
+                x_norm = [1.0 * k / x_sum for k in x_tmp]
 
             # Update x in nu.
             nu[j][2] = x_norm
@@ -214,7 +209,9 @@ def em(u, nu, genomes, max_iter, epsilon, pi_prior, theta_prior):
         pip = pi_prior * prior_weight
 
         # Update pi.
-        pi = [(1. * k + pip) / (u_total + nu_total + pip * len(pi_sum)) for k in pi_sum]
+        pi = [
+            (1.0 * k + pip) / (u_total + nu_total + pip * len(pi_sum)) for k in pi_sum
+        ]
 
         if i == 0:
             init_pi = pi
@@ -226,7 +223,10 @@ def em(u, nu, genomes, max_iter, epsilon, pi_prior, theta_prior):
         if nu_total_div == 0:
             nu_total_div = 1
 
-        theta = [(1. * k + theta_p) / (nu_total_div + theta_p * len(theta_sum)) for k in theta_sum]
+        theta = [
+            (1.0 * k + theta_p) / (nu_total_div + theta_p * len(theta_sum))
+            for k in theta_sum
+        ]
 
         cutoff = 0.0
 
@@ -298,8 +298,21 @@ def compute_best_hit(u, nu, refs, reads):
     return best_hit_reads, best_hit, level_1, level_2
 
 
-def write_report(path, pi, refs, read_count, init_pi, best_hit_initial, best_hit_initial_reads, best_hit_final,
-                 best_hit_final_reads, level_1_initial, level_2_initial, level_1_final, level_2_final):
+def write_report(
+    path,
+    pi,
+    refs,
+    read_count,
+    init_pi,
+    best_hit_initial,
+    best_hit_initial_reads,
+    best_hit_final,
+    best_hit_final_reads,
+    level_1_initial,
+    level_2_initial,
+    level_1_final,
+    level_2_final,
+):
     tmp = zip(
         pi,
         refs,
@@ -311,7 +324,7 @@ def write_report(path, pi, refs, read_count, init_pi, best_hit_initial, best_hit
         level_1_initial,
         level_2_initial,
         level_1_final,
-        level_2_final
+        level_2_final,
     )
 
     tmp = sorted(tmp, reverse=True)
@@ -339,11 +352,11 @@ def write_report(path, pi, refs, read_count, init_pi, best_hit_initial, best_hit
         x4[:i],
         x5[:i],
         x8[:i],
-        x9[:i]
+        x9[:i],
     )
 
     with open(path, "w") as handle:
-        csv_writer = csv.writer(handle, delimiter='\t')
+        csv_writer = csv.writer(handle, delimiter="\t")
 
         header = [
             "Genome",
@@ -356,10 +369,15 @@ def write_report(path, pi, refs, read_count, init_pi, best_hit_initial, best_hit
             "Initial Best Hit",
             "Initial Best Hit Read Numbers",
             "Initial High Confidence Hits",
-            "Initial Low Confidence Hits"
+            "Initial Low Confidence Hits",
         ]
 
-        header1 = ["Total Number of Aligned Reads:", read_count, "Total Number of Mapped Genomes:", len(refs)]
+        header1 = [
+            "Total Number of Aligned Reads:",
+            read_count,
+            "Total Number of Mapped Genomes:",
+            len(refs),
+        ]
 
         csv_writer.writerow(header1)
         csv_writer.writerow(header)
@@ -377,23 +395,23 @@ def write_report(path, pi, refs, read_count, init_pi, best_hit_initial, best_hit
                     "best": x6[i],
                     "high": x10[i],
                     "low": x11[i],
-                    "reads": int(x7[i])
+                    "reads": int(x7[i]),
                 },
                 "initial": {
                     "pi": x3[i],
                     "best": x4[i],
                     "high": x8[i],
                     "low": x9[i],
-                    "reads": int(x5[i])
-                }
+                    "reads": int(x5[i]),
+                },
             }
 
     return results
 
 
 def rewrite_align(u, nu, vta_path, p_score_cutoff, path):
-    with open(path, 'w') as of:
-        with open(vta_path, 'r') as in1:
+    with open(path, "w") as of:
+        with open(vta_path, "r") as in1:
             read_id_dict = {}
             ref_id_dict = {}
             genomes = []
@@ -463,35 +481,6 @@ def calculate_coverage(path, ref_lengths):
     return coverage_dict
 
 
-async def subtract(target_path, output_path, host_scores):
-    isolates_high_scores = collections.defaultdict(int)
-
-    async with aiofiles.open(target_path, "r") as f:
-        async for line in f:
-            fields = line.rstrip().split(",")
-            read_id = fields[0]
-            isolates_high_scores[read_id] = max(isolates_high_scores[read_id], float(fields[4]))
-
-    subtracted_read_ids = set()
-
-    async with aiofiles.open(target_path, "r") as f_vta:
-        async with aiofiles.open(output_path, "w") as f_out:
-            async for line in f_vta:
-                fields = line.rstrip().split(",")
-                read_id = fields[0]
-                if isolates_high_scores[read_id] > host_scores.get(read_id, 0):
-                    await f_out.write(line)
-                else:
-                    subtracted_read_ids.add(read_id)
-
-    return len(subtracted_read_ids)
-
-
-def replace_after_subtraction(src, dest):
-    os.remove(dest)
-    shutil.move(src, dest)
-
-
 def run(vta_path, reassigned_path, p_score_cutoff):
     u, nu, refs, reads = build_matrix(vta_path)
     (
@@ -507,7 +496,7 @@ def run(vta_path, reassigned_path, p_score_cutoff):
         best_hit_final_reads,
         best_hit_final,
         level_1_final,
-        level_2_final
+        level_2_final,
     ) = compute_best_hit(u, nu, refs, reads)
 
     rewrite_align(
@@ -515,7 +504,7 @@ def run(vta_path, reassigned_path, p_score_cutoff):
         nu=nu,
         vta_path=vta_path,
         p_score_cutoff=p_score_cutoff,
-        path=reassigned_path
+        path=reassigned_path,
     )
 
     return (
@@ -530,5 +519,5 @@ def run(vta_path, reassigned_path, p_score_cutoff):
         init_pi,
         pi,
         refs,
-        reads
+        reads,
     )
