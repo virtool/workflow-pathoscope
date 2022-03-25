@@ -317,7 +317,8 @@ async def eliminate_subtraction(
             return
 
         if find_sam_align_score(fields) >= isolate_high_score:
-            to_retain_isolate_reads.remove(read_id)
+            # Use discard because the read_id may already have been removed.
+            to_retain_isolate_reads.discard(read_id)
 
     command = [
         "bowtie2",
