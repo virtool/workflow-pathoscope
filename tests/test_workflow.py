@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 import virtool_workflow.execution.run_subprocess
+from virtool_workflow.analysis.analysis import Analysis
 from virtool_workflow.analysis.indexes import Index
 from virtool_workflow.analysis.library_types import LibraryType
 from virtool_workflow.analysis.reads import Reads
@@ -233,7 +234,7 @@ async def test_eliminate_subtraction(
 
 
 async def test_pathoscope(
-    index, ref_lengths, run_in_executor, snapshot, work_path: Path
+    mocker, index, ref_lengths, run_in_executor, snapshot, work_path: Path
 ):
     isolate_vta_path = work_path / "to_isolates.vta"
 
@@ -243,9 +244,20 @@ async def test_pathoscope(
 
     shutil.copyfile(VTA_PATH, isolate_vta_path)
 
+    analysis = mocker.Mock(spec=Analysis)
+
     await reassignment(
-        intermediate, results, run_in_executor, isolate_vta_path, index, 0.01, work_path
+        analysis,
+        intermediate,
+        results,
+        run_in_executor,
+        isolate_vta_path,
+        index,
+        0.01,
+        work_path,
     )
+
+    analysis.upload.assert_called()
 
     with intermediate.reassigned_path.open("r") as f:
         assert sorted(line.rstrip() for line in f) == snapshot
