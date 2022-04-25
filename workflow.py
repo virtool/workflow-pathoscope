@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 
 import aiofiles
 from virtool_workflow import fixture, hooks, step
+from virtool_workflow.analysis.analysis import Analysis
 from virtool_workflow.analysis.indexes import Index
 from virtool_workflow.analysis.subtractions import Subtraction
 from virtool_workflow.execution.run_subprocess import RunSubprocess
@@ -364,6 +365,7 @@ async def eliminate_subtraction(
 
 @step
 async def reassignment(
+    analysis: Analysis,
     intermediate,
     results,
     run_in_executor,
@@ -420,6 +422,8 @@ async def reassignment(
         level_1_final,
         level_2_final,
     )
+
+    analysis.upload(report_path, "tsv")
 
     intermediate.coverage = await run_in_executor(
         calculate_coverage, reassigned_path, intermediate.lengths
