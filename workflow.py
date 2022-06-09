@@ -1,6 +1,4 @@
-import os
 import shlex
-import shutil
 from collections import defaultdict
 from logging import getLogger
 from pathlib import Path
@@ -8,18 +6,16 @@ from types import SimpleNamespace
 from typing import Any, Dict, List
 
 import aiofiles
+import aiofiles.os
 from virtool_workflow import fixture, hooks, step
 from virtool_workflow.analysis.analysis import Analysis
 from virtool_workflow.analysis.indexes import Index
 from virtool_workflow.analysis.subtractions import Subtraction
 from virtool_workflow.execution.run_subprocess import RunSubprocess
 
-from pathoscope import (
-    calculate_coverage,
-    find_sam_align_score,
-    run as run_pathoscope,
-    write_report,
-)
+from pathoscope import SamLine, calculate_coverage
+from pathoscope import run as run_pathoscope
+from pathoscope import write_report
 
 logger = getLogger(__name__)
 
@@ -67,13 +63,8 @@ def isolate_index_path(isolate_path: Path):
 
 
 @fixture
-def isolate_vta_path(isolate_path: Path):
-    return isolate_path / "to_isolates.vta"
-
-
-@fixture
-def subtraction_vta_path(work_path: Path):
-    return work_path / "subtracted.vta"
+def isolate_sam_path(isolate_path: Path):
+    return isolate_path / "to_isolates.sam"
 
 
 @fixture
@@ -84,6 +75,18 @@ def p_score_cutoff():
 @fixture
 def read_file_names(sample) -> str:
     return ",".join(str(path) for path in sample.read_paths)
+
+
+@fixture
+def reassigned_sam_path(work_path: Path):
+    """The path to the SAM file after Pathoscope reassignment."""
+    return work_path / "reassigned.sam"
+
+
+@fixture
+def subtracted_sam_path(work_path: Path) -> Path:
+    """The path to the SAM file after subtraction reads have been eliminated."""
+    return work_path / "subtracted.sam"
 
 
 @hooks.on_failure
@@ -118,22 +121,18 @@ async def map_default_isolates(
         if line[0] == "#" or line[0] == "@":
             return
 
-        fields = line.split("\t")
+        sam_line = SamLine(line)
 
-        # Bitwise FLAG - 0x4: segment unmapped
-        if int(fields[1]) & 0x4 == 4:
+        if sam_line.unmapped:
             return
 
-        ref_id = fields[2]
-
-        if ref_id == "*":
+        if sam_line.ref_id == "*":
             return
 
-        # Skip if the p_score does not meet the minimum cutoff.
-        if find_sam_align_score(fields) < p_score_cutoff:
+        if sam_line.score < p_score_cutoff:
             return
 
-        intermediate.to_otus.add(ref_id)
+        intermediate.to_otus.add(sam_line.ref_id)
 
     await run_subprocess(
         [
@@ -194,7 +193,7 @@ async def map_isolates(
     intermediate: SimpleNamespace,
     isolate_fastq_path: Path,
     isolate_index_path: Path,
-    isolate_vta_path: Path,
+    isolate_sam_path: Path,
     run_subprocess: RunSubprocess,
     proc: int,
     p_score_cutoff: float,
@@ -202,7 +201,7 @@ async def map_isolates(
     """Map sample reads to the all isolate index."""
     isolate_high_scores = defaultdict(float)
 
-    async with aiofiles.open(isolate_vta_path, "w") as f:
+    async with aiofiles.open(isolate_sam_path, "w") as f:
 
         async def stdout_handler(line: bytes):
             line = line.decode()
@@ -210,40 +209,22 @@ async def map_isolates(
             if line[0] == "@" or line == "#":
                 return
 
-            fields = line.split("\t")
+            sam_line = SamLine(line)
 
-            # Bitwise FLAG - 0x4 : segment unmapped
-            if int(fields[1]) & 0x4 == 4:
+            if sam_line.unmapped:
                 return
 
-            ref_id = fields[2]
-
-            if ref_id == "*":
+            if sam_line.ref_id == "*":
                 return
-
-            p_score = find_sam_align_score(fields)
 
             # Skip if the p_score does not meet the minimum cutoff.
-            if p_score < p_score_cutoff:
+            if sam_line.score < p_score_cutoff:
                 return
 
-            read_id = fields[0]
+            if sam_line.score > isolate_high_scores[sam_line.read_id]:
+                isolate_high_scores[sam_line.read_id] = sam_line.score
 
-            if p_score > isolate_high_scores[read_id]:
-                isolate_high_scores[read_id] = p_score
-
-            await f.write(
-                ",".join(
-                    [
-                        read_id,  # read_id
-                        ref_id,
-                        fields[3],  # pos
-                        str(len(fields[9])),  # length
-                        str(p_score),
-                    ]
-                )
-                + "\n"
-            )
+            await f.write(f"{line}\n")
 
         command = [
             "bowtie2",
@@ -269,109 +250,79 @@ async def map_isolates(
 
         await run_subprocess(command, stdout_handler=stdout_handler)
 
-        intermediate.isolate_high_scores = dict(isolate_high_scores)
+    intermediate.isolate_high_scores = dict(isolate_high_scores)
 
 
 @step
 async def eliminate_subtraction(
-    intermediate: SimpleNamespace,
     isolate_fastq_path: Path,
-    isolate_vta_path: Path,
+    isolate_sam_path: Path,
     proc: int,
     results: Dict[str, Any],
-    run_in_executor,
     run_subprocess: RunSubprocess,
     subtraction: Subtraction,
+    subtracted_sam_path: Path,
     work_path: Path,
 ):
     """
     Remove reads that map better to a subtraction than to a reference.
     """
-    to_retain_isolate_reads = set(intermediate.isolate_high_scores.keys())
+    to_subtraction_sam_path = work_path / "to_subtraction.sam"
 
-    logger.info(
-        f"Considering {len(to_retain_isolate_reads)} isolate-mapped reads for subtraction."
+    await run_subprocess(
+        [
+            "bowtie2",
+            "--local",
+            "--no-unal",
+            "--no-hd",
+            "--no-sq",
+            "-N",
+            "0",
+            "-p",
+            str(proc),
+            "-x",
+            shlex.quote(str(subtraction.bowtie2_index_path)),
+            "-U",
+            str(isolate_fastq_path),
+            "-S",
+            str(to_subtraction_sam_path),
+        ]
     )
 
-    async def stdout_handler(line: bytes):
-        line = line.decode()
+    await run_subprocess(
+        [
+            "./eliminate_subtraction",
+            str(isolate_sam_path),
+            str(to_subtraction_sam_path),
+            str(subtracted_sam_path),
+        ]
+    )
 
-        if line[0] == "@" or line == "#":
-            return
+    await aiofiles.os.remove(to_subtraction_sam_path)
 
-        fields = line.split("\t")
+    subtracted_count = 0
 
-        # Bitwise FLAG - 0x4 : segment unmapped
-        if int(fields[1]) & 0x4 == 4:
-            return
-
-        # No ref_id assigned.
-        if fields[2] == "*":
-            return
-
-        read_id = fields[0]
-
-        try:
-            isolate_high_score = intermediate.isolate_high_scores[read_id]
-        except KeyError:
-            # Don't care about subtraction mapping if the read didn't match an isolate.
-            return
-
-        if find_sam_align_score(fields) >= isolate_high_score:
-            # Use discard because the read_id may already have been removed.
-            to_retain_isolate_reads.discard(read_id)
-
-    command = [
-        "bowtie2",
-        "--local",
-        "-N",
-        "0",
-        "-p",
-        str(proc),
-        "-x",
-        shlex.quote(str(subtraction.bowtie2_index_path)),
-        "-U",
-        str(isolate_fastq_path),
-    ]
-
-    await run_subprocess(command, stdout_handler=stdout_handler)
-
-    logger.info(f"Retaining {len(to_retain_isolate_reads)} isolate-read mappings.")
-
-    output_path = work_path / "subtracted.vta"
-    subtracted_read_ids = set()
-
-    async with aiofiles.open(isolate_vta_path, "r") as f_in, aiofiles.open(
-        output_path, "w"
-    ) as f_out:
-        async for line in f_in:
-            read_id = line.split(",")[0]
-
-            if read_id in to_retain_isolate_reads:
-                await f_out.write(line)
-            else:
-                subtracted_read_ids.add(read_id)
-
-    await run_in_executor(os.remove, isolate_vta_path)
-    await run_in_executor(shutil.move, output_path, isolate_vta_path)
-
-    subtracted_count = len(subtracted_read_ids)
-    results["subtracted_count"] = subtracted_count
+    async with aiofiles.open("subtracted_read_ids.txt", "r") as f:
+        async for line in f:
+            if line:
+                subtracted_count += 1
 
     logger.info(
         f"Subtracted {subtracted_count} reads that mapped better to a subtraction."
     )
 
+    results["subtracted_count"] = subtracted_count
+
 
 @step
 async def reassignment(
     analysis: Analysis,
-    intermediate,
+    index: Index,
+    intermediate: SimpleNamespace,
+    p_score_cutoff: float,
     results,
     run_in_executor,
-    isolate_vta_path: Path,
-    index: Index,
-    p_score_cutoff: float,
+    subtracted_sam_path: Path,
     work_path: Path,
 ):
     """
@@ -379,8 +330,12 @@ async def reassignment(
 
     Tab-separated output is written to ``pathoscope.tsv``. The results are also parsed
     and saved to `intermediate.coverage`.
+
     """
-    reassigned_path = work_path / "reassigned.vta"
+    reassigned_path = work_path / "reassigned.sam"
+
+    logger.info(f"subtracted_sam_path: {subtracted_sam_path}")
+    logger.info(f"reassigned_path: {reassigned_path}")
 
     (
         best_hit_initial_reads,
@@ -397,7 +352,7 @@ async def reassignment(
         reads,
     ) = await run_in_executor(
         run_pathoscope,
-        isolate_vta_path,
+        subtracted_sam_path,
         reassigned_path,
         p_score_cutoff,
     )

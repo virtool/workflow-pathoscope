@@ -1,6 +1,107 @@
 import copy
 import csv
 import math
+from functools import cached_property
+from pathlib import Path
+from typing import Any, Dict, Generator, List
+
+
+class SamLine:
+    def __init__(self, line: str):
+        self._line = line
+
+    def __str__(self) -> str:
+        return self.line
+
+    @property
+    def line(self) -> str:
+        """
+        The SAM line used to create the object.
+        """
+        return self._line
+
+    @property
+    def read_id(self) -> str:
+        """
+        The ID of the mapped read.
+        """
+        return self.fields[0]
+
+    @cached_property
+    def read_length(self) -> int:
+        """
+        The length of the mapped read.
+        """
+        return len(self.fields[9])
+
+    @cached_property
+    def fields(self) -> List[Any]:
+        """
+        The SAM fields
+        """
+        return self.line.split("\t")
+
+    @cached_property
+    def position(self) -> int:
+        """
+        The position of the read on the reference.
+        """
+        return int(self.fields[3])
+
+    @cached_property
+    def score(self) -> float:
+        """
+        The Pathoscope score for the alignment.
+        """
+        return find_sam_align_score(self.fields)
+
+    @cached_property
+    def bitwise_flag(self) -> int:
+        """
+        The SAM bitwise flag.
+        """
+        return int(self.fields[1])
+
+    @cached_property
+    def unmapped(self) -> bool:
+        """
+        The read is unmapped.
+
+        This value is derived from the bitwise flag (0x4: segment unmapped).
+        """
+        return self.bitwise_flag & 4 == 4
+
+    @cached_property
+    def ref_id(self) -> str:
+        """
+        The ID of the mapped reference sequence.
+        """
+        return self.fields[2]
+
+
+def parse_sam(
+    path: Path, p_score_cutoff: float = 0.01
+) -> Generator[SamLine, None, None]:
+    """
+    Parse a SAM file and yield :class:`SamLine` objects.
+
+    :param path: the path to the SAM file
+
+    """
+    with open(path, "r") as f:
+        for line in f:
+            if line[0] == "#" or line[0] == "@":
+                continue
+
+            sam_line = SamLine(line)
+
+            if sam_line.unmapped:
+                continue
+
+            if sam_line.score < p_score_cutoff:
+                continue
+
+            yield SamLine(line)
 
 
 def rescale_samscore(u, nu, max_score, min_score):
@@ -31,18 +132,15 @@ def rescale_samscore(u, nu, max_score, min_score):
     return u, nu
 
 
-def find_sam_align_score(fields):
+def find_sam_align_score(fields: List[Any]) -> float:
     """
     Find the Bowtie2 alignment score for the given split line (``fields``).
 
     Searches the SAM fields for the ``AS:i`` substring and extracts the Bowtie2-specific alignment score. This will not
     work for other aligners.
 
-    :param fields: a line that has been split on "\t"
-    :type fields: list
-
+    :param fields: a SAM line that has been split on "\t"
     :return: the alignment score
-    :rtype: float
 
     """
     read_length = float(len(fields[9]))
@@ -55,7 +153,7 @@ def find_sam_align_score(fields):
     raise ValueError("Could not find alignment score")
 
 
-def build_matrix(vta_path, p_score_cutoff=0.01):
+def build_matrix(sam_path: Path, p_score_cutoff=0.01):
     u = dict()
     nu = dict()
 
@@ -71,51 +169,51 @@ def build_matrix(vta_path, p_score_cutoff=0.01):
     max_score = 0
     min_score = 0
 
-    with open(vta_path, "r") as handle:
-        for line in handle:
-            read_id, ref_id, _, _, p_score = line.rstrip().split(",")
+    for sam_line in parse_sam(sam_path, p_score_cutoff):
+        if sam_line.score < p_score_cutoff:
+            continue
 
-            p_score = float(p_score)
+        min_score = min(min_score, sam_line.score)
+        max_score = max(max_score, sam_line.score)
 
-            if p_score < p_score_cutoff:
+        ref_index = h_ref_id.get(sam_line.ref_id, -1)
+
+        if ref_index == -1:
+            ref_index = ref_count
+            h_ref_id[sam_line.ref_id] = ref_index
+            refs.append(sam_line.ref_id)
+            ref_count += 1
+
+        read_index = h_read_id.get(sam_line.read_id, -1)
+
+        if read_index == -1:
+            # hold on this new read. first, wrap previous read profile and see if any
+            # previous read has a same profile with that!
+            read_index = read_count
+            h_read_id[sam_line.read_id] = read_index
+            reads.append(sam_line.read_id)
+            read_count += 1
+            u[read_index] = [
+                [ref_index],
+                [sam_line.score],
+                [float(sam_line.score)],
+                sam_line.score,
+            ]
+        else:
+            if read_index in u:
+                if ref_index in u[read_index][0]:
+                    continue
+                nu[read_index] = u[read_index]
+                del u[read_index]
+
+            if ref_index in nu[read_index][0]:
                 continue
 
-            min_score = min(min_score, p_score)
-            max_score = max(max_score, p_score)
+            nu[read_index][0].append(ref_index)
+            nu[read_index][1].append(sam_line.score)
 
-            ref_index = h_ref_id.get(ref_id, -1)
-
-            if ref_index == -1:
-                ref_index = ref_count
-                h_ref_id[ref_id] = ref_index
-                refs.append(ref_id)
-                ref_count += 1
-
-            read_index = h_read_id.get(read_id, -1)
-
-            if read_index == -1:
-                # hold on this new read. first, wrap previous read profile and see if any previous read has a same
-                # profile with that!
-                read_index = read_count
-                h_read_id[read_id] = read_index
-                reads.append(read_id)
-                read_count += 1
-                u[read_index] = [[ref_index], [p_score], [float(p_score)], p_score]
-            else:
-                if read_index in u:
-                    if ref_index in u[read_index][0]:
-                        continue
-                    nu[read_index] = u[read_index]
-                    del u[read_index]
-
-                if ref_index in nu[read_index][0]:
-                    continue
-
-                nu[read_index][0].append(ref_index)
-                nu[read_index][1].append(p_score)
-
-                if p_score > nu[read_index][3]:
-                    nu[read_index][3] = p_score
+            if sam_line.score > nu[read_index][3]:
+                nu[read_index][3] = sam_line.score
 
     u, nu = rescale_samscore(u, nu, max_score, min_score)
 
@@ -409,65 +507,62 @@ def write_report(
     return results
 
 
-def rewrite_align(u, nu, vta_path, p_score_cutoff, path):
-    with open(path, "w") as of:
-        with open(vta_path, "r") as in1:
-            read_id_dict = {}
-            ref_id_dict = {}
-            genomes = []
-            read = []
-            ref_count = 0
-            read_count = 0
+def rewrite_align(u, nu, sam_path: Path, p_score_cutoff: float, path: Path):
+    """
+    Rewrite the isolate SAM file to reflect Pathoscope read reassignments.
 
-            for line in in1:
-                read_id, ref_id, _, _, p_score = line.split(",")
+    :param u: the uniquely mapped read matrix
+    :param nu: the non-uniquely mapped read matrix
+    :param sam_path: the path to the isolate SAM file
+    :param p_score_cutoff: the p-score cutoff
+    :param path: the path to the reassigned SAM output
 
-                p_score = float(p_score)
+    """
+    read_id_dict = {}
+    ref_id_dict = {}
+    genomes = []
+    read = []
+    ref_count = 0
+    read_count = 0
 
-                if p_score < p_score_cutoff:
+    with open(path, "w") as f:
+        for line in parse_sam(sam_path, p_score_cutoff=p_score_cutoff):
+            ref_index = ref_id_dict.get(line.ref_id, -1)
+
+            if ref_index == -1:
+                ref_index = ref_count
+                ref_id_dict[line.ref_id] = ref_index
+                genomes.append(line.ref_id)
+                ref_count += 1
+
+            read_index = read_id_dict.get(line.read_id, -1)
+
+            if read_index == -1:
+                # hold on this new read
+                # first, wrap previous read profile and see if any previous read has a
+                # same profile with that!
+                read_index = read_count
+                read_id_dict[line.read_id] = read_index
+                read.append(line.read_id)
+                read_count += 1
+                if read_index in u:
+                    f.write(str(line))
                     continue
 
-                ref_index = ref_id_dict.get(ref_id, -1)
+            if read_index in nu:
+                if find_updated_score(nu, read_index, ref_index) < p_score_cutoff:
+                    continue
 
-                if ref_index == -1:
-                    ref_index = ref_count
-                    ref_id_dict[ref_id] = ref_index
-                    genomes.append(ref_id)
-                    ref_count += 1
-
-                read_index = read_id_dict.get(read_id, -1)
-
-                if read_index == -1:
-                    # hold on this new read
-                    # first, wrap previous read profile and see if any previous read has a same profile with that!
-                    read_index = read_count
-                    read_id_dict[read_id] = read_index
-                    read.append(read_id)
-                    read_count += 1
-                    if read_index in u:
-                        of.write(line)
-                        continue
-
-                if read_index in nu:
-                    if find_updated_score(nu, read_index, ref_index) < p_score_cutoff:
-                        continue
-
-                    of.write(line)
+                f.write(str(line))
 
 
-def calculate_coverage(path, ref_lengths):
-    coverage_dict = dict()
-    pos_length_list = list()
+def calculate_coverage(sam_path: Path, ref_lengths: Dict[str, int]):
+    coverage_dict = {}
+    pos_length_list = []
 
-    with open(path, "r") as f:
-        for line in f:
-            _, ref_id, pos, length, _ = line.split(",")
-
-            coverage_dict[ref_id] = None
-            pos_length_list.append((ref_id, int(pos), int(length)))
-
-    for key in coverage_dict:
-        coverage_dict[key] = [0] * ref_lengths[key]
+    for line in parse_sam(sam_path):
+        coverage_dict[line.ref_id] = [0] * ref_lengths[line.ref_id]
+        pos_length_list.append((line.ref_id, line.position, line.read_length))
 
     for ref_id, pos, length in pos_length_list:
         start_index = pos - 1
@@ -481,8 +576,9 @@ def calculate_coverage(path, ref_lengths):
     return coverage_dict
 
 
-def run(vta_path, reassigned_path, p_score_cutoff):
-    u, nu, refs, reads = build_matrix(vta_path)
+def run(sam_path: Path, reassigned_path: Path, p_score_cutoff: float):
+    u, nu, refs, reads = build_matrix(sam_path)
+
     (
         best_hit_initial_reads,
         best_hit_initial,
@@ -502,7 +598,7 @@ def run(vta_path, reassigned_path, p_score_cutoff):
     rewrite_align(
         u=u,
         nu=nu,
-        vta_path=vta_path,
+        sam_path=sam_path,
         p_score_cutoff=p_score_cutoff,
         path=reassigned_path,
     )

@@ -38,14 +38,14 @@ def test_find_sam_align_score(sam_line, expected_scores):
     )
 
 
-@pytest.mark.datafiles(VTA_PATH)
+@pytest.mark.datafiles(SAM_PATH)
 def test_build_matrix(data_regression, datafiles):
-    vta_path = datafiles / "test.vta"
+    sam_path = datafiles / "test_al.sam"
 
     with open(MATRIX_PATH, "rb") as handle:
         expected = pickle.load(handle)
 
-    actual = pathoscope.build_matrix(vta_path, 0.01)
+    actual = pathoscope.build_matrix(sam_path, 0.01)
     u, nu, refs, reads = actual
 
     data_regression.check([u, nu, sorted(refs), sorted(reads)])
@@ -56,7 +56,7 @@ def test_build_matrix(data_regression, datafiles):
     assert sorted(expected[3]) == sorted(actual[3])
 
 
-@pytest.mark.datafiles(VTA_PATH)
+@pytest.mark.datafiles(SAM_PATH)
 @pytest.mark.parametrize("theta_prior", [0, 1e-5])
 @pytest.mark.parametrize("pi_prior", [0, 1e-5])
 @pytest.mark.parametrize("epsilon", [1e-6, 1e-7, 1e-8])
@@ -71,9 +71,9 @@ def test_em(
     max_iter,
     expected_em,
 ):
-    vta_path = datafiles / "test.vta"
+    sam_path = datafiles / "test_al.sam"
 
-    u, nu, refs, _ = pathoscope.build_matrix(vta_path, 0.01)
+    u, nu, refs, _ = pathoscope.build_matrix(sam_path, 0.01)
 
     result = pathoscope.em(u, nu, refs, max_iter, epsilon, pi_prior, theta_prior)
     init_pi, pi, theta, updated_nu = result
@@ -101,26 +101,24 @@ def test_compute_best_hit(data_regression):
     data_regression.check(pathoscope.compute_best_hit(*matrix_tuple))
 
 
-@pytest.mark.datafiles(VTA_PATH)
+@pytest.mark.datafiles(SAM_PATH)
 def test_rewrite_align(datafiles, file_regression, tmp_path):
     with open(UNU_PATH, "rb") as f:
         u, nu = pickle.load(f)
 
-    vta_path = datafiles / "test.vta"
+    rewrite_path = tmp_path / "rewrite.sam"
 
-    rewrite_path = tmp_path / "rewrite.vta"
-
-    pathoscope.rewrite_align(u, nu, vta_path, 0.01, rewrite_path)
+    pathoscope.rewrite_align(u, nu, datafiles / "test_al.sam", 0.01, rewrite_path)
 
     with open(rewrite_path, "r") as f:
         file_regression.check(f.read())
 
 
-@pytest.mark.datafiles(VTA_PATH)
+@pytest.mark.datafiles(SAM_PATH)
 def test_calculate_coverage(datafiles, tmp_path, sam_path):
     ref_lengths = dict()
 
-    vta_path = datafiles / "test.vta"
+    sam_path = datafiles / "test_al.sam"
 
     with open(sam_path, "r") as handle:
         for line in handle:
@@ -139,14 +137,14 @@ def test_calculate_coverage(datafiles, tmp_path, sam_path):
 
                 ref_lengths[ref_id] = length
 
-    pathoscope.calculate_coverage(vta_path, ref_lengths)
+    pathoscope.calculate_coverage(sam_path, ref_lengths)
 
 
-@pytest.mark.datafiles(VTA_PATH)
+@pytest.mark.datafiles(SAM_PATH)
 def test_write_report(datafiles, file_regression, tmp_path):
-    vta_path = datafiles / "test.vta"
+    sam_path = datafiles / "test_al.sam"
 
-    u, nu, refs, reads = pathoscope.build_matrix(vta_path, 0.01)
+    u, nu, refs, reads = pathoscope.build_matrix(sam_path, 0.01)
 
     with open(BEST_HIT_PATH, "rb") as handle:
         (
