@@ -10,7 +10,7 @@ on:
 
 jobs:
   commitlint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v2
         with:
@@ -18,17 +18,11 @@ jobs:
       - uses: wagoid/commitlint-github-action@v4
   test:
     runs-on: ubuntu-20.04
-    container:
-      image: virtool/workflow:nightly
     steps:
       - name: Checkout
         uses: actions/checkout@v2
-      - name: Install Poetry
-        uses: snok/install-poetry@v1
-      - name: Run Tests
-        run: |
-          poetry install
-          poetry run pytest
+      - name: Test
+        run: docker build --target=test .
   release:
     runs-on: ubuntu-20.04
     needs: test

@@ -17,4 +17,4 @@ COPY --from=rust /build/target/release/eliminate_subtraction ./
 COPY tests /test/tests
 COPY workflow.py pathoscope.py ./
 RUN ls
-RUN poetry run pytest tests/test_workflow.py
+RUN poetry run pytest
