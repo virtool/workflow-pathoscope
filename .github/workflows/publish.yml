@@ -24,6 +24,7 @@ jobs:
         with:
           push: true
           tags: virtool/pathoscope:${{ github.event.release.tag_name }}
+          target: "base"
   ghcr:
     runs-on: ubuntu-20.04
     permissions:
@@ -54,4 +55,5 @@ jobs:
           context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          target: "base"
           labels: ${{ steps.meta.outputs.labels }}
