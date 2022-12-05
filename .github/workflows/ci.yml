@@ -10,30 +10,28 @@ on:
 
 jobs:
   commitlint:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v2
         with:
           fetch-depth: 0
       - uses: wagoid/commitlint-github-action@v4
   test:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@v2
       - name: Test
         run: docker build --target=test .
   release:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     needs: test
     if: github.event_name == 'push'
     steps:
-      - name: Checkout
-        uses: actions/checkout@v2
-      - name: Setup NodeJS
-        uses: actions/setup-node@v1
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v1
         with:
-          node-version: 14
+          node-version: 16
       - name: Install semantic-release
         run: npm i semantic-release@v18.0.0 conventional-changelog-conventionalcommits@4.6.1
       - name: Release
