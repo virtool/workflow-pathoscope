@@ -85,7 +85,9 @@ def parse_sam(
     """
     Parse a SAM file and yield :class:`SamLine` objects.
 
-    :param path: the path to the SAM file
+    :param path: The path to the SAM file.
+    :param p_score_cutoff: The minimum allowed ``p_score`` for an alignment.
+    :return: A generator of sam lines.
 
     """
     with open(path, "r") as f:

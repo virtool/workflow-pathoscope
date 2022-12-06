@@ -5,13 +5,17 @@ from shutil import copytree
 from types import SimpleNamespace
 
 import pytest
-import virtool_workflow.execution.run_subprocess
-from virtool_workflow.analysis.analysis import Analysis
-from virtool_workflow.analysis.indexes import Index
-from virtool_workflow.analysis.library_types import LibraryType
-from virtool_workflow.analysis.reads import Reads
-from virtool_workflow.data_model import NucleotideComposition, Subtraction
-from virtool_workflow.data_model.samples import Sample
+from aiohttp.test_utils import make_mocked_coro
+from pydantic_factories import ModelFactory
+from virtool_core.models.index import Index
+from virtool_core.models.subtraction import (
+    Subtraction,
+)
+from virtool_workflow.data_model.analysis import WFAnalysis
+from virtool_workflow.data_model.indexes import WFIndex
+from virtool_workflow.data_model.samples import Sample, WFSample
+from virtool_workflow.data_model.subtractions import WFSubtraction
+from virtool_workflow.runtime.run_subprocess import run_subprocess as wf_run_subprocess
 
 from pathoscope import parse_sam
 from workflow import (
@@ -38,76 +42,67 @@ def index(work_path: Path):
     index_path = work_path / "indexes/index3"
     shutil.copytree(INDEX_PATH, index_path)
 
-    return Index(
-        id="index3",
-        manifest={
-            "foobar": 10,
-            "reo": 5,
-            "baz": 6,
-        },
-        _sequence_otu_map={
-            "NC_016509": "foobar",
-            "NC_001948": "foobar",
-            "13TF149_Reovirus_TF1_Seg06": "reo",
-            "13TF149_Reovirus_TF1_Seg03": "reo",
-            "13TF149_Reovirus_TF1_Seg07": "reo",
-            "13TF149_Reovirus_TF1_Seg02": "reo",
-            "13TF149_Reovirus_TF1_Seg08": "reo",
-            "13TF149_Reovirus_TF1_Seg11": "reo",
-            "13TF149_Reovirus_TF1_Seg04": "reo",
-            "NC_004667": "foobar",
-            "NC_003347": "foobar",
-            "NC_003615": "foobar",
-            "NC_003689": "foobar",
-            "NC_011552": "foobar",
-            "KX109927": "baz",
-            "NC_008039": "foobar",
-            "NC_015782": "foobar",
-            "NC_016416": "foobar",
-            "NC_003623": "foobar",
-            "NC_008038": "foobar",
-            "NC_001836": "foobar",
-            "JQ080272": "baz",
-            "NC_017938": "foobar",
-            "NC_008037": "foobar",
-            "NC_007448": "foobar",
-        },
-        reference=None,
-        path=index_path,
-        ready=True,
-        _run_in_executor=run_in_executor,
-        _run_subprocess=run_subprocess,
+    class IndexFactory(ModelFactory):
+        __model__ = Index
+
+    manifest = {"foobar": 10, "reo": 5, "baz": 6}
+
+    index = WFIndex(
+        IndexFactory.build(manifest=manifest),
+        index_path,
+        make_mocked_coro(),
+        make_mocked_coro(),
+        run_subprocess,
     )
+
+    index._sequence_otu_map = {
+        "NC_016509": "foobar",
+        "NC_001948": "foobar",
+        "13TF149_Reovirus_TF1_Seg06": "reo",
+        "13TF149_Reovirus_TF1_Seg03": "reo",
+        "13TF149_Reovirus_TF1_Seg07": "reo",
+        "13TF149_Reovirus_TF1_Seg02": "reo",
+        "13TF149_Reovirus_TF1_Seg08": "reo",
+        "13TF149_Reovirus_TF1_Seg11": "reo",
+        "13TF149_Reovirus_TF1_Seg04": "reo",
+        "NC_004667": "foobar",
+        "NC_003347": "foobar",
+        "NC_003615": "foobar",
+        "NC_003689": "foobar",
+        "NC_011552": "foobar",
+        "KX109927": "baz",
+        "NC_008039": "foobar",
+        "NC_015782": "foobar",
+        "NC_016416": "foobar",
+        "NC_003623": "foobar",
+        "NC_008038": "foobar",
+        "NC_001836": "foobar",
+        "JQ080272": "baz",
+        "NC_017938": "foobar",
+        "NC_008037": "foobar",
+        "NC_007448": "foobar",
+    }
+
+    return index
 
 
 @pytest.fixture
 def sample(work_path: Path):
     shutil.copyfile(FASTQ_PATH, work_path / "reads_1.fq.gz")
-    sample_ = Sample(
-        id="foobar",
-        name="foobar",
-        paired=False,
-        library_type=LibraryType.other,
-        quality={"count": 1337, "length": [78, 101]},
-        locale=None,
-        isolate=None,
-        host=None,
-    )
 
-    sample_.read_paths = (work_path / "reads_1.fq.gz",)
+    class SampleFactory(ModelFactory):
+        __model__ = Sample
 
-    return sample_
+    _sample = WFSample.parse_obj(SampleFactory.build())
+
+    _sample.read_paths = (work_path / "reads_1.fq.gz",)
+
+    return _sample
 
 
 @pytest.fixture
-def read_file_names(sample):
+def read_file_names(sample: WFSample):
     return ",".join(str(p) for p in sample.read_paths)
-
-
-@pytest.fixture
-def reads(work_path: Path):
-    shutil.copyfile(FASTQ_PATH, work_path / "reads_1.fq.gz")
-    return Reads(sample=sample, quality={}, path=work_path)
 
 
 @pytest.fixture
@@ -119,34 +114,20 @@ def subtraction(work_path: Path):
 
     copytree(SUBTRACTION_PATH, subtraction_path)
 
-    nucleotide_composition = NucleotideComposition(
-        a=0.1,
-        t=0.2,
-        g=0.3,
-        c=0.4,
-    )
+    class SubtractionFactory(ModelFactory):
+        __model__ = Subtraction
 
-    return Subtraction(
-        id="arabidopsis_thaliana",
-        name="Arabidopsis thaliana",
-        nickname="Thalecress",
-        count=12,
-        gc=nucleotide_composition,
+    _subtraction = SubtractionFactory.build()
+
+    return WFSubtraction(
+        **{**_subtraction.dict(), "ready": True},
         path=subtraction_path,
     )
 
 
 @pytest.fixture
-async def run_in_executor():
-    async def _run_in_executor(func, *args):
-        return func(*args)
-
-    return _run_in_executor
-
-
-@pytest.fixture
 async def run_subprocess():
-    return virtool_workflow.execution.run_subprocess.run_subprocess()
+    return wf_run_subprocess()
 
 
 @pytest.fixture
@@ -156,7 +137,7 @@ def ref_lengths():
 
 
 async def test_map_default_isolates(
-    read_file_names, index: Index, run_subprocess, snapshot
+    read_file_names, index: WFIndex, run_subprocess, snapshot
 ):
     intermediate = SimpleNamespace(to_otus=set())
 
@@ -232,14 +213,13 @@ async def test_pathoscope(
     file_regression,
     index,
     ref_lengths,
-    run_in_executor,
     snapshot,
     work_path: Path,
 ):
     subtracted_path = work_path / "subtracted.sam"
     shutil.copyfile(SAM_PATH, subtracted_path)
 
-    analysis = mocker.Mock(spec=Analysis)
+    analysis = mocker.Mock(spec=WFAnalysis)
     intermediate = SimpleNamespace(lengths=ref_lengths)
     results = {}
 
@@ -249,7 +229,6 @@ async def test_pathoscope(
         intermediate,
         0.01,
         results,
-        run_in_executor,
         subtracted_path,
         work_path,
     )

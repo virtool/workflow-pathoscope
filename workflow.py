@@ -1,92 +1,24 @@
+import asyncio
 import shlex
 from collections import defaultdict
 from logging import getLogger
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import aiofiles
 import aiofiles.os
-from virtool_workflow import fixture, hooks, step
-from virtool_workflow.analysis.analysis import Analysis
-from virtool_workflow.analysis.indexes import Index
-from virtool_workflow.analysis.subtractions import Subtraction
-from virtool_workflow.execution.run_subprocess import RunSubprocess
+from virtool_workflow import hooks, step
+from virtool_workflow.data_model.analysis import WFAnalysis
+from virtool_workflow.data_model.indexes import WFIndex
+from virtool_workflow.data_model.subtractions import WFSubtraction
+from virtool_workflow.runtime.run_subprocess import RunSubprocess
 
 from pathoscope import SamLine, calculate_coverage
 from pathoscope import run as run_pathoscope
 from pathoscope import write_report
 
-logger = getLogger(__name__)
-
-
-@fixture
-def index(indexes: List[Index]):
-    return indexes[0]
-
-
-@fixture
-def subtraction(subtractions: List[Subtraction]):
-    return subtractions[0]
-
-
-@fixture
-def intermediate():
-    """A namespace for storing intermediate values."""
-    return SimpleNamespace(
-        isolate_high_scores={},
-        to_otus=set(),
-    )
-
-
-@fixture
-def isolate_path(work_path: Path):
-    path = work_path / "isolates"
-    path.mkdir()
-
-    return path
-
-
-@fixture
-def isolate_fasta_path(isolate_path: Path):
-    return isolate_path / "isolate_index.fa"
-
-
-@fixture
-def isolate_fastq_path(isolate_path: Path):
-    return isolate_path / "isolate_mapped.fq"
-
-
-@fixture
-def isolate_index_path(isolate_path: Path):
-    return isolate_path / "isolates"
-
-
-@fixture
-def isolate_sam_path(isolate_path: Path):
-    return isolate_path / "to_isolates.sam"
-
-
-@fixture
-def p_score_cutoff():
-    return 0.01
-
-
-@fixture
-def read_file_names(sample) -> str:
-    return ",".join(str(path) for path in sample.read_paths)
-
-
-@fixture
-def reassigned_sam_path(work_path: Path):
-    """The path to the SAM file after Pathoscope reassignment."""
-    return work_path / "reassigned.sam"
-
-
-@fixture
-def subtracted_sam_path(work_path: Path) -> Path:
-    """The path to the SAM file after subtraction reads have been eliminated."""
-    return work_path / "subtracted.sam"
+logger = getLogger("pathoscope")
 
 
 @hooks.on_failure
@@ -103,7 +35,7 @@ async def upload_results(results, analysis_provider):
 async def map_default_isolates(
     intermediate: SimpleNamespace,
     read_file_names: str,
-    index: Index,
+    index: WFIndex,
     proc: int,
     p_score_cutoff: float,
     run_subprocess: RunSubprocess,
@@ -160,7 +92,7 @@ async def map_default_isolates(
 
 @step
 async def build_isolate_index(
-    index: Index,
+    index: WFIndex,
     intermediate: SimpleNamespace,
     isolate_fasta_path: Path,
     isolate_index_path: Path,
@@ -260,7 +192,7 @@ async def eliminate_subtraction(
     proc: int,
     results: Dict[str, Any],
     run_subprocess: RunSubprocess,
-    subtraction: Subtraction,
+    subtraction: WFSubtraction,
     subtracted_sam_path: Path,
     work_path: Path,
 ):
@@ -316,12 +248,11 @@ async def eliminate_subtraction(
 
 @step
 async def reassignment(
-    analysis: Analysis,
-    index: Index,
+    analysis: WFAnalysis,
+    index: WFIndex,
     intermediate: SimpleNamespace,
     p_score_cutoff: float,
     results,
-    run_in_executor,
     subtracted_sam_path: Path,
     work_path: Path,
 ):
@@ -350,7 +281,7 @@ async def reassignment(
         pi,
         refs,
         reads,
-    ) = await run_in_executor(
+    ) = await asyncio.to_thread(
         run_pathoscope,
         subtracted_sam_path,
         reassigned_path,
@@ -361,7 +292,7 @@ async def reassignment(
 
     report_path = work_path / "report.tsv"
 
-    report = await run_in_executor(
+    report = await asyncio.to_thread(
         write_report,
         report_path,
         pi,
@@ -380,7 +311,7 @@ async def reassignment(
 
     analysis.upload(report_path, "tsv")
 
-    intermediate.coverage = await run_in_executor(
+    intermediate.coverage = await asyncio.to_thread(
         calculate_coverage, reassigned_path, intermediate.lengths
     )
 
