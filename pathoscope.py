@@ -32,7 +32,8 @@ class SamLine:
         """
         The length of the mapped read.
         """
-        return len(self.fields[9])
+        temp = len(self.fields[9])
+        return temp
 
     @cached_property
     def fields(self) -> List[Any]:

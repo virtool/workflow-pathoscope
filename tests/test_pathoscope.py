@@ -5,7 +5,7 @@ import pytest
 
 import pathoscope
 
-BASE_PATH = Path.cwd() / "tests" / "test_files"
+BASE_PATH = Path.cwd() / "test_files"
 BEST_HIT_PATH = Path.cwd() / BASE_PATH / "best_hit"
 EM_PATH = BASE_PATH / "em"
 MATRIX_PATH = BASE_PATH / "ps_matrix"
