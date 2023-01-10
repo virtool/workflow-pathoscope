@@ -1,5 +1,5 @@
 [package]
-name = "expectation_maximization"
+name = "sam_file_parser"
 version = "0.1.0"
 edition = "2021"
 
