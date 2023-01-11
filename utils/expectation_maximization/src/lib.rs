@@ -1,80 +1,224 @@
 #![allow(nonstandard_style)]
 #![allow(unused)]
 
-use std::{path::Path, collections::{hash_map, HashMap}, fs::File, io::BufReader, cmp::min};
-use crate::SAMParser::*;
 
-use SAMParser::parseSAM;
-
-
-fn buildMatrix(SAMPath: &str, pScoreCutoff: Option<f32>)
+///Wrapper for the buildMatrix function and adjacent code
+mod buildMatrix
 {
-    let mut u: HashMap<i32, (Vec<i32>, Vec<f32>, Vec<f32>, f32)> = HashMap::new();
-    let mut nu: HashMap<i32, ((i32, i32), (f32, f32), f32, f32)> = HashMap::new();
+    use std::collections::HashMap;
+    use std::fs::File;
+    use std::io::BufReader;
+    use super::parseSam::*;
 
-    let mut hReadId: HashMap<String, i32> = HashMap::new();
-    let mut hRefId: HashMap<String, i32> = HashMap::new();
-
-    let mut refs: Vec<String> = Vec::new();
-    let mut reads: Vec<String> = Vec::new();
-
-    let mut refCount: i32 = 0;
-    let mut readCount: i32 = 0;
-
-    let mut maxScore: f32 = 0.0;
-    let mut minScore: f32 = 0.0;
-
-
-    let SAMFile = File::open("TestFiles/test_al.sam").expect("Invalid file");
-    let mut SAMReader = BufReader::new(SAMFile);
-    
-    loop
+    ///produces the SAM matrix given a path to a .SAM file
+    pub fn buildMatrix(SAMPath: &str, pScoreCutoff: Option<f64>) -> (
+                                                                    HashMap<i32, (i32, f64)>, 
+                                                                    HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>,
+                                                                    Vec<String>,
+                                                                    Vec<String>
+                                                                )
     {
-        let newLine: SamLine;
+        let mut u: HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)> = HashMap::new();
+        let mut nu: HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)> = HashMap::new();
+
+        let mut hReadId: HashMap<String, i32> = HashMap::new();
+        let mut hRefId: HashMap<String, i32> = HashMap::new();
+
+        let mut refs: Vec<String> = Vec::new();
+        let mut reads: Vec<String> = Vec::new();
+
+        let mut refCount: i32 = 0;
+        let mut readCount: i32 = 0;
+
+        let mut maxScore: f64 = 0.0;
+        let mut minScore: f64 = 0.0;
+
+
+        let SAMFile = File::open("TestFiles/test_al.sam").expect("Invalid file");
+        let mut SAMReader = BufReader::new(SAMFile);
         
-        match parseSAM(&mut SAMReader, pScoreCutoff)
+        loop
         {
-                parseResult::Ok(data) => 
+            let newLine: SamLine;
+            
+            match parseSAM(&mut SAMReader, pScoreCutoff)
+            {
+                    parseResult::Ok(data) => 
+                    {
+                        if data.score < pScoreCutoff
+                        {
+                            continue;
+                        }
+                        else
+                        {
+                            newLine = data;
+                        }
+                    }
+                    parseResult::EOF => break,
+                    parseResult::Err(msg) => 
+                    {
+                        println!("{}",msg);
+                        panic!();
+                    }
+                    parseResult::Ignore => continue
+            }
+
+            minScore = newLine.score.unwrap().min(minScore); // might need to completely redo this..
+            maxScore = newLine.score.unwrap().max(maxScore);
+
+            let mut refIndex = (hRefId.get(&newLine.ref_id).unwrap_or(&-1)).clone();
+
+            if refIndex == -1
+            {
+                refIndex = refCount;
+                hRefId.insert(newLine.ref_id.clone(), refIndex);
+                refs.push(newLine.ref_id.clone());
+                refCount += 1;
+            }
+
+            let mut readIndex = (hReadId.get(&newLine.read_id).unwrap_or(&-1)).clone();
+
+            if readIndex == -1
+            {
+                readIndex = readCount;
+                hReadId.insert(newLine.read_id.clone(), readIndex);
+                reads.push(newLine.read_id.clone());
+                readCount += 1;
+
+                u.insert(readIndex, (
+                    vec![refIndex],
+                    vec![newLine.score.clone().unwrap()],
+                    vec![newLine.score.clone().unwrap() as f64],
+                    newLine.score.clone().unwrap()
+                ));
+            }
+            else
+            {
+                if u.contains_key(&readIndex)
                 {
-                    if data.score < pScoreCutoff
+                    if u.get(&readIndex).unwrap().0.contains(&refIndex)
                     {
                         continue;
                     }
-                    else
-                    {
-                        newLine = data;
-                    }
+                    nu.insert(readIndex, u.get(&readIndex).unwrap().clone());
+                    u.remove(&readIndex);
                 }
-                parseResult::EOF => break,
-                parseResult::Err(msg) => 
+
+                if nu.get(&readIndex).unwrap().0.contains(&refIndex)
                 {
-                    println!("{}",msg);
-                    return;
+                    continue;
                 }
-                parseResult::Ignore => continue
+
+                nu.get_mut(&readIndex).unwrap().0.push(refIndex);
+                nu.get_mut(&readIndex).unwrap().1.push(newLine.score.unwrap());
+
+                if newLine.score.unwrap() > nu.get(&readIndex).unwrap().3
+                {
+                    nu.get_mut(&readIndex).unwrap().3 = newLine.score.unwrap();
+                }
+            }
+        
         }
 
-        minScore = newLine.score.unwrap().min(minScore);
-        maxScore = newLine.score.unwrap().max(maxScore);
+        let (mut u, mut nu) = rescaleSamscore(u, nu, maxScore, minScore);
+        
+        let mut uPtr = &mut u as *mut HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>;
+        let mut nuPtr = &mut nu as *mut HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>;
 
-        let mut refIndex = (hRefId.get(&newLine.ref_id).unwrap_or(&-1)).clone();
+        let mut uReturn: HashMap<i32, (i32, f64)> = HashMap::new();
+        let mut uReturnPtr = &mut uReturn as *mut HashMap<i32, (i32, f64)>;
 
-        if refIndex == -1
+        unsafe
         {
-            refIndex = refCount;
-            hRefId.insert(newLine.ref_id.clone(), refIndex);
-            refs.push(newLine.ref_id.clone());
-            refCount += 1;
+        for k in (*uPtr).keys()
+        {
+            (*uReturnPtr).insert(k.clone(), (
+                (*uPtr).get(k).unwrap().0.get(0).unwrap().clone(),
+                (*uPtr).get(k).unwrap().1.get(0).unwrap().clone()
+            ));
         }
+
+        for k in (*nuPtr).keys()
+        {
+            let pScoreSum = (*nuPtr).get(k).unwrap().1.iter().sum::<f64>();
+
+                (*nuPtr).get_mut(k).unwrap().2 = (*nuPtr).get(k).unwrap().1.iter().map(|data| {data / pScoreSum}).collect();
+        }
+        }
+
+        return (uReturn, nu, refs, reads);
+        
     }
 
-    println!("boop!");
+    ///modifies the scores of u and nu with respect to maxScore and minScore
+    fn rescaleSamscore  ( 
+                            mut u: HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>,
+                            mut nu: HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>,
+                            maxScore: f64,
+                            minScore: f64
+                        ) ->
+                        (
+                            HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>,
+                            HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>
+                        )
+    {
+        let mut scalingFactor: f64;
+
+        //Need to access the data 3 places at once so this is a quick solution;
+        //will possibly replace with smart pointers later on
+        let mut uPtr = &mut u as *mut HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>;
+        let mut nuPtr = &mut nu as *mut HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>;
+
+        if minScore < 0.0
+        {
+            scalingFactor = 100.0 / (maxScore - minScore);
+        }
+        else
+        {
+            scalingFactor = 100.0 / maxScore;
+        }
+
+        //Derefing raw pointers lmao
+        unsafe
+        {
+        for k in (*uPtr).keys()
+        {
+            if minScore < 0.0
+            {
+                (*uPtr).get_mut(k).unwrap().1[0] = (*uPtr).get(k).unwrap().1[0].clone() - minScore;
+            }
+
+            (*uPtr).get_mut(k).unwrap().1[0] = f64::exp((*uPtr).get(k).unwrap().1[0] * scalingFactor);
+            (*uPtr).get_mut(k).unwrap().3 = u.get(k).unwrap().1[0];
+        }
+
+        for k in (*nuPtr).keys()
+        {
+            (*nuPtr).get_mut(k).unwrap().3 = 0.0; //idk what this does; im just copy pasting it from python tbh
+
+            for i in (0..(*nuPtr).get(k).unwrap().1.len())
+            {
+                if minScore < 0.0
+                {
+                    (*nuPtr).get_mut(k).unwrap().1[i] = ((*nuPtr).get(k).unwrap().1[i] - minScore);
+                }
+
+                (*nuPtr).get_mut(k).unwrap().1[i] = f64::exp((*nuPtr).get(k).unwrap().1[i] * scalingFactor);
+
+                if (*nuPtr).get(k).unwrap().1[i] > (*nuPtr).get(k).unwrap().3
+                {
+                    (*nuPtr).get_mut(k).unwrap().3 = (*nuPtr).get(k).unwrap().1[i];
+                }
+            }
+        }
+        }
+        return (u, nu);
+    }
 }
 
 
-
-///Wrapper for the parseSAM function, which serves as the entry point for the module.
-mod SAMParser
+///Wrapper for the parseSAM function and adjacent code
+mod parseSam
 {
     use std::{io::{BufReader, BufRead}, fs::File, fmt::Debug};
 
@@ -84,7 +228,7 @@ mod SAMParser
         pub read_id: String,
         pub read_length: usize,
         pub position: u32,
-        pub score: Option<f32>,
+        pub score: Option<f64>,
         pub btwsFlg: u32,
         pub unmapped: bool,
         pub ref_id:String,
@@ -125,15 +269,15 @@ mod SAMParser
     }
 
 
-    fn find_sam_align_score(data: &SamLine) -> f32
+    fn find_sam_align_score(data: &SamLine) -> f64
     {
-        let readLength: f32 = data.read_length as f32;
+        let readLength: f64 = data.read_length as f64;
 
         for field in data.SAMfields.clone()
         {
             if field.starts_with("AS:i:")
             {
-                return (field[5..].parse::<i32>().expect("unable to parse field as i32 in find_sam_align_score") as f32) + (data.read_length as f32);
+                return (field[5..].parse::<i32>().expect("unable to parse field as i32 in find_sam_align_score") as f64) + (data.read_length as f64);
             }
         }
 
@@ -154,9 +298,9 @@ mod SAMParser
     ///parses one line of a .SAM file, taking reference to a BufReader<File>
     /// 
     ///returns Some(SamLine) if data was read or None if none was read
-    pub fn parseSAM(SAMReader: &mut BufReader<File>, pScoreCutoff: Option<f32>) -> parseResult<SamLine>
+    pub fn parseSAM(SAMReader: &mut BufReader<File>, pScoreCutoff: Option<f64>) -> parseResult<SamLine>
     {
-        let pScoreCutoff: f32 = pScoreCutoff.unwrap_or(0.01);
+        let pScoreCutoff: f64 = pScoreCutoff.unwrap_or(0.01);
 
         let mut buf: String = String::new();
         match SAMReader.read_line(&mut buf)
@@ -194,21 +338,23 @@ mod SAMParser
 }
 
 
+///tests and whatnot
 #[cfg(test)]
-mod tests {
-    use crate::SAMParser::*;
+mod tests
+{
     use std::io::BufReader;
     use std::fs::File;
-    use super::*;
 
+    use crate::parseSam::*;
+    use crate::buildMatrix::*;
 
+    ///tests the buildMatrix function
     #[test]
     fn testBuildMatrix()
     {
-        buildMatrix("TestFiles/test_al.sam", None)
+        let (a, b, c, d) = buildMatrix("TestFiles/test_al.sam", None);
+        println!("testing!");
     }
-
-
 
     ///tests the parseSAM function
     #[test]
