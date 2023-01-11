@@ -1,16 +1,19 @@
 #![allow(nonstandard_style)]
 #![allow(unused)]
 
-use std::{path::Path, collections::{hash_map, HashMap}};
+use std::{path::Path, collections::{hash_map, HashMap}, fs::File, io::BufReader, cmp::min};
+use crate::SAMParser::*;
+
+use SAMParser::parseSAM;
 
 
-fn buildMatrix(SAMPath: &Path, pScoreCutoff: Option<f32>)
+fn buildMatrix(SAMPath: &str, pScoreCutoff: Option<f32>)
 {
     let mut u: HashMap<i32, (Vec<i32>, Vec<f32>, Vec<f32>, f32)> = HashMap::new();
     let mut nu: HashMap<i32, ((i32, i32), (f32, f32), f32, f32)> = HashMap::new();
 
-    let mut hReadId: HashMap<&str, i32> = HashMap::new();
-    let mut hRefId: HashMap<&str, i32> = HashMap::new();
+    let mut hReadId: HashMap<String, i32> = HashMap::new();
+    let mut hRefId: HashMap<String, i32> = HashMap::new();
 
     let mut refs: Vec<String> = Vec::new();
     let mut reads: Vec<String> = Vec::new();
@@ -19,15 +22,53 @@ fn buildMatrix(SAMPath: &Path, pScoreCutoff: Option<f32>)
     let mut readCount: i32 = 0;
 
     let mut maxScore: f32 = 0.0;
-    let mut min_score = 0;
+    let mut minScore: f32 = 0.0;
 
 
-    //TODO
-        //USE FILE PARSER HERE
-        //ITERATE OVER ELEMENTS AND DO MATH THINGS
-        //CREATE RESCALE_SAMSCORE FUNCTION
+    let SAMFile = File::open("TestFiles/test_al.sam").expect("Invalid file");
+    let mut SAMReader = BufReader::new(SAMFile);
+    
+    loop
+    {
+        let newLine: SamLine;
+        
+        match parseSAM(&mut SAMReader, pScoreCutoff)
+        {
+                parseResult::Ok(data) => 
+                {
+                    if data.score < pScoreCutoff
+                    {
+                        continue;
+                    }
+                    else
+                    {
+                        newLine = data;
+                    }
+                }
+                parseResult::EOF => break,
+                parseResult::Err(msg) => 
+                {
+                    println!("{}",msg);
+                    return;
+                }
+                parseResult::Ignore => continue
+        }
 
+        minScore = newLine.score.unwrap().min(minScore);
+        maxScore = newLine.score.unwrap().max(maxScore);
 
+        let mut refIndex = (hRefId.get(&newLine.ref_id).unwrap_or(&-1)).clone();
+
+        if refIndex == -1
+        {
+            refIndex = refCount;
+            hRefId.insert(newLine.ref_id.clone(), refIndex);
+            refs.push(newLine.ref_id.clone());
+            refCount += 1;
+        }
+    }
+
+    println!("boop!");
 }
 
 
@@ -40,14 +81,14 @@ mod SAMParser
     #[derive(Debug)]
     pub struct SamLine
     {
-        read_id: String,
-        read_length: usize,
-        position: u32,
-        score: Option<f32>,
-        btwsFlg: u32,
-        unmapped: bool,
-        ref_id:String,
-        SAMfields: Vec<String>
+        pub read_id: String,
+        pub read_length: usize,
+        pub position: u32,
+        pub score: Option<f32>,
+        pub btwsFlg: u32,
+        pub unmapped: bool,
+        pub ref_id:String,
+        pub SAMfields: Vec<String>
     }
 
 
@@ -164,7 +205,7 @@ mod tests {
     #[test]
     fn testBuildMatrix()
     {
-
+        buildMatrix("TestFiles/test_al.sam", None)
     }
 
 
