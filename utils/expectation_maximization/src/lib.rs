@@ -220,7 +220,7 @@ mod buildMatrix
 ///Wrapper for the parseSAM function and adjacent code
 mod parseSam
 {
-    use std::{io::{BufReader, BufRead}, fs::File, fmt::Debug};
+    use std::{io::{BufReader, BufRead}, fs::File, fmt::Debug, rc::Rc};
 
     #[derive(Debug)]
     pub struct SamLine
@@ -313,7 +313,7 @@ mod parseSam
                 }
                 else
                 {
-                    match SamLine::new(String::from(buf.trim()))
+                    match SamLine::new(buf)
                     {
                         None => return parseResult::Ignore,
                         Some(newLine) =>
@@ -352,14 +352,57 @@ mod tests
     #[test]
     fn testBuildMatrix()
     {
-        let (a, b, c, d) = buildMatrix("TestFiles/test_al.sam", None);
-        println!("testing!");
+        let (u, nu, refs, reads) = buildMatrix("TestFiles/test_al.sam", None);
+        
+        //testing u length and values
+        assert!(u.len() == 19174);
+       
+        assert!(u.get(&0).unwrap().0 == 0);
+        assert!(u.get(&0).unwrap().1 == 1.3892652283160566e+43);
+
+
+        //testing nu length and values
+        assert!(nu.len() == 1102);
+
+        assert!(nu.get(&10).unwrap().0[0] == 1);
+        assert!(nu.get(&10).unwrap().0[1] == 3);
+        assert!(nu.get(&10).unwrap().0.len() == 2);
+
+        assert!(nu.get(&10).unwrap().1[0] == 9.539599502409837e+36);
+        assert!(nu.get(&10).unwrap().1[1] == 9.394830991271991e+34);
+        assert!(nu.get(&10).unwrap().1.len() == 2);
+
+        assert!(nu.get(&10).unwrap().2[0] == 0.9902477974114013);
+        assert!(nu.get(&10).unwrap().2[1] == 0.009752202588598546);
+        assert!(nu.get(&10).unwrap().2.len() == 2);
+        
+        assert!(nu.get(&10).unwrap().3 == 9.539599502409837e+36);
+        
+
+        //testing refs length and values
+        assert!(refs.len() == 40);
+
+        assert!(refs.get(0).unwrap().eq("NC_016509"));
+        assert!(refs.get(1).unwrap().eq("NC_003615"));
+        assert!(refs.get(2).unwrap().eq("NC_007448"));
+
+
+        //testing reads length and values
+        assert!(reads.len() == 20276);
+
+        assert!(reads.get(0).unwrap().eq("HWI-ST1410:82:C2VAGACXX:7:1101:20066:1892"));
+        assert!(reads.get(1).unwrap().eq("HWI-ST1410:82:C2VAGACXX:7:1101:11037:2144"));
+        assert!(reads.get(2).unwrap().eq("HWI-ST1410:82:C2VAGACXX:7:1101:14679:2757"));
+        
     }
+
 
     ///tests the parseSAM function
     #[test]
     fn testParseSAM()
     {
+        println!("Testing parseSAM");
+
         let SAMFile = File::open("TestFiles/test_al.sam").expect("Invalid file");
         let mut SAMReader = BufReader::new(SAMFile);
         loop
@@ -367,7 +410,7 @@ mod tests
             let newLine = parseSAM(&mut SAMReader, None);
             match newLine
             {
-                parseResult::Ok(data) => println!("{:?}", data),
+                parseResult::Ok(data) => continue,
                 parseResult::EOF => return,
                 parseResult::Err(msg) => return,
                 parseResult::Ignore => continue

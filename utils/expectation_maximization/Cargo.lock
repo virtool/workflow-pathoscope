@@ -3,5 +3,5 @@
 version = 3
 
 [[package]]
-name = "sam_file_parser"
+name = "expectation_maximization"
 version = "0.1.0"
