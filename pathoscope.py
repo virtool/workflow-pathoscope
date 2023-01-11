@@ -131,7 +131,7 @@ def rescale_samscore(u, nu, max_score, min_score):
 
             if nu[read_index][1][i] > nu[read_index][3]:
                 nu[read_index][3] = nu[read_index][1][i]
-
+    print("eeeee")
     return u, nu
 
 
@@ -228,7 +228,7 @@ def build_matrix(sam_path: Path, p_score_cutoff=0.01):
         p_score_sum = sum(nu[read_index][1])
         # Normalize p_score.
         nu[read_index][2] = [k / p_score_sum for k in nu[read_index][1]]
-
+    print("boop!")
     return u, nu, refs, reads
 
 
