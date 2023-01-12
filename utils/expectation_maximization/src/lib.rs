@@ -3,12 +3,12 @@
 
 
 ///Wrapper for the buildMatrix function and adjacent code
-mod buildMatrix
+mod BuildMatrix
 {
     use std::collections::HashMap;
     use std::fs::File;
     use std::io::BufReader;
-    use super::parseSam::*;
+    use super::ParseSam::*;
 
     ///produces the SAM matrix given a path to a .SAM file
     pub fn buildMatrix(SAMPath: &str, pScoreCutoff: Option<f64>) -> (
@@ -63,7 +63,7 @@ mod buildMatrix
                     parseResult::Ignore => continue
             }
 
-            minScore = newLine.score.unwrap().min(minScore); // might need to completely redo this..
+            minScore = newLine.score.unwrap().min(minScore);
             maxScore = newLine.score.unwrap().max(maxScore);
 
             let mut refIndex = (hRefId.get(&newLine.ref_id).unwrap_or(&-1)).clone();
@@ -178,7 +178,7 @@ mod buildMatrix
             scalingFactor = 100.0 / maxScore;
         }
 
-        //Derefing raw pointers lmao
+        //Derefing raw pointers
         unsafe
         {
         for k in (*uPtr).keys()
@@ -194,7 +194,7 @@ mod buildMatrix
 
         for k in (*nuPtr).keys()
         {
-            (*nuPtr).get_mut(k).unwrap().3 = 0.0; //idk what this does; im just copy pasting it from python tbh
+            (*nuPtr).get_mut(k).unwrap().3 = 0.0;
 
             for i in (0..(*nuPtr).get(k).unwrap().1.len())
             {
@@ -216,9 +216,8 @@ mod buildMatrix
     }
 }
 
-
 ///Wrapper for the parseSAM function and adjacent code
-mod parseSam
+mod ParseSam
 {
     use std::{io::{BufReader, BufRead}, fs::File, fmt::Debug, rc::Rc};
 
@@ -250,6 +249,7 @@ mod parseSam
 
             let fields = newLine.split("\t").collect::<Vec<&str>>();
 
+            //extremely inefficient; should optimize later on
             let mut newSamLine = SamLine
             {
                 read_id: String::from(*(fields.get(0).expect("error parsing read_id"))), 
@@ -337,6 +337,213 @@ mod parseSam
     }
 }
 
+///wrapper for the computeBestHit function
+mod BestHit
+{
+    use std::collections::HashMap;
+
+    pub fn computeBestHit
+    (  
+        u: &HashMap<i32, (i32, f64)>,
+        nu: &HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>,
+        refs: &Vec<String>,
+        reads: &Vec<String>
+    )
+    ->
+    (
+        Vec<f64>,
+        Vec<f64>,
+        Vec<f64>,
+        Vec<f64>
+    )
+    {
+        let mut refCount = refs.len();
+        let mut bestHitReads = vec![0.0; refCount];
+        let mut level1Reads = vec![0.0; refCount];
+        let mut level2Reads = vec![0.0; refCount];
+
+        for i in u.keys()
+        {
+            *(bestHitReads.get_mut(u.get(i).unwrap().0 as usize).unwrap()) += 1.0;
+            *(level1Reads.get_mut(u.get(i).unwrap().0 as usize).unwrap()) += 1.0;
+        }
+
+        for i in nu.keys()
+        {
+            let z = nu.get(i).unwrap();
+            let ind = &z.0;
+            let xNorm = &z.2;
+            let bestRef = xNorm.iter().cloned().fold(-1./0. /* -inf */, f64::max);
+            let mut numBestRef = 0;
+
+            for (j, _) in xNorm.iter().enumerate()
+            {
+                if *(xNorm.get(j).unwrap()) == bestRef
+                {
+                    numBestRef += 1;
+                }
+            }
+
+            numBestRef = match numBestRef
+            {
+                0 => 1,
+                _ => numBestRef
+            };
+
+            
+            for (j, _) in xNorm.iter().enumerate()
+            {
+                if *(xNorm.get(j).unwrap()) == bestRef
+                {
+                    *(bestHitReads.get_mut(*(ind.get(j).unwrap()) as usize).unwrap()) += 1.0 / numBestRef as f64;
+
+                    if *(xNorm.get(j).unwrap()) >= 0.5
+                    {
+                        *(level1Reads.get_mut(*(ind.get(j).unwrap()) as usize).unwrap()) += 1.0;
+                    }
+                    else if *(xNorm.get(j).unwrap()) >= 0.01
+                    {
+                        *(level2Reads.get_mut(*(ind.get(j).unwrap()) as usize).unwrap()) += 1.0;
+                    }
+                }
+            }
+
+        }
+
+        refCount = refs.len();
+        let readCount = reads.len();
+
+
+        let bestHit: Vec<f64> = bestHitReads.iter().map(|val| {val.clone() / readCount as f64}).collect();
+        let level1: Vec<f64> = level1Reads.iter().map(|val| {val.clone() / readCount as f64}).collect();
+        let level2: Vec<f64> = level2Reads.iter().map(|val| {val.clone() / readCount as f64}).collect();
+
+        return (bestHitReads, bestHit, level1, level2);
+    }
+}
+
+///wrapper for the em function
+mod EM
+{
+    use std::{collections::HashMap, rc::Rc};
+
+    pub fn em
+    (
+        u: &HashMap<i32, (i32, f64)>,
+        mut nu: HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>,
+        genomes: &Vec<String>,
+        maxIter: i32,
+        epsilon: f64,
+        piPrior: f64,
+        thetaPrior: f64
+    )
+    ->
+    (
+        
+    )
+    {
+        let genomeCount = genomes.len();
+        let pi = vec![1.0 as f64 / genomeCount as f64; genomeCount];
+        let initPi = pi.clone();
+        let theta = pi.clone();
+
+        let mut piSum0 = vec![0.0; genomeCount];
+
+        let uWeights: Vec<f64> = u.iter().map(|entry| {(*(entry.1)).1}).collect();
+        let mut maxUWeights = 0.0;
+        let mut uTotal = 0.0;
+
+        if !uWeights.is_empty()
+        {
+            maxUWeights = uWeights.iter().cloned().fold(-1./0. /* -inf */, f64::max);
+            uTotal = uWeights.iter().sum();
+        }
+
+        for i in u.keys()
+        {
+            piSum0[u.get(i).unwrap().0 as usize] += u.get(i).unwrap().1.clone();
+        }
+
+        let nuWeights: Vec<f64> = nu.iter().map(|entry| {(*(entry.1)).3}).collect();
+        let mut maxNuWeights = 0.0;
+        let mut nuTotal = 0.0;
+
+        if !nuWeights.is_empty()
+        {
+            maxNuWeights = nuWeights.iter().cloned().fold(-1./0. /* -inf */, f64::max);
+            nuTotal = nuWeights.iter().sum();
+        }
+
+        let priorWeight = f64::max(maxUWeights, maxNuWeights);
+        let mut nuLength = nu.len();
+
+        if nuLength == 0
+        {
+            nuLength = 1;
+        }
+
+        //EM iterations
+        for i in 0..maxIter
+        {
+            let piOld = &pi;
+            let thetaSum = vec![0; genomeCount];
+
+            //E step
+            for j in nu.clone().keys()
+            {
+                
+                let z = nu.get(j).unwrap();
+
+                //A set of any genome mapping with j
+                let ind = &z.0;
+
+                //Get relevant pis for the read
+                let piTemp: Vec<f64> = ind.iter().enumerate().map(|(idx, _)| {pi[idx].clone()}).collect();
+                
+                //Get relevant thetas for the read
+                let thetaTemp: Vec<f64> = ind.iter().enumerate().map(|(idx, _)| {theta[idx].clone()}).collect();
+
+                //Calculate non-normalized xs
+                let mut xTemp: Vec<f64> = Vec::new();
+
+                if *j == 10
+                {
+                    println!("pause")
+                }
+
+                for k in 0..ind.len()
+                {
+                    xTemp.push(piTemp[k] * thetaTemp[k] * z.1[k]);
+                }
+
+                let xSum: f64 = xTemp.iter().sum();
+
+                //Avoid dividing by 0 at all times
+                let mut xNorm: Vec<f64>;
+
+                if xSum == 0.0
+                {
+                    xNorm = vec![0.0; xTemp.len()];
+                }
+                else
+                {
+                    xNorm = xTemp.iter().map(|val| {val / xSum}).collect();
+                }
+
+                //Update x in nu
+                nu.get_mut(j).unwrap().2 = xNorm;
+
+
+                //complete function on friday jan 13th
+                unimplemented!("end of function EM::em");
+                
+            }
+
+        }
+
+        unimplemented!("end of function EM::em");
+    }
+}
 
 ///tests and whatnot
 #[cfg(test)]
@@ -344,9 +551,26 @@ mod tests
 {
     use std::io::BufReader;
     use std::fs::File;
+    use crate::BestHit::*;
+    use crate::ParseSam::*;
+    use crate::BuildMatrix::*;
+    use crate::EM::*;
 
-    use crate::parseSam::*;
-    use crate::buildMatrix::*;
+    ///tests the em function
+    #[test]
+    fn testem()
+    {
+        let (u, nu, refs, reads) = buildMatrix("TestFiles/test_al.sam", None);
+        em(&u, nu, &refs, 50, 0.0000001, 0.0, 0.0);
+    }
+
+    #[test]
+    fn testBestHit()
+    {
+        let (u, nu, refs, reads) = buildMatrix("TestFiles/test_al.sam", None);
+        let (bestHitReads, bestHit, level1, level2) = computeBestHit(&u, &nu, &refs, &reads);
+        println!("pause");
+    }
 
     ///tests the buildMatrix function
     #[test]
@@ -395,7 +619,6 @@ mod tests
         assert!(reads.get(2).unwrap().eq("HWI-ST1410:82:C2VAGACXX:7:1101:14679:2757"));
         
     }
-
 
     ///tests the parseSAM function
     #[test]
