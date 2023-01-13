@@ -597,7 +597,7 @@ mod tests
     {
         let (u, nu, refs, reads) = buildMatrix("TestFiles/test_al.sam", None);
         let (initPi, pi, theta, nu) = em(&u, nu, &refs, 5, 1e-7, 0.0, 0.0);
-        println!("boop!");
+        println!("pause!");
     }
 
     #[test]
