@@ -231,7 +231,8 @@ mod ParseSam
         pub btwsFlg: u32,
         pub unmapped: bool,
         pub ref_id:String,
-        pub SAMfields: Vec<String>
+        pub SAMfields: Vec<String>,
+        pub line: String
     }
 
 
@@ -259,7 +260,8 @@ mod ParseSam
                 btwsFlg: fields.get(1).expect("error reading btwsFlg field").parse::<u32>().expect("error parsing btwsFlg as u32"), 
                 unmapped: ((fields.get(1).unwrap().parse::<u32>().unwrap()) & (4 as u32) == (4 as u32)),
                 ref_id: String::from(*(fields.get(2).expect("error parsing ref_id"))),
-                SAMfields: fields.into_iter().map(|data| {String::from(data)}).collect::<Vec<String>>()
+                SAMfields: fields.into_iter().map(|data| {String::from(data)}).collect::<Vec<String>>(),
+                line: newLine
             };
 
             newSamLine.score = Some(find_sam_align_score(&mut newSamLine));
@@ -439,13 +441,16 @@ mod EM
     )
     ->
     (
-        
+        Vec<f64>,
+        Vec<f64>,
+        Vec<f64>,
+        HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>
     )
     {
         let genomeCount = genomes.len();
-        let pi = vec![1.0 as f64 / genomeCount as f64; genomeCount];
-        let initPi = pi.clone();
-        let theta = pi.clone();
+        let mut pi = vec![1.0 as f64 / genomeCount as f64; genomeCount];
+        let mut initPi = pi.clone();
+        let mut theta = pi.clone();
 
         let mut piSum0 = vec![0.0; genomeCount];
 
@@ -463,6 +468,7 @@ mod EM
         {
             piSum0[u.get(i).unwrap().0 as usize] += u.get(i).unwrap().1.clone();
         }
+        
 
         let nuWeights: Vec<f64> = nu.iter().map(|entry| {(*(entry.1)).3}).collect();
         let mut maxNuWeights = 0.0;
@@ -485,31 +491,26 @@ mod EM
         //EM iterations
         for i in 0..maxIter
         {
-            let piOld = &pi;
-            let thetaSum = vec![0; genomeCount];
+            let piOld = pi.clone();
+            let mut thetaSum = vec![0.0; genomeCount];
 
             //E step
             for j in nu.clone().keys()
             {
                 
-                let z = nu.get(j).unwrap();
+                let z = nu.get(j).unwrap().clone();
 
                 //A set of any genome mapping with j
                 let ind = &z.0;
 
                 //Get relevant pis for the read
-                let piTemp: Vec<f64> = ind.iter().enumerate().map(|(idx, _)| {pi[idx].clone()}).collect();
+                let piTemp: Vec<f64> = ind.iter().map(|val| {pi[*val as usize].clone()}).collect();
                 
                 //Get relevant thetas for the read
-                let thetaTemp: Vec<f64> = ind.iter().enumerate().map(|(idx, _)| {theta[idx].clone()}).collect();
+                let thetaTemp: Vec<f64> = ind.iter().map(|val| {theta[*val as usize].clone()}).collect();
 
                 //Calculate non-normalized xs
                 let mut xTemp: Vec<f64> = Vec::new();
-
-                if *j == 10
-                {
-                    println!("pause")
-                }
 
                 for k in 0..ind.len()
                 {
@@ -531,17 +532,141 @@ mod EM
                 }
 
                 //Update x in nu
-                nu.get_mut(j).unwrap().2 = xNorm;
+                nu.get_mut(j).unwrap().2 = xNorm.clone();
 
-
-                //complete function on friday jan 13th
-                unimplemented!("end of function EM::em");
-                
+                for (k, _) in ind.iter().enumerate()
+                {
+                    thetaSum[ind[k] as usize] += xNorm[k] * nu.get(j).unwrap().3;   
+                }
             }
 
+            //M step
+            let piSum: Vec<f64> = thetaSum.iter().enumerate().map(|(idx, _)| {thetaSum[idx].clone() + piSum0[idx].clone()}).collect();
+            let pip = piPrior * priorWeight;
+
+            //update pi
+            pi = piSum.iter().map(|val| {((*val as f64) + pip) / (uTotal + nuTotal + (pip * piSum.len() as f64))}).collect();
+
+            if i == 0
+            {
+                initPi = pi.clone();
+            }
+
+            let thetaP = thetaPrior * priorWeight;
+
+            let mut nuTotalDiv = nuTotal.clone();
+
+            if nuTotalDiv == 0 as f64
+            {
+                nuTotalDiv = 1 as f64;
+            }
+
+            theta = thetaSum.iter().map(|val| {(*val + thetaP)/(nuTotalDiv + (thetaP * thetaSum.len() as f64))}).collect();
+            
+            println!("boop");
+
+            let mut cutoff = 0.0;
+
+            for (k, _) in pi.iter().enumerate()
+            {
+                cutoff += (piOld[k] - pi[k]).abs();
+            }
+
+            if cutoff <= epsilon || nuLength == 1
+            {
+                break;
+            }
         }
 
-        unimplemented!("end of function EM::em");
+        return (initPi, pi, theta, nu);
+    }
+}
+
+mod RewriteAlign
+{
+    use std::collections::HashMap;
+    use std::fs::File;
+    use std::io::Write;
+    use std::io::BufReader;
+    use crate::ParseSam::*;
+
+    pub fn rewriteAlign
+    (
+        u: HashMap<i32, (i32, f64)>,
+        nu: HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>,
+        samPath: &str,
+        pScoreCutoff: f64,
+        path: &str
+    )
+    {
+        let mut readIdDict: HashMap<String, i32> = HashMap::new();
+        let mut refIdDict: HashMap<String, i32> = HashMap::new();
+
+        let mut genomes: Vec<String> = Vec::new();
+        let mut read: Vec<String> = Vec::new();
+
+        let mut refCount = 0;
+        let mut readCount = 0;
+
+        let oldFile = File::open("TestFiles/test_al.sam").expect("Invalid file");
+        let mut SAMReader = BufReader::new(oldFile);
+        let mut newFile = File::create(path).expect("unable to create file");
+
+        //for line in parseSam
+        loop
+        {
+            let samLine = parseSAM(&mut SAMReader, Some(pScoreCutoff));
+
+            let samLine = match samLine
+            {
+                parseResult::Ok(line) => line,
+                parseResult::Ignore => continue,
+                parseResult::EOF => break,
+                parseResult::Err(_) => panic!("unable to read oldFile in RewriteAlign::rewriteAlign")
+            };
+
+            let mut refIndex = refIdDict.get(&samLine.ref_id).unwrap_or(&-1).clone();
+
+            if refIndex == -1
+            {
+                refIndex = refCount.clone();
+                refIdDict.insert(samLine.ref_id.clone(), refIndex);
+                genomes.push(samLine.ref_id);
+                refCount += 1;
+            }
+
+            let mut readIndex = readIdDict.get(&samLine.read_id).unwrap_or(&-1).clone();
+            
+            if readIndex == -1
+            {
+                // hold on this new read
+                // first, wrap previous read profile and see if any previous read has a
+                // same profile with that!
+
+                readIndex = readCount.clone();
+                readIdDict.insert(samLine.read_id.clone(), readIndex);
+                read.push(samLine.read_id);
+                readCount += 1;
+
+                if u.contains_key(&readIndex)
+                {
+                    newFile.write(samLine.line.as_bytes());
+                    continue;
+                }
+            }
+
+            if nu.contains_key(&readIndex)
+            {
+                unimplemented!();
+            }
+
+
+        }
+        
+        
+
+
+
     }
 }
 
@@ -555,13 +680,24 @@ mod tests
     use crate::ParseSam::*;
     use crate::BuildMatrix::*;
     use crate::EM::*;
+    use crate::RewriteAlign::*;
+
+    #[test]
+    fn testRewriteAlign()
+    {
+        let (u, nu, refs, reads) = buildMatrix("TestFiles/test_al.sam", None);
+        let (initPi, pi, theta, nu) = em(&u, nu, &refs, 5, 1e-7, 0.0, 0.0);
+        rewriteAlign(u, nu, "TestFiles/test_al.sam", 0.01, "TestFiles/rewrite.sam");
+        println!("boop!");
+    }
 
     ///tests the em function
     #[test]
     fn testem()
     {
         let (u, nu, refs, reads) = buildMatrix("TestFiles/test_al.sam", None);
-        em(&u, nu, &refs, 50, 0.0000001, 0.0, 0.0);
+        let (initPi, pi, theta, nu) = em(&u, nu, &refs, 5, 1e-7, 0.0, 0.0);
+        println!("pause!");
     }
 
     #[test]
