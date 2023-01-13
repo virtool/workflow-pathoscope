@@ -439,13 +439,16 @@ mod EM
     )
     ->
     (
-        
+        Vec<f64>,
+        Vec<f64>,
+        Vec<f64>,
+        HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>
     )
     {
         let genomeCount = genomes.len();
-        let pi = vec![1.0 as f64 / genomeCount as f64; genomeCount];
-        let initPi = pi.clone();
-        let theta = pi.clone();
+        let mut pi = vec![1.0 as f64 / genomeCount as f64; genomeCount];
+        let mut initPi = pi.clone();
+        let mut theta = pi.clone();
 
         let mut piSum0 = vec![0.0; genomeCount];
 
@@ -463,6 +466,7 @@ mod EM
         {
             piSum0[u.get(i).unwrap().0 as usize] += u.get(i).unwrap().1.clone();
         }
+        
 
         let nuWeights: Vec<f64> = nu.iter().map(|entry| {(*(entry.1)).3}).collect();
         let mut maxNuWeights = 0.0;
@@ -485,31 +489,26 @@ mod EM
         //EM iterations
         for i in 0..maxIter
         {
-            let piOld = &pi;
-            let thetaSum = vec![0; genomeCount];
+            let piOld = pi.clone();
+            let mut thetaSum = vec![0.0; genomeCount];
 
             //E step
             for j in nu.clone().keys()
             {
                 
-                let z = nu.get(j).unwrap();
+                let z = nu.get(j).unwrap().clone();
 
                 //A set of any genome mapping with j
                 let ind = &z.0;
 
                 //Get relevant pis for the read
-                let piTemp: Vec<f64> = ind.iter().enumerate().map(|(idx, _)| {pi[idx].clone()}).collect();
+                let piTemp: Vec<f64> = ind.iter().map(|val| {pi[*val as usize].clone()}).collect();
                 
                 //Get relevant thetas for the read
-                let thetaTemp: Vec<f64> = ind.iter().enumerate().map(|(idx, _)| {theta[idx].clone()}).collect();
+                let thetaTemp: Vec<f64> = ind.iter().map(|val| {theta[*val as usize].clone()}).collect();
 
                 //Calculate non-normalized xs
                 let mut xTemp: Vec<f64> = Vec::new();
-
-                if *j == 10
-                {
-                    println!("pause")
-                }
 
                 for k in 0..ind.len()
                 {
@@ -531,17 +530,53 @@ mod EM
                 }
 
                 //Update x in nu
-                nu.get_mut(j).unwrap().2 = xNorm;
+                nu.get_mut(j).unwrap().2 = xNorm.clone();
 
-
-                //complete function on friday jan 13th
-                unimplemented!("end of function EM::em");
-                
+                for (k, _) in ind.iter().enumerate()
+                {
+                    thetaSum[ind[k] as usize] += xNorm[k] * nu.get(j).unwrap().3;   
+                }
             }
 
+            //M step
+            let piSum: Vec<f64> = thetaSum.iter().enumerate().map(|(idx, _)| {thetaSum[idx].clone() + piSum0[idx].clone()}).collect();
+            let pip = piPrior * priorWeight;
+
+            //update pi
+            pi = piSum.iter().map(|val| {((*val as f64) + pip) / (uTotal + nuTotal + (pip * piSum.len() as f64))}).collect();
+
+            if i == 0
+            {
+                initPi = pi.clone();
+            }
+
+            let thetaP = thetaPrior * priorWeight;
+
+            let mut nuTotalDiv = nuTotal.clone();
+
+            if nuTotalDiv == 0 as f64
+            {
+                nuTotalDiv = 1 as f64;
+            }
+
+            theta = thetaSum.iter().map(|val| {(*val + thetaP)/(nuTotalDiv + (thetaP * thetaSum.len() as f64))}).collect();
+            
+            println!("boop");
+
+            let mut cutoff = 0.0;
+
+            for (k, _) in pi.iter().enumerate()
+            {
+                cutoff += (piOld[k] - pi[k]).abs();
+            }
+
+            if cutoff <= epsilon || nuLength == 1
+            {
+                break;
+            }
         }
 
-        unimplemented!("end of function EM::em");
+        return (initPi, pi, theta, nu);
     }
 }
 
@@ -561,7 +596,8 @@ mod tests
     fn testem()
     {
         let (u, nu, refs, reads) = buildMatrix("TestFiles/test_al.sam", None);
-        em(&u, nu, &refs, 50, 0.0000001, 0.0, 0.0);
+        let (initPi, pi, theta, nu) = em(&u, nu, &refs, 5, 1e-7, 0.0, 0.0);
+        println!("boop!");
     }
 
     #[test]

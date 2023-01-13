@@ -304,6 +304,8 @@ def em(u, nu, genomes, max_iter, epsilon, pi_prior, theta_prior):
             for k, _ in enumerate(ind):
                 # Keep weighted running tally for theta
                 theta_sum[ind[k]] += x_norm[k] * nu[j][3]
+            if i == 1 and j == 10:
+                print("boop")
 
         # M step
         pi_sum = [theta_sum[k] + pi_sum_0[k] for k in range(len(theta_sum))]
@@ -328,6 +330,7 @@ def em(u, nu, genomes, max_iter, epsilon, pi_prior, theta_prior):
             (1.0 * k + theta_p) / (nu_total_div + theta_p * len(theta_sum))
             for k in theta_sum
         ]
+        print("boop")
 
         cutoff = 0.0
 

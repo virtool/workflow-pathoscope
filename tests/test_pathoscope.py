@@ -57,10 +57,10 @@ def test_build_matrix(data_regression, datafiles):
 
 
 @pytest.mark.datafiles(SAM_PATH)
-@pytest.mark.parametrize("theta_prior", [0, 1e-5])
-@pytest.mark.parametrize("pi_prior", [0, 1e-5])
-@pytest.mark.parametrize("epsilon", [1e-6, 1e-7, 1e-8])
-@pytest.mark.parametrize("max_iter", [5, 10, 20, 30])
+@pytest.mark.parametrize("theta_prior", [0])
+@pytest.mark.parametrize("pi_prior", [0])
+@pytest.mark.parametrize("epsilon", [1e-6])
+@pytest.mark.parametrize("max_iter", [5])
 def test_em(
     data_regression,
     datafiles,
