@@ -231,7 +231,8 @@ mod ParseSam
         pub btwsFlg: u32,
         pub unmapped: bool,
         pub ref_id:String,
-        pub SAMfields: Vec<String>
+        pub SAMfields: Vec<String>,
+        pub line: String
     }
 
 
@@ -259,7 +260,8 @@ mod ParseSam
                 btwsFlg: fields.get(1).expect("error reading btwsFlg field").parse::<u32>().expect("error parsing btwsFlg as u32"), 
                 unmapped: ((fields.get(1).unwrap().parse::<u32>().unwrap()) & (4 as u32) == (4 as u32)),
                 ref_id: String::from(*(fields.get(2).expect("error parsing ref_id"))),
-                SAMfields: fields.into_iter().map(|data| {String::from(data)}).collect::<Vec<String>>()
+                SAMfields: fields.into_iter().map(|data| {String::from(data)}).collect::<Vec<String>>(),
+                line: newLine
             };
 
             newSamLine.score = Some(find_sam_align_score(&mut newSamLine));
@@ -580,6 +582,94 @@ mod EM
     }
 }
 
+mod RewriteAlign
+{
+    use std::collections::HashMap;
+    use std::fs::File;
+    use std::io::Write;
+    use std::io::BufReader;
+    use crate::ParseSam::*;
+
+    pub fn rewriteAlign
+    (
+        u: HashMap<i32, (i32, f64)>,
+        nu: HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>,
+        samPath: &str,
+        pScoreCutoff: f64,
+        path: &str
+    )
+    {
+        let mut readIdDict: HashMap<String, i32> = HashMap::new();
+        let mut refIdDict: HashMap<String, i32> = HashMap::new();
+
+        let mut genomes: Vec<String> = Vec::new();
+        let mut read: Vec<String> = Vec::new();
+
+        let mut refCount = 0;
+        let mut readCount = 0;
+
+        let oldFile = File::open("TestFiles/test_al.sam").expect("Invalid file");
+        let mut SAMReader = BufReader::new(oldFile);
+        let mut newFile = File::create(path).expect("unable to create file");
+
+        //for line in parseSam
+        loop
+        {
+            let samLine = parseSAM(&mut SAMReader, Some(pScoreCutoff));
+
+            let samLine = match samLine
+            {
+                parseResult::Ok(line) => line,
+                parseResult::Ignore => continue,
+                parseResult::EOF => break,
+                parseResult::Err(_) => panic!("unable to read oldFile in RewriteAlign::rewriteAlign")
+            };
+
+            let mut refIndex = refIdDict.get(&samLine.ref_id).unwrap_or(&-1).clone();
+
+            if refIndex == -1
+            {
+                refIndex = refCount.clone();
+                refIdDict.insert(samLine.ref_id.clone(), refIndex);
+                genomes.push(samLine.ref_id);
+                refCount += 1;
+            }
+
+            let mut readIndex = readIdDict.get(&samLine.read_id).unwrap_or(&-1).clone();
+            
+            if readIndex == -1
+            {
+                // hold on this new read
+                // first, wrap previous read profile and see if any previous read has a
+                // same profile with that!
+
+                readIndex = readCount.clone();
+                readIdDict.insert(samLine.read_id.clone(), readIndex);
+                read.push(samLine.read_id);
+                readCount += 1;
+
+                if u.contains_key(&readIndex)
+                {
+                    newFile.write(samLine.line.as_bytes());
+                    continue;
+                }
+            }
+
+            if nu.contains_key(&readIndex)
+            {
+                unimplemented!();
+            }
+
+
+        }
+        
+        
+
+
+
+    }
+}
+
 ///tests and whatnot
 #[cfg(test)]
 mod tests
@@ -590,6 +680,16 @@ mod tests
     use crate::ParseSam::*;
     use crate::BuildMatrix::*;
     use crate::EM::*;
+    use crate::RewriteAlign::*;
+
+    #[test]
+    fn testRewriteAlign()
+    {
+        let (u, nu, refs, reads) = buildMatrix("TestFiles/test_al.sam", None);
+        let (initPi, pi, theta, nu) = em(&u, nu, &refs, 5, 1e-7, 0.0, 0.0);
+        rewriteAlign(u, nu, "TestFiles/test_al.sam", 0.01, "TestFiles/rewrite.sam");
+        println!("boop!");
+    }
 
     ///tests the em function
     #[test]
