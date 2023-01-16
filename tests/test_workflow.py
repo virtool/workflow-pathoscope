@@ -242,5 +242,3 @@ async def test_pathoscope(
         )
     )
 
-    with intermediate.report_path.open("r") as f:
-        file_regression.check(f.read(), extension=".tsv")

@@ -1,0 +1,14 @@
+[package]
+    name = "virtool_expectation_maximization"
+    version = "0.1.0"
+    edition = "2021"
+    authors = ["Markus Swoveland"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies.pyo3]
+version = "0.16.3"
+
+[features]
+extension-module = ["pyo3/extension-module"]
+default = ["extension-module"]
