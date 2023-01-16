@@ -555,6 +555,7 @@ def rewrite_align(u, nu, sam_path: Path, p_score_cutoff: float, path: Path):
                     f.write(str(line))
                     continue
 
+
             if read_index in nu:
                 if find_updated_score(nu, read_index, ref_index) < p_score_cutoff:
                     continue

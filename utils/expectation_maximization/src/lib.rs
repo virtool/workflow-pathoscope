@@ -563,7 +563,6 @@ mod EM
 
             theta = thetaSum.iter().map(|val| {(*val + thetaP)/(nuTotalDiv + (thetaP * thetaSum.len() as f64))}).collect();
             
-            println!("boop");
 
             let mut cutoff = 0.0;
 
@@ -582,20 +581,24 @@ mod EM
     }
 }
 
+///Wrapper for the rewriteAlign function and adjacent code
 mod RewriteAlign
 {
     use std::collections::HashMap;
     use std::fs::File;
+    use std::io::BufWriter;
+    use std::io::LineWriter;
     use std::io::Write;
     use std::io::BufReader;
+    use std::ops::Index;
     use crate::ParseSam::*;
 
     pub fn rewriteAlign
     (
-        u: HashMap<i32, (i32, f64)>,
-        nu: HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>,
+        u: &HashMap<i32, (i32, f64)>,
+        nu: &HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>,
         samPath: &str,
-        pScoreCutoff: f64,
+        pScoreCutoff: &f64,
         path: &str
     )
     {
@@ -610,12 +613,13 @@ mod RewriteAlign
 
         let oldFile = File::open("TestFiles/test_al.sam").expect("Invalid file");
         let mut SAMReader = BufReader::new(oldFile);
-        let mut newFile = File::create(path).expect("unable to create file");
+        let newFile = File::create(path).expect("unable to create file");
+        let mut SAMWriter = LineWriter::new(newFile);
 
         //for line in parseSam
         loop
         {
-            let samLine = parseSAM(&mut SAMReader, Some(pScoreCutoff));
+            let samLine = parseSAM(&mut SAMReader, Some(*pScoreCutoff));
 
             let samLine = match samLine
             {
@@ -639,7 +643,7 @@ mod RewriteAlign
             
             if readIndex == -1
             {
-                // hold on this new read
+                // hold on to this new read
                 // first, wrap previous read profile and see if any previous read has a
                 // same profile with that!
 
@@ -650,14 +654,18 @@ mod RewriteAlign
 
                 if u.contains_key(&readIndex)
                 {
-                    newFile.write(samLine.line.as_bytes());
+                    SAMWriter.write(samLine.line.as_bytes()).expect("unable to write to newFile in RewriteAlign::rewriteAlign");
                     continue;
                 }
             }
 
             if nu.contains_key(&readIndex)
             {
-                unimplemented!();
+                if findUpdatedScore(&nu, readIndex, refIndex) < *pScoreCutoff
+                {
+                    continue;
+                }
+                SAMWriter.write(samLine.line.as_bytes()).expect("unable to write to newFile in RewriteAlign::rewriteAlign");
             }
 
 
@@ -668,6 +676,99 @@ mod RewriteAlign
 
 
     }
+
+    fn findUpdatedScore
+    (
+        nu: &HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>,
+        readIndex: i32,
+        refIndex: i32
+    )
+    ->
+        f64
+    {
+        let v1 = match nu.get(&readIndex)
+        {
+            Some(val) => val,
+            None => return 0.0
+        };
+
+        let mut idx: usize = 0;
+
+        for (i, el) in v1.0.iter().enumerate()
+        {
+            if *el == refIndex
+            {
+                idx = i;
+                break;
+            }
+        }
+
+        return nu.get(&readIndex).unwrap().2.get(idx).unwrap().clone();
+
+
+        unimplemented!()
+    }
+}
+
+///Entry point for the expectation_maximization library
+pub fn run
+(
+    SAMPath: &str,
+    reassignedPath: &str,
+    pScoreCutoff: f64,
+)
+->
+(
+    Vec<f64>,
+    Vec<f64>,
+    Vec<f64>,
+    Vec<f64>,
+    Vec<f64>,
+    Vec<f64>,
+    Vec<f64>,
+    Vec<f64>,
+    Vec<f64>,
+    Vec<f64>,
+    Vec<String>,
+    Vec<String>
+)
+{
+
+
+    let (u, nu, refs, reads) = BuildMatrix::buildMatrix("TestFiles/test_al.sam", None);
+    
+    let (bestHitInitialReads, bestHitInitial, level1Initial, level2Initial) = BestHit::computeBestHit(&u, &nu, &refs, &reads);
+
+    let (initPi, pi, theta, nu) = EM::em(&u, nu, &refs, 50, 1e-7, 0.0, 0.0);
+    
+    let (bestHitFinalReads, bestHitFinal, level1Final, level2Final) = BestHit::computeBestHit(&u, &nu, &refs, &reads);
+    
+    RewriteAlign::rewriteAlign(&u, &nu, &SAMPath, &pScoreCutoff, &reassignedPath);
+
+ 
+    return
+    (
+        bestHitInitialReads,
+        bestHitInitial,
+        
+        level1Initial,
+        level2Initial,
+
+        bestHitFinalReads,
+        bestHitFinal,
+
+        level1Final,
+        level2Final,
+
+        initPi,
+        pi,
+
+        refs,
+        reads
+    );
+
+
+    unimplemented!()
 }
 
 ///tests and whatnot
@@ -683,12 +784,19 @@ mod tests
     use crate::RewriteAlign::*;
 
     #[test]
+    fn testRun()
+    {
+        let u = super::run("TestFiles/test_al.sam", "TestFiles/rewrite.sam", 0.01);
+        println!("break");
+    }
+
+    #[test]
     fn testRewriteAlign()
     {
         let (u, nu, refs, reads) = buildMatrix("TestFiles/test_al.sam", None);
         let (initPi, pi, theta, nu) = em(&u, nu, &refs, 5, 1e-7, 0.0, 0.0);
-        rewriteAlign(u, nu, "TestFiles/test_al.sam", 0.01, "TestFiles/rewrite.sam");
-        println!("boop!");
+        rewriteAlign(&u, &nu, "TestFiles/test_al.sam", &0.01, "TestFiles/rewrite.sam");
+        println!("pause!");
     }
 
     ///tests the em function

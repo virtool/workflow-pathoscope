@@ -141,6 +141,12 @@ def test_calculate_coverage(datafiles, tmp_path, sam_path):
 
 
 @pytest.mark.datafiles(SAM_PATH)
+def testRun(datafiles, tmp_path, sam_path):
+    ret = pathoscope.run(datafiles / "test_al.sam", datafiles / "rewrite.sam", 0.01)
+    print("pause")
+
+
+@pytest.mark.datafiles(SAM_PATH)
 def test_write_report(datafiles, file_regression, tmp_path):
     sam_path = datafiles / "test_al.sam"
 
