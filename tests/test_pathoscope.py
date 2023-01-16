@@ -5,7 +5,7 @@ import pytest
 
 import pathoscope
 
-BASE_PATH = Path.cwd() / "test_files"
+BASE_PATH = Path.cwd() / "tests" / "test_files"
 BEST_HIT_PATH = Path.cwd() / BASE_PATH / "best_hit"
 EM_PATH = BASE_PATH / "em"
 MATRIX_PATH = BASE_PATH / "ps_matrix"
@@ -138,12 +138,6 @@ def test_calculate_coverage(datafiles, tmp_path, sam_path):
                 ref_lengths[ref_id] = length
 
     pathoscope.calculate_coverage(sam_path, ref_lengths)
-
-
-@pytest.mark.datafiles(SAM_PATH)
-def testRun(datafiles, tmp_path, sam_path):
-    ret = pathoscope.run(datafiles / "test_al.sam", datafiles / "rewrite.sam", 0.01)
-    print("pause")
 
 
 @pytest.mark.datafiles(SAM_PATH)

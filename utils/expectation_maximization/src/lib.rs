@@ -1,6 +1,4 @@
 #![allow(nonstandard_style)]
-#![allow(unused)]
-
 
 ///Wrapper for the buildMatrix function and adjacent code
 mod BuildMatrix
@@ -34,7 +32,7 @@ mod BuildMatrix
         let mut minScore: f64 = 0.0;
 
 
-        let SAMFile = File::open("TestFiles/test_al.sam").expect("Invalid file");
+        let SAMFile = File::open(SAMPath).expect("Invalid file");
         let mut SAMReader = BufReader::new(SAMFile);
         
         loop
@@ -122,11 +120,11 @@ mod BuildMatrix
 
         let (mut u, mut nu) = rescaleSamscore(u, nu, maxScore, minScore);
         
-        let mut uPtr = &mut u as *mut HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>;
-        let mut nuPtr = &mut nu as *mut HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>;
+        let uPtr = &mut u as *mut HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>;
+        let nuPtr = &mut nu as *mut HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>;
 
         let mut uReturn: HashMap<i32, (i32, f64)> = HashMap::new();
-        let mut uReturnPtr = &mut uReturn as *mut HashMap<i32, (i32, f64)>;
+        let uReturnPtr = &mut uReturn as *mut HashMap<i32, (i32, f64)>;
 
         unsafe
         {
@@ -162,12 +160,12 @@ mod BuildMatrix
                             HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>
                         )
     {
-        let mut scalingFactor: f64;
+        let scalingFactor: f64;
 
         //Need to access the data 3 places at once so this is a quick solution;
         //will possibly replace with smart pointers later on
-        let mut uPtr = &mut u as *mut HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>;
-        let mut nuPtr = &mut nu as *mut HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>;
+        let uPtr = &mut u as *mut HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>;
+        let nuPtr = &mut nu as *mut HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>;
 
         if minScore < 0.0
         {
@@ -196,11 +194,11 @@ mod BuildMatrix
         {
             (*nuPtr).get_mut(k).unwrap().3 = 0.0;
 
-            for i in (0..(*nuPtr).get(k).unwrap().1.len())
+            for i in 0..(*nuPtr).get(k).unwrap().1.len()
             {
                 if minScore < 0.0
                 {
-                    (*nuPtr).get_mut(k).unwrap().1[i] = ((*nuPtr).get(k).unwrap().1[i] - minScore);
+                    (*nuPtr).get_mut(k).unwrap().1[i] = (*nuPtr).get(k).unwrap().1[i] - minScore;
                 }
 
                 (*nuPtr).get_mut(k).unwrap().1[i] = f64::exp((*nuPtr).get(k).unwrap().1[i] * scalingFactor);
@@ -219,7 +217,7 @@ mod BuildMatrix
 ///Wrapper for the parseSAM function and adjacent code
 mod ParseSam
 {
-    use std::{io::{BufReader, BufRead}, fs::File, fmt::Debug, rc::Rc};
+    use std::{io::{BufReader, BufRead}, fs::File, fmt::Debug};
 
     #[derive(Debug)]
     pub struct SamLine
@@ -273,7 +271,6 @@ mod ParseSam
 
     fn find_sam_align_score(data: &SamLine) -> f64
     {
-        let readLength: f64 = data.read_length as f64;
 
         for field in data.SAMfields.clone()
         {
@@ -359,7 +356,7 @@ mod BestHit
         Vec<f64>
     )
     {
-        let mut refCount = refs.len();
+        let refCount = refs.len();
         let mut bestHitReads = vec![0.0; refCount];
         let mut level1Reads = vec![0.0; refCount];
         let mut level2Reads = vec![0.0; refCount];
@@ -412,9 +409,7 @@ mod BestHit
 
         }
 
-        refCount = refs.len();
         let readCount = reads.len();
-
 
         let bestHit: Vec<f64> = bestHitReads.iter().map(|val| {val.clone() / readCount as f64}).collect();
         let level1: Vec<f64> = level1Reads.iter().map(|val| {val.clone() / readCount as f64}).collect();
@@ -427,7 +422,7 @@ mod BestHit
 ///wrapper for the em function
 mod EM
 {
-    use std::{collections::HashMap, rc::Rc};
+    use std::{collections::HashMap};
 
     pub fn em
     (
@@ -520,7 +515,7 @@ mod EM
                 let xSum: f64 = xTemp.iter().sum();
 
                 //Avoid dividing by 0 at all times
-                let mut xNorm: Vec<f64>;
+                let xNorm: Vec<f64>;
 
                 if xSum == 0.0
                 {
@@ -586,18 +581,16 @@ mod RewriteAlign
 {
     use std::collections::HashMap;
     use std::fs::File;
-    use std::io::BufWriter;
     use std::io::LineWriter;
     use std::io::Write;
     use std::io::BufReader;
-    use std::ops::Index;
     use crate::ParseSam::*;
 
     pub fn rewriteAlign
     (
         u: &HashMap<i32, (i32, f64)>,
         nu: &HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>,
-        samPath: &str,
+        SAMPath: &str,
         pScoreCutoff: &f64,
         path: &str
     )
@@ -611,7 +604,7 @@ mod RewriteAlign
         let mut refCount = 0;
         let mut readCount = 0;
 
-        let oldFile = File::open("TestFiles/test_al.sam").expect("Invalid file");
+        let oldFile = File::open(SAMPath).expect("Invalid file");
         let mut SAMReader = BufReader::new(oldFile);
         let newFile = File::create(path).expect("unable to create file");
         let mut SAMWriter = LineWriter::new(newFile);
@@ -704,17 +697,28 @@ mod RewriteAlign
         }
 
         return nu.get(&readIndex).unwrap().2.get(idx).unwrap().clone();
-
-
-        unimplemented!()
     }
 }
 
+
+
+use pyo3::prelude::*;
+
+#[pymodule]
+fn virtool_expectation_maximization(_py: Python, m: &PyModule) -> PyResult<()>
+{
+    m.add_function(wrap_pyfunction!(run, m)?)?;
+    return Ok(());
+}
+
+
+#[pyfunction]
 ///Entry point for the expectation_maximization library
 pub fn run
 (
-    SAMPath: &str,
-    reassignedPath: &str,
+    // _py: Python,
+    SAMPath: String,
+    reassignedPath: String,
     pScoreCutoff: f64,
 )
 ->
@@ -735,15 +739,15 @@ pub fn run
 {
 
 
-    let (u, nu, refs, reads) = BuildMatrix::buildMatrix("TestFiles/test_al.sam", None);
+    let (u, nu, refs, reads) = BuildMatrix::buildMatrix(SAMPath.as_str(), None);
     
     let (bestHitInitialReads, bestHitInitial, level1Initial, level2Initial) = BestHit::computeBestHit(&u, &nu, &refs, &reads);
 
-    let (initPi, pi, theta, nu) = EM::em(&u, nu, &refs, 50, 1e-7, 0.0, 0.0);
+    let (initPi, pi, _, nu) = EM::em(&u, nu, &refs, 50, 1e-7, 0.0, 0.0);
     
     let (bestHitFinalReads, bestHitFinal, level1Final, level2Final) = BestHit::computeBestHit(&u, &nu, &refs, &reads);
     
-    RewriteAlign::rewriteAlign(&u, &nu, &SAMPath, &pScoreCutoff, &reassignedPath);
+    RewriteAlign::rewriteAlign(&u, &nu, SAMPath.as_str(), &pScoreCutoff, &reassignedPath);
 
  
     return
@@ -753,7 +757,7 @@ pub fn run
         
         level1Initial,
         level2Initial,
-
+        
         bestHitFinalReads,
         bestHitFinal,
 
@@ -762,19 +766,17 @@ pub fn run
 
         initPi,
         pi,
-
+        
         refs,
         reads
     );
-
-
-    unimplemented!()
 }
 
 ///tests and whatnot
 #[cfg(test)]
 mod tests
 {
+    #![allow(unused)]
     use std::io::BufReader;
     use std::fs::File;
     use crate::BestHit::*;
@@ -786,8 +788,65 @@ mod tests
     #[test]
     fn testRun()
     {
-        let u = super::run("TestFiles/test_al.sam", "TestFiles/rewrite.sam", 0.01);
-        println!("break");
+        let (
+            bestHitInitialReads,
+            bestHitInitial,
+            
+            level1Initial,
+            level2Initial,
+            
+            bestHitFinalReads,
+            bestHitFinal,
+    
+            level1Final,
+            level2Final,
+    
+            initPi,
+            pi,
+            
+            refs,
+            reads
+        ) = super::run(String::from("TestFiles/test_al.sam"), String::from("TestFiles/rewrite.sam"), 0.01);
+
+        let mut records: Vec<(
+            f64,
+            f64,
+            f64,
+            f64,
+            f64,
+            f64,
+            f64,
+            f64,
+            f64,
+            f64,
+            String,
+            String)> = Vec::new();
+
+        for i in 0..bestHitFinalReads.len()
+        {
+            records.push((
+                bestHitInitialReads[i],
+                bestHitInitial[i],
+            
+                level1Initial[i],
+                level2Initial[i],
+            
+                bestHitFinalReads[i],
+                bestHitFinal[i],
+    
+                level1Final[i],
+                level2Final[i],
+    
+                initPi[i],
+                pi[i],
+            
+                refs[i].clone(),
+                reads[i].clone()
+            ));
+        }
+
+        println!("break")
+        
     }
 
     #[test]

@@ -1,6 +1,7 @@
 import copy
 import csv
 import math
+import virtool_expectation_maximization
 from functools import cached_property
 from pathlib import Path
 from typing import Any, Dict, Generator, List
@@ -131,7 +132,7 @@ def rescale_samscore(u, nu, max_score, min_score):
 
             if nu[read_index][1][i] > nu[read_index][3]:
                 nu[read_index][3] = nu[read_index][1][i]
-    print("eeeee")
+
     return u, nu
 
 
@@ -228,7 +229,7 @@ def build_matrix(sam_path: Path, p_score_cutoff=0.01):
         p_score_sum = sum(nu[read_index][1])
         # Normalize p_score.
         nu[read_index][2] = [k / p_score_sum for k in nu[read_index][1]]
-    print("boop!")
+
     return u, nu, refs, reads
 
 
@@ -304,8 +305,7 @@ def em(u, nu, genomes, max_iter, epsilon, pi_prior, theta_prior):
             for k, _ in enumerate(ind):
                 # Keep weighted running tally for theta
                 theta_sum[ind[k]] += x_norm[k] * nu[j][3]
-            if i == 1 and j == 10:
-                print("boop")
+
 
         # M step
         pi_sum = [theta_sum[k] + pi_sum_0[k] for k in range(len(theta_sum))]
@@ -330,7 +330,6 @@ def em(u, nu, genomes, max_iter, epsilon, pi_prior, theta_prior):
             (1.0 * k + theta_p) / (nu_total_div + theta_p * len(theta_sum))
             for k in theta_sum
         ]
-        print("boop")
 
         cutoff = 0.0
 
@@ -584,43 +583,4 @@ def calculate_coverage(sam_path: Path, ref_lengths: Dict[str, int]):
 
 
 def run(sam_path: Path, reassigned_path: Path, p_score_cutoff: float):
-    u, nu, refs, reads = build_matrix(sam_path)
-
-    (
-        best_hit_initial_reads,
-        best_hit_initial,
-        level_1_initial,
-        level_2_initial,
-    ) = compute_best_hit(u, nu, refs, reads)
-
-    init_pi, pi, _, nu = em(u, nu, refs, 50, 1e-7, 0, 0)
-
-    (
-        best_hit_final_reads,
-        best_hit_final,
-        level_1_final,
-        level_2_final,
-    ) = compute_best_hit(u, nu, refs, reads)
-
-    rewrite_align(
-        u=u,
-        nu=nu,
-        sam_path=sam_path,
-        p_score_cutoff=p_score_cutoff,
-        path=reassigned_path,
-    )
-
-    return (
-        best_hit_initial_reads,
-        best_hit_initial,
-        level_1_initial,
-        level_2_initial,
-        best_hit_final_reads,
-        best_hit_final,
-        level_1_final,
-        level_2_final,
-        init_pi,
-        pi,
-        refs,
-        reads,
-    )
+    return virtool_expectation_maximization.run(sam_path.__str__(), reassigned_path.__str__(), p_score_cutoff)
