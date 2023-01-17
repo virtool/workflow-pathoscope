@@ -33,5 +33,6 @@ COPY fixtures.py workflow.py pathoscope.py ./
 COPY --from=rustExpectMax /build/target/wheels/virtool_expectation_maximization*.whl ./
 RUN pip install virtool_expectation_maximization*.whl
 RUN poetry install
+RUN poetry add ./virtool_expectation_maximization*.whl
 RUN ls
 RUN poetry run pytest
