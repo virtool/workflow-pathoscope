@@ -583,4 +583,11 @@ def calculate_coverage(sam_path: Path, ref_lengths: Dict[str, int]):
 
 
 def run(sam_path: Path, reassigned_path: Path, p_score_cutoff: float):
+    # rust binding to improve runtime performance
+    # computes:
+    #   buildMatrix
+    #   em
+    #   rewriteAlign
+    #   computeBestHit
+    #   + adjacent code
     return virtool_expectation_maximization.run(sam_path.__str__(), reassigned_path.__str__(), p_score_cutoff)
