@@ -306,7 +306,6 @@ def em(u, nu, genomes, max_iter, epsilon, pi_prior, theta_prior):
                 # Keep weighted running tally for theta
                 theta_sum[ind[k]] += x_norm[k] * nu[j][3]
 
-
         # M step
         pi_sum = [theta_sum[k] + pi_sum_0[k] for k in range(len(theta_sum))]
         pip = pi_prior * prior_weight
@@ -554,7 +553,6 @@ def rewrite_align(u, nu, sam_path: Path, p_score_cutoff: float, path: Path):
                     f.write(str(line))
                     continue
 
-
             if read_index in nu:
                 if find_updated_score(nu, read_index, ref_index) < p_score_cutoff:
                     continue
@@ -583,4 +581,8 @@ def calculate_coverage(sam_path: Path, ref_lengths: Dict[str, int]):
 
 
 def run(sam_path: Path, reassigned_path: Path, p_score_cutoff: float):
-    return virtool_expectation_maximization.run(sam_path.__str__(), reassigned_path.__str__(), p_score_cutoff)
+    return virtool_expectation_maximization.run(
+        sam_path.__str__(),
+        reassigned_path.__str__(),
+        p_score_cutoff
+        )
