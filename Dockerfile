@@ -16,13 +16,11 @@ RUN maturin build --release
 FROM virtool/workflow:5.2.1 as base
 WORKDIR /app
 RUN pip install --upgrade pip
-COPY pyproject.toml poetry.lock ./
 COPY --from=rust /build/target/release/eliminate_subtraction ./
 COPY fixtures.py workflow.py pathoscope.py ./
 COPY --from=rustExpectMax /build/target/wheels/virtool_expectation_maximization*.whl ./
+RUN ls
 RUN pip install virtool_expectation_maximization*.whl
-RUN poetry install
-RUN poetry add ./virtool_expectation_maximization*.whl
 
 FROM virtool/workflow:5.2.1 as test
 WORKDIR /test
