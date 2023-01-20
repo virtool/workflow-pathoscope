@@ -102,19 +102,6 @@ def test_compute_best_hit(data_regression):
 
 
 @pytest.mark.datafiles(SAM_PATH)
-def test_rewrite_align(datafiles, file_regression, tmp_path):
-    with open(UNU_PATH, "rb") as f:
-        u, nu = pickle.load(f)
-
-    rewrite_path = tmp_path / "rewrite.sam"
-
-    pathoscope.rewrite_align(u, nu, datafiles / "test_al.sam", 0.01, rewrite_path)
-
-    with open(rewrite_path, "r") as f:
-        file_regression.check(f.read())
-
-
-@pytest.mark.datafiles(SAM_PATH)
 def test_calculate_coverage(datafiles, tmp_path, sam_path):
     ref_lengths = dict()
 
