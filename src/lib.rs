@@ -721,74 +721,9 @@ mod tests {
     use crate::rewrite_align::*;
     use crate::*;
     use std::fs::File;
+    use std::io::BufRead;
     use std::io::BufReader;
-
-    // commented out because the pyo3 interface run
-    // accepts different arguments than the rust run
-
-    // #[test]
-    // fn testRun()
-    // {
-    //     let (
-    //         bestHitInitialReads,
-    //         bestHitInitial,
-
-    //         level1Initial,
-    //         level2Initial,
-
-    //         bestHitFinalReads,
-    //         bestHitFinal,
-
-    //         level1Final,
-    //         level2Final,
-
-    //         init_pi,
-    //         pi,
-
-    //         refs,
-    //         reads
-    //     ) = super::run(String::from("TestFiles/test_al.sam"), String::from("TestFiles/rewrite.sam"), 0.01);
-
-    //     let mut records: Vec<(
-    //         f64,
-    //         f64,
-    //         f64,
-    //         f64,
-    //         f64,
-    //         f64,
-    //         f64,
-    //         f64,
-    //         f64,
-    //         f64,
-    //         String,
-    //         String)> = Vec::new();
-
-    //     for i in 0..bestHitFinalReads.len()
-    //     {
-    //         records.push((
-    //             bestHitInitialReads[i],
-    //             bestHitInitial[i],
-
-    //             level1Initial[i],
-    //             level2Initial[i],
-
-    //             bestHitFinalReads[i],
-    //             bestHitFinal[i],
-
-    //             level1Final[i],
-    //             level2Final[i],
-
-    //             init_pi[i],
-    //             pi[i],
-
-    //             refs[i].clone(),
-    //             reads[i].clone()
-    //         ));
-    //     }
-
-    //     println!("break")
-
-    // }
+    use std::io::Read;
 
     #[test]
     fn test_rewrite_align() {
@@ -801,7 +736,42 @@ mod tests {
             &0.01,
             "TestFiles/rewrite.sam",
         );
-        println!("pause!");
+
+        let mut new_file = BufReader::new(File::open("TestFiles/rewrite.sam").expect("Invalid file"));
+        let mut test_file = BufReader::new(File::open("tests/test_pathoscope/test_rewrite_align.txt").expect("Invalid file"));
+
+        let mut new_line = String::new();
+        let mut test_line = String::new();
+
+        //compare record of desired output to actual output
+        loop{
+            new_line.clear();
+            test_line.clear();
+
+            match new_file.read_line(&mut new_line){
+                Ok(val) => if val == 0 {
+                    return;
+                }
+
+                Err(_) => panic!("error reading line in test_rewrite_align")
+            }
+
+            match test_file.read_line(&mut test_line){
+                Ok(val) => if val == 0 {
+                    return;
+                }
+
+                Err(_) => panic!("error reading line in test_rewrite_align")
+            }
+
+            let new_line_fields: Vec<&str> = new_line.split('\t').collect();
+            let test_line_fields: Vec<&str> = test_line.split('\t').collect();
+
+            //compare every field of desired output to actual output
+            for i in 0..new_line_fields.len() {
+                assert!(new_line_fields[i] == test_line_fields[i], "output of rewrite_align does not match expected");
+            }
+        }
     }
 
     ///tests the em function
