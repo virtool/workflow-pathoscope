@@ -695,15 +695,19 @@ mod rewrite_align {
 ///tests and whatnot
 #[cfg(test)]
 mod tests {
+
     #![allow(unused)]
+
     use crate::build_matrix::*;
-    use crate::parse_sam::*;
     use crate::rewrite_align::*;
     use crate::*;
     use std::fs::File;
     use std::io::BufRead;
     use std::io::BufReader;
     use std::io::Read;
+
+    extern crate yaml_rust;
+    use yaml_rust::{YamlEmitter, YamlLoader};
 
     #[test]
     fn test_rewrite_align() {
@@ -766,7 +770,6 @@ mod tests {
         }
     }
 
-    ///tests the em function
     #[test]
     fn test_em() {
         let (u, nu, refs, reads) = build_matrix("TestFiles/test_al.sam", None);
@@ -779,55 +782,78 @@ mod tests {
         let (best_hit_reads, best_hit, level1, level2) = compute_best_hit(&u, &nu, &refs, &reads);
     }
 
-    ///tests the buildMatrix function
     #[test]
     fn test_build_matrix() {
         let (u, nu, refs, reads) = build_matrix("TestFiles/test_al.sam", None);
 
-        //testing u length and values
-        assert!(u.len() == 19174);
+        let mut test_file = File::open("tests/test_pathoscope/test_build_matrix.yml")
+            .expect("tests::test_build_matrix: `unable to open test file`");
+        let mut test_string = String::new();
+        test_string.clear();
+        test_file
+            .read_to_string(&mut test_string)
+            .expect("tests::test_build_matrix: unable to read test file");
+        let test_matrix = YamlLoader::load_from_str(&test_string)
+            .expect("tests::test_build_matrix: unable to parse test file as .yml")[0]
+            .clone();
 
-        assert!(u.get(&0).unwrap().0 == 0);
-        assert!(u.get(&0).unwrap().1 == 1.3892652283160566e+43);
+        //compare u
+        for (key, value) in u {
+            assert!(value.0 as i64 == test_matrix[0][key as usize][0].as_i64().unwrap());
+            assert!(value.1 == test_matrix[0][key as usize][1].as_f64().unwrap());
+        }
 
-        //testing nu length and values
-        assert!(nu.len() == 1102);
+        //compare nu
+        for (key, value) in nu {
+            for i in 0..value.0.len() {
+                assert!(value.0[i] as i64 == test_matrix[1][key as usize][0][i].as_i64().unwrap());
+            }
 
-        assert!(nu.get(&10).unwrap().0[0] == 1);
-        assert!(nu.get(&10).unwrap().0[1] == 3);
-        assert!(nu.get(&10).unwrap().0.len() == 2);
+            for i in 0..value.1.len() {
+                assert!(value.1[i] == test_matrix[1][key as usize][1][i].as_f64().unwrap());
+            }
 
-        assert!(nu.get(&10).unwrap().1[0] == 9.539599502409837e+36);
-        assert!(nu.get(&10).unwrap().1[1] == 9.394830991271991e+34);
-        assert!(nu.get(&10).unwrap().1.len() == 2);
+            for i in 0..value.2.len() {
+                assert!(value.2[i] == test_matrix[1][key as usize][2][i].as_f64().unwrap());
+            }
 
-        assert!(nu.get(&10).unwrap().2[0] == 0.9902477974114013);
-        assert!(nu.get(&10).unwrap().2[1] == 0.009752202588598546);
-        assert!(nu.get(&10).unwrap().2.len() == 2);
+            assert!(value.3 == test_matrix[1][key as usize][3].as_f64().unwrap());
+        }
 
-        assert!(nu.get(&10).unwrap().3 == 9.539599502409837e+36);
+        let mut ref_count = 0;
 
-        //testing refs length and values
-        assert!(refs.len() == 40);
+        //compare refs
+        for entry in &refs {
+            //vector is not sorted; check every index and break if found
+            for i in 0..refs.len() {
+                if (*entry).eq(test_matrix[2][i].as_str().unwrap()) {
+                    ref_count += 1;
+                    break;
+                } else {
+                    continue;
+                }
+            }
+        }
+        if ref_count != test_matrix[2].as_vec().unwrap().len() {
+            panic!();
+        }
 
-        assert!(refs.get(0).unwrap().eq("NC_016509"));
-        assert!(refs.get(1).unwrap().eq("NC_003615"));
-        assert!(refs.get(2).unwrap().eq("NC_007448"));
+        let mut read_count = 0;
 
-        //testing reads length and values
-        assert!(reads.len() == 20276);
-
-        assert!(reads
-            .get(0)
-            .unwrap()
-            .eq("HWI-ST1410:82:C2VAGACXX:7:1101:20066:1892"));
-        assert!(reads
-            .get(1)
-            .unwrap()
-            .eq("HWI-ST1410:82:C2VAGACXX:7:1101:11037:2144"));
-        assert!(reads
-            .get(2)
-            .unwrap()
-            .eq("HWI-ST1410:82:C2VAGACXX:7:1101:14679:2757"));
+        //compare reads
+        for entry in &reads {
+            //vector is not sorted; check every index and break if found
+            for i in 0..reads.len() {
+                if (*entry).eq(test_matrix[3][i].as_str().unwrap()) {
+                    read_count += 1;
+                    break;
+                } else {
+                    continue;
+                }
+            }
+        }
+        if read_count != test_matrix[3].as_vec().unwrap().len() {
+            panic!();
+        }
     }
 }
