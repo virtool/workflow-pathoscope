@@ -69,7 +69,6 @@ mod build_matrix {
     use std::fs::File;
     use std::io::BufReader;
 
-    ///produces the SAM matrix given a path to a .SAM file
     pub fn build_matrix(
         sam_path: &str,
         p_score_cutoff: Option<f64>,
@@ -170,36 +169,30 @@ mod build_matrix {
             }
         }
 
-        let (mut u, mut nu) = rescale_samscore(u, nu, max_score, min_score);
-
-        let u_ptr = &mut u as *mut HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>;
-        let nu_ptr = &mut nu as *mut HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>;
+        let (u, mut nu) = rescale_samscore(u, nu, max_score, min_score);
 
         let mut u_return: HashMap<i32, (i32, f64)> = HashMap::new();
-        let u_return_ptr = &mut u_return as *mut HashMap<i32, (i32, f64)>;
 
-        unsafe {
-            for k in (*u_ptr).keys() {
-                (*u_return_ptr).insert(
-                    k.clone(),
-                    (
-                        (*u_ptr).get(k).unwrap().0.get(0).unwrap().clone(),
-                        (*u_ptr).get(k).unwrap().1.get(0).unwrap().clone(),
-                    ),
-                );
-            }
+        for k in u.keys().clone() {
+            u_return.insert(
+                k.clone(),
+                (
+                    u.get(k).unwrap().0.get(0).unwrap().clone(),
+                    u.get(k).unwrap().1.get(0).unwrap().clone(),
+                ),
+            );
+        }
 
-            for k in (*nu_ptr).keys() {
-                let p_score_sum = (*nu_ptr).get(k).unwrap().1.iter().sum::<f64>();
+        for k in nu.clone().keys() {
+            let p_score_sum = nu.get(k).unwrap().1.iter().sum::<f64>();
 
-                (*nu_ptr).get_mut(k).unwrap().2 = (*nu_ptr)
-                    .get(k)
-                    .unwrap()
-                    .1
-                    .iter()
-                    .map(|data| data / p_score_sum)
-                    .collect();
-            }
+            nu.get_mut(k).unwrap().2 = nu
+                .get(k)
+                .unwrap()
+                .1
+                .iter()
+                .map(|data| data / p_score_sum)
+                .collect();
         }
 
         return (u_return, nu, refs, reads);
@@ -217,45 +210,33 @@ mod build_matrix {
     ) {
         let scaling_factor: f64;
 
-        //Need to access the data 3 places at once so this is a quick solution;
-        //will possibly replace with smart pointers later on
-        let u_ptr = &mut u as *mut HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>;
-        let nu_ptr = &mut nu as *mut HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>;
-
         if min_score < 0.0 {
             scaling_factor = 100.0 / (max_score - min_score);
         } else {
             scaling_factor = 100.0 / max_score;
         }
 
-        //Derefing raw pointers
-        unsafe {
-            for k in (*u_ptr).keys() {
-                if min_score < 0.0 {
-                    (*u_ptr).get_mut(k).unwrap().1[0] =
-                        (*u_ptr).get(k).unwrap().1[0].clone() - min_score;
-                }
-
-                (*u_ptr).get_mut(k).unwrap().1[0] =
-                    f64::exp((*u_ptr).get(k).unwrap().1[0] * scaling_factor);
-                (*u_ptr).get_mut(k).unwrap().3 = u.get(k).unwrap().1[0];
+        for k in u.clone().keys() {
+            if min_score < 0.0 {
+                u.get_mut(k).unwrap().1[0] = u.get(k).unwrap().1[0].clone() - min_score;
             }
 
-            for k in (*nu_ptr).keys() {
-                (*nu_ptr).get_mut(k).unwrap().3 = 0.0;
+            u.get_mut(k).unwrap().1[0] = f64::exp(u.get(k).unwrap().1[0] * scaling_factor);
+            u.get_mut(k).unwrap().3 = u.get(k).unwrap().1[0];
+        }
 
-                for i in 0..(*nu_ptr).get(k).unwrap().1.len() {
-                    if min_score < 0.0 {
-                        (*nu_ptr).get_mut(k).unwrap().1[i] =
-                            (*nu_ptr).get(k).unwrap().1[i] - min_score;
-                    }
+        for k in nu.clone().keys() {
+            nu.get_mut(k).unwrap().3 = 0.0;
 
-                    (*nu_ptr).get_mut(k).unwrap().1[i] =
-                        f64::exp((*nu_ptr).get(k).unwrap().1[i] * scaling_factor);
+            for i in 0..nu.get(k).unwrap().1.len() {
+                if min_score < 0.0 {
+                    nu.get_mut(k).unwrap().1[i] = nu.get(k).unwrap().1[i] - min_score;
+                }
 
-                    if (*nu_ptr).get(k).unwrap().1[i] > (*nu_ptr).get(k).unwrap().3 {
-                        (*nu_ptr).get_mut(k).unwrap().3 = (*nu_ptr).get(k).unwrap().1[i];
-                    }
+                nu.get_mut(k).unwrap().1[i] = f64::exp(nu.get(k).unwrap().1[i] * scaling_factor);
+
+                if nu.get(k).unwrap().1[i] > nu.get(k).unwrap().3 {
+                    nu.get_mut(k).unwrap().3 = nu.get(k).unwrap().1[i];
                 }
             }
         }
@@ -716,7 +697,6 @@ mod rewrite_align {
 mod tests {
     #![allow(unused)]
     use crate::build_matrix::*;
-    use crate::em;
     use crate::parse_sam::*;
     use crate::rewrite_align::*;
     use crate::*;
@@ -737,39 +717,51 @@ mod tests {
             "TestFiles/rewrite.sam",
         );
 
-        let mut new_file = BufReader::new(File::open("TestFiles/rewrite.sam").expect("Invalid file"));
-        let mut test_file = BufReader::new(File::open("tests/test_pathoscope/test_rewrite_align.txt").expect("Invalid file"));
+        let mut new_file =
+            BufReader::new(File::open("TestFiles/rewrite.sam").expect("Invalid file"));
+        let mut test_file = BufReader::new(
+            File::open("tests/test_pathoscope/test_rewrite_align.txt").expect("Invalid file"),
+        );
 
         let mut new_line = String::new();
         let mut test_line = String::new();
 
-        //compare record of desired output to actual output
-        loop{
+        //compare records of desired output to actual output
+        loop {
             new_line.clear();
             test_line.clear();
 
-            match new_file.read_line(&mut new_line){
-                Ok(val) => if val == 0 {
-                    return;
+            match new_file.read_line(&mut new_line) {
+                Ok(val) => {
+                    if val == 0 {
+                        return;
+                    }
                 }
 
-                Err(_) => panic!("error reading line in test_rewrite_align")
+                Err(_) => panic!("tests::test_rewrite_align: `error reading rewrite.sam`"),
             }
 
-            match test_file.read_line(&mut test_line){
-                Ok(val) => if val == 0 {
-                    return;
+            match test_file.read_line(&mut test_line) {
+                Ok(val) => {
+                    if val == 0 {
+                        return;
+                    }
                 }
 
-                Err(_) => panic!("error reading line in test_rewrite_align")
+                Err(_) => {
+                    panic!("tests::test_rewrite_align `error reading test_rewrite_align.txt`")
+                }
             }
 
             let new_line_fields: Vec<&str> = new_line.split('\t').collect();
             let test_line_fields: Vec<&str> = test_line.split('\t').collect();
 
-            //compare every field of desired output to actual output
+            //compare fields of desired output to actual output
             for i in 0..new_line_fields.len() {
-                assert!(new_line_fields[i] == test_line_fields[i], "output of rewrite_align does not match expected");
+                assert!(
+                    new_line_fields[i] == test_line_fields[i],
+                    "tests::test_rewrite_align: `output of rewrite_align does not match expected`"
+                );
             }
         }
     }
@@ -779,14 +771,12 @@ mod tests {
     fn test_em() {
         let (u, nu, refs, reads) = build_matrix("TestFiles/test_al.sam", None);
         let (init_pi, pi, theta, nu) = em(&u, nu, &refs, 5, 1e-7, 0.0, 0.0);
-        println!("pause!");
     }
 
     #[test]
     fn test_best_hit() {
         let (u, nu, refs, reads) = build_matrix("TestFiles/test_al.sam", None);
         let (best_hit_reads, best_hit, level1, level2) = compute_best_hit(&u, &nu, &refs, &reads);
-        println!("pause");
     }
 
     ///tests the buildMatrix function
@@ -839,23 +829,5 @@ mod tests {
             .get(2)
             .unwrap()
             .eq("HWI-ST1410:82:C2VAGACXX:7:1101:14679:2757"));
-    }
-
-    ///tests the parseSAM function
-    #[test]
-    fn test_parse_sam() {
-        println!("Testing parseSAM");
-
-        let sam_file = File::open("TestFiles/test_al.sam").expect("Invalid file");
-        let mut sam_reader = BufReader::new(sam_file);
-        loop {
-            let new_line = parse_sam(&mut sam_reader, None);
-            match new_line {
-                ParseResult::Ok(data) => continue,
-                ParseResult::EOF => return,
-                ParseResult::Err(msg) => return,
-                ParseResult::Ignore => continue,
-            }
-        }
     }
 }
