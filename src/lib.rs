@@ -730,7 +730,7 @@ mod tests {
         let mut new_line = String::new();
         let mut test_line = String::new();
 
-        //compare records of desired output to actual output
+        //compare output
         loop {
             new_line.clear();
             test_line.clear();
@@ -773,13 +773,116 @@ mod tests {
     #[test]
     fn test_em() {
         let (u, nu, refs, reads) = build_matrix("TestFiles/test_al.sam", None);
-        let (init_pi, pi, theta, nu) = em(&u, nu, &refs, 5, 1e-7, 0.0, 0.0);
+        let (init_pi, pi, theta, nu) = em(&u, nu, &refs, 5, 1e-6, 0.0, 0.0);
+
+        let mut test_file = File::open("tests/test_pathoscope/test_em_5_1e_06_0_0_.yml")
+            .expect("tests::test_build_matrix: `unable to open test file`");
+        let mut test_string = String::new();
+        test_string.clear();
+        test_file
+            .read_to_string(&mut test_string)
+            .expect("tests::test_build_matrix: unable to read test file");
+        let test_matrix = YamlLoader::load_from_str(&test_string)
+            .expect("tests::test_build_matrix: unable to parse test file as .yml")[0]
+            .clone();
+
+        //compare nu
+        for (key, value) in nu {
+            for i in 0..value.0.len() {
+                assert!(value.0[i] as i64 == test_matrix[3][key as usize][0][i].as_i64().unwrap());
+            }
+        }
+
+        let mut init_pi_count = 0;
+
+        //compare init_pi
+        for entry in &init_pi {
+            //vector is not sorted; check every index and break if found
+            for i in 0..init_pi.len() {
+                if ((*entry) - test_matrix[0][i].as_f64().unwrap()) <= 0.000000000000001 {
+                    init_pi_count += 1;
+                    break;
+                } else {
+                    continue;
+                }
+            }
+        }
+        if init_pi_count != test_matrix[0].as_vec().unwrap().len() {
+            panic!();
+        }
+
+        let mut pi_count = 0;
+
+        //compare pi
+        for entry in &pi {
+            //vector is not sorted; check every index and break if found
+            for i in 0..pi.len() {
+                if ((*entry) - test_matrix[1][i].as_f64().unwrap()) <= 0.000000000000001 {
+                    pi_count += 1;
+                    break;
+                } else {
+                    continue;
+                }
+            }
+        }
+        if pi_count != test_matrix[1].as_vec().unwrap().len() {
+            panic!();
+        }
+
+        let mut theta_count = 0;
+
+        //compare pi
+        for entry in &theta {
+            //vector is not sorted; check every index and break if found
+            for i in 0..theta.len() {
+                if ((*entry) - test_matrix[2][i].as_f64().unwrap()) <= 0.000000000000001 {
+                    theta_count += 1;
+                    break;
+                } else {
+                    continue;
+                }
+            }
+        }
+        if theta_count != test_matrix[2].as_vec().unwrap().len() {
+            panic!();
+        }
     }
 
     #[test]
     fn test_best_hit() {
         let (u, nu, refs, reads) = build_matrix("TestFiles/test_al.sam", None);
         let (best_hit_reads, best_hit, level1, level2) = compute_best_hit(&u, &nu, &refs, &reads);
+
+        let mut test_file = File::open("tests/test_pathoscope/test_compute_best_hit.yml")
+            .expect("tests::test_build_matrix: `unable to open test file`");
+        let mut test_string = String::new();
+        test_string.clear();
+        test_file
+            .read_to_string(&mut test_string)
+            .expect("tests::test_build_matrix: unable to read test file");
+        let test_matrix = YamlLoader::load_from_str(&test_string)
+            .expect("tests::test_build_matrix: unable to parse test file as .yml")[0]
+            .clone();
+
+        //compare best_hit_reads
+        for i in 0..best_hit_reads.len() {
+            assert!(best_hit_reads[i] == test_matrix[0][i].as_f64().unwrap())
+        }
+
+        //compare best_hit
+        for i in 0..best_hit.len() {
+            assert!(best_hit[i] == test_matrix[1][i].as_f64().unwrap());
+        }
+
+        //compare level1
+        for i in 0..level1.len() {
+            assert!(level1[i] == test_matrix[2][i].as_f64().unwrap());
+        }
+
+        //compare level2
+        for i in 0..level2.len() {
+            assert!(level2[i] == test_matrix[3][i].as_f64().unwrap());
+        }
     }
 
     #[test]
