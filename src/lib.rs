@@ -118,7 +118,7 @@ mod build_matrix {
             min_score = new_line.score.unwrap().min(min_score);
             max_score = new_line.score.unwrap().max(max_score);
 
-            let mut ref_index = (h_ref_id.get(&new_line.ref_id).unwrap_or(&-1)).clone();
+            let mut ref_index = *(h_ref_id.get(&new_line.ref_id).unwrap_or(&-1));
 
             if ref_index == -1 {
                 ref_index = ref_count;
@@ -127,7 +127,7 @@ mod build_matrix {
                 ref_count += 1;
             }
 
-            let mut read_index = (h_read_id.get(&new_line.read_id).unwrap_or(&-1)).clone();
+            let mut read_index = *(h_read_id.get(&new_line.read_id).unwrap_or(&-1));
 
             if read_index == -1 {
                 read_index = read_count;
@@ -173,9 +173,9 @@ mod build_matrix {
 
         let mut u_return: HashMap<i32, (i32, f64)> = HashMap::new();
 
-        for k in u.keys().clone() {
+        for k in u.keys() {
             u_return.insert(
-                k.clone(),
+                *k,
                 (
                     u.get(k).unwrap().0.get(0).unwrap().clone(),
                     u.get(k).unwrap().1.get(0).unwrap().clone(),
@@ -476,7 +476,7 @@ pub fn em(
     }
 
     for i in u.keys() {
-        pi_sum_0[u.get(i).unwrap().0 as usize] += u.get(i).unwrap().1.clone();
+        pi_sum_0[u.get(i).unwrap().0 as usize] += u.get(i).unwrap().1;
     }
 
     let nu_weights: Vec<f64> = nu.iter().map(|entry| (*(entry.1)).3).collect();
@@ -546,7 +546,7 @@ pub fn em(
         let pi_sum: Vec<f64> = theta_sum
             .iter()
             .enumerate()
-            .map(|(idx, _)| theta_sum[idx].clone() + pi_sum_0[idx].clone())
+            .map(|(idx, _)| theta_sum[idx] + pi_sum_0[idx])
             .collect();
         let pip = pi_prior * prior_weight;
 
@@ -562,7 +562,7 @@ pub fn em(
 
         let theta_p = theta_prior * prior_weight;
 
-        let mut nu_total_div = nu_total.clone();
+        let mut nu_total_div = nu_total;
 
         if nu_total_div == 0 as f64 {
             nu_total_div = 1 as f64;
