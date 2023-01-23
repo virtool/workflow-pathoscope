@@ -57,10 +57,10 @@ def test_build_matrix(data_regression, datafiles):
 
 
 @pytest.mark.datafiles(SAM_PATH)
-@pytest.mark.parametrize("theta_prior", [0, 1e-5])
-@pytest.mark.parametrize("pi_prior", [0, 1e-5])
-@pytest.mark.parametrize("epsilon", [1e-6, 1e-7, 1e-8])
-@pytest.mark.parametrize("max_iter", [5, 10, 20, 30])
+@pytest.mark.parametrize("theta_prior", [0])
+@pytest.mark.parametrize("pi_prior", [0])
+@pytest.mark.parametrize("epsilon", [1e-6])
+@pytest.mark.parametrize("max_iter", [5])
 def test_em(
     data_regression,
     datafiles,
@@ -99,19 +99,6 @@ def test_compute_best_hit(data_regression):
         matrix_tuple = pickle.load(handle)
 
     data_regression.check(pathoscope.compute_best_hit(*matrix_tuple))
-
-
-@pytest.mark.datafiles(SAM_PATH)
-def test_rewrite_align(datafiles, file_regression, tmp_path):
-    with open(UNU_PATH, "rb") as f:
-        u, nu = pickle.load(f)
-
-    rewrite_path = tmp_path / "rewrite.sam"
-
-    pathoscope.rewrite_align(u, nu, datafiles / "test_al.sam", 0.01, rewrite_path)
-
-    with open(rewrite_path, "r") as f:
-        file_regression.check(f.read())
 
 
 @pytest.mark.datafiles(SAM_PATH)

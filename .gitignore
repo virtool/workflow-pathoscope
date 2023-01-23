@@ -4,4 +4,4 @@
 .vscode
 __pycache__
 *.pyc
-utils/**/target
+target

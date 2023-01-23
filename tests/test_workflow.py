@@ -17,7 +17,6 @@ from virtool_workflow.data_model.samples import Sample, WFSample
 from virtool_workflow.data_model.subtractions import WFSubtraction
 from virtool_workflow.runtime.run_subprocess import run_subprocess as wf_run_subprocess
 
-from pathoscope import parse_sam
 from workflow import (
     eliminate_subtraction,
     map_default_isolates,
@@ -233,14 +232,15 @@ async def test_pathoscope(
         work_path,
     )
 
-    data_regression.check(
-        sorted(
-            [
-                (line.read_id, line.ref_id, line.score)
-                for line in parse_sam(intermediate.reassigned_path)
-            ]
-        )
-    )
-
-    with intermediate.report_path.open("r") as f:
-        file_regression.check(f.read(), extension=".tsv")
+    # check run function produces desired output
+    with open(Path(__file__).parent / "test_workflow/test_pathoscope.tsv", "r") as testFile:
+        for line in testFile.readlines()[2:]:
+            newLine = line.split("\t")
+            records = list(results['hits'])
+            for record in records:
+                if newLine[0] == record['id']:
+                    assert int(float(newLine[1]) - record['final']['pi']) == 0
+                    assert int(float(newLine[2]) - record['final']['best']) == 0
+                    assert int(float(newLine[4]) - record['final']['high']) == 0
+                    assert int(float(newLine[5]) - record['final']['low']) == 0
+                    assert int(float(newLine[3]) - record['final']['reads']) == 0

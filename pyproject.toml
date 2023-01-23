@@ -8,6 +8,7 @@ license = "MIT"
 [tool.poetry.dependencies]
 python = "~3.10"
 virtool-workflow = "^5.0.0"
+rust = "^0.1.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^6.2.0"
@@ -25,3 +26,6 @@ markers = ["datafiles: load datafiles", "asyncio_mode: auto"]
 [build-system]
 requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.maturin]
+python-source = "python"

@@ -1,6 +1,7 @@
 import copy
 import csv
 import math
+import virtool_expectation_maximization
 from functools import cached_property
 from pathlib import Path
 from typing import Any, Dict, Generator, List
@@ -339,22 +340,6 @@ def em(u, nu, genomes, max_iter, epsilon, pi_prior, theta_prior):
     return init_pi, pi, theta, nu
 
 
-def find_updated_score(nu, read_index, ref_index):
-    try:
-        index = nu[read_index][0].index(ref_index)
-    except ValueError:
-        return 0.0, 0.0
-
-    p_score_sum = 0.0
-
-    for p_score in nu[read_index][1]:
-        p_score_sum += p_score
-
-    updated_pscore = nu[read_index][2][index]
-
-    return updated_pscore
-
-
 def compute_best_hit(u, nu, refs, reads):
     ref_count = len(refs)
 
@@ -509,55 +494,6 @@ def write_report(
     return results
 
 
-def rewrite_align(u, nu, sam_path: Path, p_score_cutoff: float, path: Path):
-    """
-    Rewrite the isolate SAM file to reflect Pathoscope read reassignments.
-
-    :param u: the uniquely mapped read matrix
-    :param nu: the non-uniquely mapped read matrix
-    :param sam_path: the path to the isolate SAM file
-    :param p_score_cutoff: the p-score cutoff
-    :param path: the path to the reassigned SAM output
-
-    """
-    read_id_dict = {}
-    ref_id_dict = {}
-    genomes = []
-    read = []
-    ref_count = 0
-    read_count = 0
-
-    with open(path, "w") as f:
-        for line in parse_sam(sam_path, p_score_cutoff=p_score_cutoff):
-            ref_index = ref_id_dict.get(line.ref_id, -1)
-
-            if ref_index == -1:
-                ref_index = ref_count
-                ref_id_dict[line.ref_id] = ref_index
-                genomes.append(line.ref_id)
-                ref_count += 1
-
-            read_index = read_id_dict.get(line.read_id, -1)
-
-            if read_index == -1:
-                # hold on this new read
-                # first, wrap previous read profile and see if any previous read has a
-                # same profile with that!
-                read_index = read_count
-                read_id_dict[line.read_id] = read_index
-                read.append(line.read_id)
-                read_count += 1
-                if read_index in u:
-                    f.write(str(line))
-                    continue
-
-            if read_index in nu:
-                if find_updated_score(nu, read_index, ref_index) < p_score_cutoff:
-                    continue
-
-                f.write(str(line))
-
-
 def calculate_coverage(sam_path: Path, ref_lengths: Dict[str, int]):
     coverage_dict = {}
     pos_length_list = []
@@ -579,43 +515,14 @@ def calculate_coverage(sam_path: Path, ref_lengths: Dict[str, int]):
 
 
 def run(sam_path: Path, reassigned_path: Path, p_score_cutoff: float):
-    u, nu, refs, reads = build_matrix(sam_path)
-
-    (
-        best_hit_initial_reads,
-        best_hit_initial,
-        level_1_initial,
-        level_2_initial,
-    ) = compute_best_hit(u, nu, refs, reads)
-
-    init_pi, pi, _, nu = em(u, nu, refs, 50, 1e-7, 0, 0)
-
-    (
-        best_hit_final_reads,
-        best_hit_final,
-        level_1_final,
-        level_2_final,
-    ) = compute_best_hit(u, nu, refs, reads)
-
-    rewrite_align(
-        u=u,
-        nu=nu,
-        sam_path=sam_path,
-        p_score_cutoff=p_score_cutoff,
-        path=reassigned_path,
-    )
-
-    return (
-        best_hit_initial_reads,
-        best_hit_initial,
-        level_1_initial,
-        level_2_initial,
-        best_hit_final_reads,
-        best_hit_final,
-        level_1_final,
-        level_2_final,
-        init_pi,
-        pi,
-        refs,
-        reads,
-    )
+    # rust binding to improve runtime performance
+    # computes:
+    #   buildMatrix
+    #   em
+    #   rewriteAlign
+    #   computeBestHit
+    #   + adjacent code
+    return virtool_expectation_maximization.run(
+        str(sam_path),
+        str(reassigned_path),
+        p_score_cutoff)
