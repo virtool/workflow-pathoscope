@@ -198,9 +198,29 @@ async def eliminate_subtraction(
 ):
     """
     Remove reads that map better to a subtraction than to a reference.
+
+    The input to this step is the reads that aligned to an isolate at least once in the
+    previous step. We will align these against a subtraction (plant) genome. If the
+    alignment score is higher against the subtraction, we drop alignments involving the
+    read from the SAM from the previous step and write the reduced one to
+    `subtracted_sam_path`.
+
+    TODO: Go through all `subtractions` instead of just the first `subtraction`.
+          Efficiently eliminate from the subtraction SAM any reads that map to any of
+          subtractions.
+
+    :param isolate_fastq_path: path to the FASTQ file containing reads that aligned to the isolates
+    :param isolate_sam_path: path to the SAM file of alignments to the isolates
+    :param proc: number of processors to use
+    :param results: the results to send to the api when the workflow is complete
+    :param run_subprocess: runs a subprocess with error handling
+    :param subtraction: the subtraction to align and eliminate reads against
+    :param subtracted_sam_path: path to the SAM file with subtraction-mapped reads removed
+    :param work_path: path to the workflow working directory
     """
     to_subtraction_sam_path = work_path / "to_subtraction.sam"
 
+    # Map reads to the subtraction.
     await run_subprocess(
         [
             "bowtie2",
