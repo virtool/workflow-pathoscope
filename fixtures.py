@@ -4,7 +4,6 @@ from typing import List
 
 from pyfixtures import fixture
 from virtool_workflow.data_model.indexes import WFIndex
-from virtool_workflow.data_model.subtractions import WFSubtraction
 
 
 @fixture

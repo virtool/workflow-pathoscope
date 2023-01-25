@@ -1,6 +1,5 @@
 import asyncio
 import copy
-import pathlib
 import shlex
 from collections import defaultdict
 from logging import getLogger
@@ -264,16 +263,14 @@ async def eliminate_subtraction(
                     subtracted_count += 1
 
         logger.info(
-            f"Subtracted {subtracted_count} reads that mapped better to a subtraction."
+            f"Subtracted %s reads that mapped better to a subtraction.", subtracted_count
         )
 
         # don't want to compare old subtractions,
-        # so we set the next sam path equal to the subtracted sam path
+        # so we set the next iteration's sam path equal to the current subtracted sam path
         isolate_sam_path = copy.copy(subtracted_sam_path)
 
     results["subtracted_count"] = subtracted_count
-
-
 
 
 @step
