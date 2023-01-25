@@ -1,5 +1,4 @@
 import asyncio
-import copy
 import shlex
 import shutil
 from collections import defaultdict
