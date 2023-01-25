@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import shlex
+import shutil
 from collections import defaultdict
 from logging import getLogger
 from pathlib import Path
@@ -247,7 +248,7 @@ async def eliminate_subtraction(
         )
 
         await run_subprocess(
-            [   # revert before git commit!
+            [
                 "./eliminate_subtraction",
                 str(isolate_sam_path),
                 str(to_subtraction_sam_path),
@@ -268,9 +269,9 @@ async def eliminate_subtraction(
         )
 
         # don't want to compare old subtractions,
-        # so we set the next iteration's sam path equal
-        # to the current subtracted sam path
-        isolate_sam_path = copy.copy(subtracted_sam_path)
+        # so we set the next iteration's isolate file
+        # to the current subtracted sam file
+        shutil.copyfile(subtracted_sam_path, isolate_sam_path)
 
     results["subtracted_count"] = subtracted_count
 
