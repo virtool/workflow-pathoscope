@@ -1,10 +1,12 @@
 import asyncio
+import copy
+import pathlib
 import shlex
 from collections import defaultdict
 from logging import getLogger
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import aiofiles
 import aiofiles.os
@@ -192,7 +194,7 @@ async def eliminate_subtraction(
     proc: int,
     results: Dict[str, Any],
     run_subprocess: RunSubprocess,
-    subtraction: WFSubtraction,
+    subtractions: List[WFSubtraction],
     subtracted_sam_path: Path,
     work_path: Path,
 ):
@@ -214,56 +216,64 @@ async def eliminate_subtraction(
     :param proc: number of processors to use
     :param results: the results to send to the api when the workflow is complete
     :param run_subprocess: runs a subprocess with error handling
-    :param subtraction: the subtraction to align and eliminate reads against
+    :param subtractions: the subtraction to align and eliminate reads against
     :param subtracted_sam_path: path to the SAM file with subtraction-mapped reads removed
     :param work_path: path to the workflow working directory
     """
     to_subtraction_sam_path = work_path / "to_subtraction.sam"
 
-    # Map reads to the subtraction.
-    await run_subprocess(
-        [
-            "bowtie2",
-            "--local",
-            "--no-unal",
-            "--no-hd",
-            "--no-sq",
-            "-N",
-            "0",
-            "-p",
-            str(proc),
-            "-x",
-            shlex.quote(str(subtraction.bowtie2_index_path)),
-            "-U",
-            str(isolate_fastq_path),
-            "-S",
-            str(to_subtraction_sam_path),
-        ]
-    )
-
-    await run_subprocess(
-        [
-            "./eliminate_subtraction",
-            str(isolate_sam_path),
-            str(to_subtraction_sam_path),
-            str(subtracted_sam_path),
-        ]
-    )
-
-    await aiofiles.os.remove(to_subtraction_sam_path)
-
     subtracted_count = 0
 
-    async with aiofiles.open("subtracted_read_ids.txt", "r") as f:
-        async for line in f:
-            if line:
-                subtracted_count += 1
+    # iterate over all subtractions
+    for subtraction in subtractions:
+        # Map reads to the subtraction.
+        await run_subprocess(
+            [
+                "bowtie2",
+                "--local",
+                "--no-unal",
+                "--no-hd",
+                "--no-sq",
+                "-N",
+                "0",
+                "-p",
+                str(proc),
+                "-x",
+                shlex.quote(str(subtraction.bowtie2_index_path)),
+                "-U",
+                str(isolate_fastq_path),
+                "-S",
+                str(to_subtraction_sam_path),
+            ]
+        )
 
-    logger.info(
-        f"Subtracted {subtracted_count} reads that mapped better to a subtraction."
-    )
+        await run_subprocess(
+            [   # revert before git commit!
+                "./eliminate_subtraction",
+                str(isolate_sam_path),
+                str(to_subtraction_sam_path),
+                str(subtracted_sam_path),
+            ]
+        )
+
+        await aiofiles.os.remove(to_subtraction_sam_path)
+
+        async with aiofiles.open("subtracted_read_ids.txt", "r") as f:
+            async for line in f:
+                if line:
+                    subtracted_count += 1
+
+        logger.info(
+            f"Subtracted {subtracted_count} reads that mapped better to a subtraction."
+        )
+
+        # don't want to compare old subtractions,
+        # so we set the next sam path equal to the subtracted sam path
+        isolate_sam_path = copy.copy(subtracted_sam_path)
 
     results["subtracted_count"] = subtracted_count
+
+
 
 
 @step

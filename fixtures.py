@@ -13,11 +13,6 @@ def index(indexes: List[WFIndex]):
 
 
 @fixture
-def subtraction(subtractions: List[WFSubtraction]):
-    return subtractions[0]
-
-
-@fixture
 def intermediate():
     """A namespace for storing intermediate values."""
     return SimpleNamespace(
