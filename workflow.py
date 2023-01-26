@@ -279,7 +279,14 @@ async def eliminate_subtraction(
         i = 0
         while (i + 3) < len(lines):
             try:
-                grouped_fastq_reads.append([lines[i], lines[i + 1], lines[i + 2], lines[i + 3]])
+                grouped_fastq_reads.append(
+                    [
+                        lines[i],
+                        lines[i + 1],
+                        lines[i + 2],
+                        lines[i + 3]
+                    ]
+                )
                 i += 4
             except IndexError:
                 break
