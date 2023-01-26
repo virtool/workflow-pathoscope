@@ -221,6 +221,12 @@ async def eliminate_subtraction(
     """
     to_subtraction_sam_path = work_path / "to_subtraction.sam"
 
+    working_isolate_path = work_path / "working_isolate.sam"
+
+    # copy the original isolate sam file into a working isolate sam file
+    # as to not disrupt uses elsewhere
+    shutil.copyfile(isolate_sam_path, working_isolate_path)
+
     subtracted_count = 0
 
     # iterate over all subtractions
@@ -249,7 +255,7 @@ async def eliminate_subtraction(
         await run_subprocess(
             [
                 "./eliminate_subtraction",
-                str(isolate_sam_path),
+                str(working_isolate_path),
                 str(to_subtraction_sam_path),
                 str(subtracted_sam_path),
             ]
@@ -262,6 +268,40 @@ async def eliminate_subtraction(
                 if line:
                     subtracted_count += 1
 
+        # rewrite the fastq file to exclude previous reads
+
+        lines = None
+        with open(isolate_fastq_path, 'r') as f:
+            lines = f.readlines()
+
+        # group every 4 lines of isolate_fastq into a collection
+        grouped_fastq_reads = []
+        i = 0
+        while (i + 3) < len(lines):
+            try:
+                grouped_fastq_reads.append([lines[i], lines[i + 1], lines[i + 2], lines[i + 3]])
+                i += 4
+            except IndexError:
+                break
+
+        # load in the previously subtracted data
+        subtracted_reads = []
+        with open("subtracted_read_ids.txt", "r") as f:
+            subtracted_reads = [line.strip() for line in f]
+
+        # unwrap collections and rewrite into new isolate_fastq file;
+        # only write if not previously subtracted
+        with open(isolate_fastq_path, 'w') as f:
+            for read in grouped_fastq_reads:
+                if read[0].strip("@\n") not in subtracted_reads:
+                    try:
+                        f.write(read[0])
+                        f.write(read[1])
+                        f.write(read[2])
+                        f.write(read[3])
+                    except IndexError:
+                        continue
+
         logger.info(
             "Subtracted %s reads that mapped better to a subtraction.",
             subtracted_count
@@ -270,7 +310,7 @@ async def eliminate_subtraction(
         # don't want to compare old subtractions,
         # so we set the next iteration's isolate file
         # to the current subtracted sam file
-        shutil.copyfile(subtracted_sam_path, isolate_sam_path)
+        shutil.copyfile(subtracted_sam_path, working_isolate_path)
 
     results["subtracted_count"] = subtracted_count
 
