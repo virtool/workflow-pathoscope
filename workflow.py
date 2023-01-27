@@ -222,10 +222,15 @@ async def eliminate_subtraction(
     to_subtraction_sam_path = work_path / "to_subtraction.sam"
 
     working_isolate_path = work_path / "working_isolate.sam"
+    working_fastq_path = work_path / "working_fastq.fq"
 
     # copy the original isolate sam file into a working isolate sam file
     # as to not disrupt uses elsewhere
     shutil.copyfile(isolate_sam_path, working_isolate_path)
+
+    # copy the original fastq file into a working fastq file
+    # as to not disrupt uses elsewhere
+    shutil.copyfile(isolate_fastq_path, working_fastq_path)
 
     subtracted_count = 0
 
@@ -246,7 +251,7 @@ async def eliminate_subtraction(
                 "-x",
                 shlex.quote(str(subtraction.bowtie2_index_path)),
                 "-U",
-                str(isolate_fastq_path),
+                str(working_fastq_path),
                 "-S",
                 str(to_subtraction_sam_path),
             ]
@@ -271,7 +276,7 @@ async def eliminate_subtraction(
         # rewrite the fastq file to exclude previous reads
 
         lines = None
-        with open(isolate_fastq_path, 'r') as f:
+        with open(working_fastq_path, 'r') as f:
             lines = f.readlines()
 
         # group every 4 lines of isolate_fastq into a collection
@@ -298,7 +303,7 @@ async def eliminate_subtraction(
 
         # unwrap collections and rewrite into new isolate_fastq file;
         # only write if not previously subtracted
-        with open(isolate_fastq_path, 'w') as f:
+        with open(working_fastq_path, 'w') as f:
             for read in grouped_fastq_reads:
                 if read[0].strip("@\n") not in subtracted_reads:
                     try:
