@@ -195,8 +195,8 @@ def read_fastq_grouped_lines(fastq_file: TextIO) -> Generator[tuple, None, None]
 
         if '' in fastq_read:
             return
-        else:
-            yield fastq_read
+        
+        yield fastq_read
 
 
 @step
