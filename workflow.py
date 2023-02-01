@@ -285,7 +285,10 @@ async def eliminate_subtraction(
 
         # set next iteration's current isolate file to the newly created isolate file
         current_isolate_path = work_path / "working_isolate.sam"
-        await asyncio.to_thread(shutil.copyfile, subtracted_sam_path, current_isolate_path)
+        await asyncio.to_thread(
+            shutil.copyfile, 
+            subtracted_sam_path, current_isolate_path
+        )
 
         async with aiofiles.open("subtracted_read_ids.txt", "r") as f:
             async for line in f:
@@ -297,14 +300,18 @@ async def eliminate_subtraction(
                 open("subtracted_read_ids.txt", 'r') as subtracted_reads_file, \
                 open(new_fastq_path, 'w') as new_fastq_file:
 
-            subtracted_reads: List[str] = [line.strip("@\n") for line in subtracted_reads_file]
+            subtracted_reads = [line.strip("@\n") for line in subtracted_reads_file]
 
             for record in read_fastq_grouped_lines(current_fastq_file):
                 if record[0].strip("@\n") not in subtracted_reads:
                     new_fastq_file.write(''.join(record))
 
         # set next iteration's current fastq file to newly created fastq file
-        await asyncio.to_thread(shutil.copyfile, new_fastq_path, current_fastq_path)
+        await asyncio.to_thread(
+            shutil.copyfile,
+            new_fastq_path,
+            current_fastq_path
+        )
 
         logger.info(
             "Subtracted %s reads that mapped better to a subtraction.",
