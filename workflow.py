@@ -299,7 +299,7 @@ async def eliminate_subtraction(
                 open("subtracted_read_ids.txt", 'r') as subtracted_reads_file, \
                 open(new_fastq_path, 'w') as new_fastq_file:
 
-            subtracted_reads = [line.strip("@\n") for line in subtracted_reads_file]
+            subtracted_reads = {line.strip("@\n") for line in subtracted_reads_file}
 
             for record in read_fastq_grouped_lines(current_fastq_file):
                 if record[0].strip("@\n") not in subtracted_reads:
