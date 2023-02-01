@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 
 import aiofiles
 import aiofiles.os
+from virtool_core.bio import read_fastq
 from virtool_workflow import hooks, step
 from virtool_workflow.data_model.analysis import WFAnalysis
 from virtool_workflow.data_model.indexes import WFIndex
@@ -219,18 +220,18 @@ async def eliminate_subtraction(
     :param subtracted_sam_path: path to the SAM file with subtraction-mapped reads removed
     :param work_path: path to the workflow working directory
     """
+
     to_subtraction_sam_path = work_path / "to_subtraction.sam"
 
-    working_isolate_path = work_path / "working_isolate.sam"
-    working_fastq_path = work_path / "working_fastq.fq"
-
-    # copy the original isolate sam file into a working isolate sam file
-    # as to not disrupt uses elsewhere
-    shutil.copyfile(isolate_sam_path, working_isolate_path)
+    current_fastq_path = work_path / "current_fastq.fq"
+    new_fastq_path = work_path / "new_fastq.fq"
 
     # copy the original fastq file into a working fastq file
-    # as to not disrupt uses elsewhere
-    shutil.copyfile(isolate_fastq_path, working_fastq_path)
+    # as to not disrupt possible uses elsewhere
+    await asyncio.to_thread(shutil.copyfile, isolate_fastq_path, current_fastq_path)
+
+    # for the first subtraction, use the original isolate file
+    current_isolate_path = isolate_sam_path
 
     subtracted_count = 0
 
@@ -251,7 +252,7 @@ async def eliminate_subtraction(
                 "-x",
                 shlex.quote(str(subtraction.bowtie2_index_path)),
                 "-U",
-                str(working_fastq_path),
+                str(current_fastq_path),
                 "-S",
                 str(to_subtraction_sam_path),
             ]
@@ -259,8 +260,9 @@ async def eliminate_subtraction(
 
         await run_subprocess(
             [
-                "./eliminate_subtraction",
-                str(working_isolate_path),
+                "/home/swovelandm/PycharmProjects/workflow-pathoscope/utils/eliminate_subtraction/target/release"
+                "/eliminate_subtraction",
+                str(current_isolate_path),
                 str(to_subtraction_sam_path),
                 str(subtracted_sam_path),
             ]
@@ -268,61 +270,32 @@ async def eliminate_subtraction(
 
         await aiofiles.os.remove(to_subtraction_sam_path)
 
+        # set next iteration's current isolate file to the newly created isolate file
+        current_isolate_path = work_path / "working_isolate.sam"
+        await asyncio.to_thread(shutil.copyfile, subtracted_sam_path, current_isolate_path)
+
         async with aiofiles.open("subtracted_read_ids.txt", "r") as f:
             async for line in f:
                 if line:
                     subtracted_count += 1
 
         # rewrite the fastq file to exclude previous reads
+        #
+        # currently UNIMPLEMENTED
+        #
+        # currently the algorithm is as follows:
+        #   1 - open current fastq and subtracted_reads files
+        #   2 - if an entry in fastq does not match any subtracted reads,
+        #       copy it to the new fastq file
+        #   3 - repeat with next fastq iteration
 
-        lines = None
-        with open(working_fastq_path, 'r') as f:
-            lines = f.readlines()
-
-        # group every 4 lines of isolate_fastq into a collection
-        grouped_fastq_reads = []
-        i = 0
-        while (i + 3) < len(lines):
-            try:
-                grouped_fastq_reads.append(
-                    [
-                        lines[i],
-                        lines[i + 1],
-                        lines[i + 2],
-                        lines[i + 3]
-                    ]
-                )
-                i += 4
-            except IndexError:
-                break
-
-        # load in the previously subtracted data
-        subtracted_reads = []
-        with open("subtracted_read_ids.txt", "r") as f:
-            subtracted_reads = [line.strip() for line in f]
-
-        # unwrap collections and rewrite into new isolate_fastq file;
-        # only write if not previously subtracted
-        with open(working_fastq_path, 'w') as f:
-            for read in grouped_fastq_reads:
-                if read[0].strip("@\n") not in subtracted_reads:
-                    try:
-                        f.write(read[0])
-                        f.write(read[1])
-                        f.write(read[2])
-                        f.write(read[3])
-                    except IndexError:
-                        continue
+        # set next iteration's current fastq file to newly created fastq file
+        await asyncio.to_thread(shutil.copyfile, new_fastq_path, current_fastq_path)
 
         logger.info(
             "Subtracted %s reads that mapped better to a subtraction.",
             subtracted_count
         )
-
-        # don't want to compare old subtractions,
-        # so we set the next iteration's isolate file
-        # to the current subtracted sam file
-        shutil.copyfile(subtracted_sam_path, working_isolate_path)
 
     results["subtracted_count"] = subtracted_count
 
