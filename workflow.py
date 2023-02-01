@@ -188,15 +188,15 @@ async def map_isolates(
 
 def read_fastq_grouped_lines(fastq_file: TextIO) -> Generator[tuple, None, None]:
     while True:
-        line1 = fastq_file.readline()
-        line2 = fastq_file.readline()
-        line3 = fastq_file.readline()
-        line4 = fastq_file.readline()
+        fastq_read = (fastq_file.readline(),
+                      fastq_file.readline(),
+                      fastq_file.readline(),
+                      fastq_file.readline())
 
-        if line1 != '' and line2 != '' and line3 != '' and line4 != '':
-            yield line1, line2, line3, line4
+        if '' in fastq_read:
+            return
         else:
-            break
+            yield fastq_read
 
 
 @step
