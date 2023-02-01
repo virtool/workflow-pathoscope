@@ -2,7 +2,6 @@ import asyncio
 import shlex
 import shutil
 from collections import defaultdict
-from io import TextIOWrapper
 from logging import getLogger
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,7 +9,6 @@ from typing import Any, Dict, List, Generator, TextIO
 
 import aiofiles
 import aiofiles.os
-from virtool_core.bio import read_fastq
 from virtool_workflow import hooks, step
 from virtool_workflow.data_model.analysis import WFAnalysis
 from virtool_workflow.data_model.indexes import WFIndex
@@ -286,8 +284,9 @@ async def eliminate_subtraction(
         # set next iteration's current isolate file to the newly created isolate file
         current_isolate_path = work_path / "working_isolate.sam"
         await asyncio.to_thread(
-            shutil.copyfile, 
-            subtracted_sam_path, current_isolate_path
+            shutil.copyfile,
+            subtracted_sam_path,
+            current_isolate_path
         )
 
         async with aiofiles.open("subtracted_read_ids.txt", "r") as f:
