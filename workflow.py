@@ -5,10 +5,11 @@ from collections import defaultdict
 from logging import getLogger
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List, Generator, TextIO
+from typing import Any, Dict, List
 
 import aiofiles
 import aiofiles.os
+from aiofiles.threadpool import AsyncTextIOWrapper
 from virtool_workflow import hooks, step
 from virtool_workflow.data_model.analysis import WFAnalysis
 from virtool_workflow.data_model.indexes import WFIndex
@@ -34,12 +35,12 @@ async def upload_results(results, analysis_provider):
 
 @step
 async def map_default_isolates(
-        intermediate: SimpleNamespace,
-        read_file_names: str,
-        index: WFIndex,
-        proc: int,
-        p_score_cutoff: float,
-        run_subprocess: RunSubprocess,
+    intermediate: SimpleNamespace,
+    read_file_names: str,
+    index: WFIndex,
+    proc: int,
+    p_score_cutoff: float,
+    run_subprocess: RunSubprocess,
 ):
     """
     Map sample reads to all default isolates to identify candidate OTUs.
@@ -93,12 +94,12 @@ async def map_default_isolates(
 
 @step
 async def build_isolate_index(
-        index: WFIndex,
-        intermediate: SimpleNamespace,
-        isolate_fasta_path: Path,
-        isolate_index_path: Path,
-        run_subprocess: RunSubprocess,
-        proc: int,
+    index: WFIndex,
+    intermediate: SimpleNamespace,
+    isolate_fasta_path: Path,
+    isolate_index_path: Path,
+    run_subprocess: RunSubprocess,
+    proc: int,
 ):
     """
     Build a mapping index containing all isolates of candidate OTUs.
@@ -116,20 +117,20 @@ async def build_isolate_index(
             str(proc),
             str(isolate_fasta_path),
             str(isolate_index_path),
-        ],
+        ]
     )
 
 
 @step
 async def map_isolates(
-        read_file_names: str,
-        intermediate: SimpleNamespace,
-        isolate_fastq_path: Path,
-        isolate_index_path: Path,
-        isolate_sam_path: Path,
-        run_subprocess: RunSubprocess,
-        proc: int,
-        p_score_cutoff: float,
+    read_file_names: str,
+    intermediate: SimpleNamespace,
+    isolate_fastq_path: Path,
+    isolate_index_path: Path,
+    isolate_sam_path: Path,
+    run_subprocess: RunSubprocess,
+    proc: int,
+    p_score_cutoff: float,
 ):
     """Map sample reads to the all isolate index."""
     isolate_high_scores = defaultdict(float)
@@ -186,14 +187,16 @@ async def map_isolates(
     intermediate.isolate_high_scores = dict(isolate_high_scores)
 
 
-def read_fastq_grouped_lines(fastq_file: TextIO) -> Generator[tuple, None, None]:
+async def read_fastq_grouped_lines(fastq_file: AsyncTextIOWrapper):
     while True:
-        fastq_read = (fastq_file.readline(),
-                      fastq_file.readline(),
-                      fastq_file.readline(),
-                      fastq_file.readline())
+        fastq_read = (
+            await fastq_file.readline(),
+            await fastq_file.readline(),
+            await fastq_file.readline(),
+            await fastq_file.readline(),
+        )
 
-        if '' in fastq_read:
+        if "" in fastq_read:
             return
 
         yield fastq_read
@@ -201,14 +204,14 @@ def read_fastq_grouped_lines(fastq_file: TextIO) -> Generator[tuple, None, None]
 
 @step
 async def eliminate_subtraction(
-        isolate_fastq_path: Path,
-        isolate_sam_path: Path,
-        proc: int,
-        results: Dict[str, Any],
-        run_subprocess: RunSubprocess,
-        subtractions: List[WFSubtraction],
-        subtracted_sam_path: Path,
-        work_path: Path,
+    isolate_fastq_path: Path,
+    isolate_sam_path: Path,
+    proc: int,
+    results: Dict[str, Any],
+    run_subprocess: RunSubprocess,
+    subtractions: List[WFSubtraction],
+    subtracted_sam_path: Path,
+    work_path: Path,
 ):
     """
     Remove reads that map better to a subtraction than to a reference.
@@ -247,7 +250,6 @@ async def eliminate_subtraction(
 
     subtracted_count = 0
 
-    # iterate over all subtractions
     for subtraction in subtractions:
         # Map reads to the subtraction.
         await run_subprocess(
@@ -284,37 +286,30 @@ async def eliminate_subtraction(
         # set next iteration's current isolate file to the newly created isolate file
         current_isolate_path = work_path / "working_isolate.sam"
         await asyncio.to_thread(
-            shutil.copyfile,
-            subtracted_sam_path,
-            current_isolate_path
+            shutil.copyfile, subtracted_sam_path, current_isolate_path
         )
+
+        subtracted_reads = {}
 
         async with aiofiles.open("subtracted_read_ids.txt", "r") as f:
-            async for line in f:
-                if line:
-                    subtracted_count += 1
+            subtracted_reads = {str(line).strip("@\n") async for line in f}
+
+        subtracted_count += len(subtracted_reads)
 
         # rewrite the fastq file to exclude previous reads
-        with open(current_fastq_path, 'r') as current_fastq_file, \
-                open("subtracted_read_ids.txt", 'r') as subtracted_reads_file, \
-                open(new_fastq_path, 'w') as new_fastq_file:
+        async with aiofiles.open(
+            current_fastq_path, "r"
+        ) as current_fastq_file, aiofiles.open(new_fastq_path, "w") as new_fastq_file:
 
-            subtracted_reads = {line.strip("@\n") for line in subtracted_reads_file}
-
-            for record in read_fastq_grouped_lines(current_fastq_file):
+            async for record in read_fastq_grouped_lines(current_fastq_file):
                 if record[0].strip("@\n") not in subtracted_reads:
-                    new_fastq_file.write(''.join(record))
+                    await new_fastq_file.write("".join(record))
 
         # set next iteration's current fastq file to newly created fastq file
-        await asyncio.to_thread(
-            shutil.copyfile,
-            new_fastq_path,
-            current_fastq_path
-        )
+        await asyncio.to_thread(shutil.copyfile, new_fastq_path, current_fastq_path)
 
         logger.info(
-            "Subtracted %s reads that mapped better to a subtraction.",
-            subtracted_count
+            "Subtracted %s reads that mapped better to a subtraction.", subtracted_count
         )
 
     results["subtracted_count"] = subtracted_count
@@ -322,13 +317,13 @@ async def eliminate_subtraction(
 
 @step
 async def reassignment(
-        analysis: WFAnalysis,
-        index: WFIndex,
-        intermediate: SimpleNamespace,
-        p_score_cutoff: float,
-        results,
-        subtracted_sam_path: Path,
-        work_path: Path,
+    analysis: WFAnalysis,
+    index: WFIndex,
+    intermediate: SimpleNamespace,
+    p_score_cutoff: float,
+    results,
+    subtracted_sam_path: Path,
+    work_path: Path,
 ):
     """
     Run the Pathoscope reassignment algorithm.
@@ -356,10 +351,7 @@ async def reassignment(
         refs,
         reads,
     ) = await asyncio.to_thread(
-        run_pathoscope,
-        subtracted_sam_path,
-        reassigned_path,
-        p_score_cutoff,
+        run_pathoscope, subtracted_sam_path, reassigned_path, p_score_cutoff
     )
 
     read_count = len(reads)
