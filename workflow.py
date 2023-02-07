@@ -2,10 +2,11 @@ import asyncio
 import shlex
 import shutil
 from collections import defaultdict
+from io import TextIOWrapper
 from logging import getLogger
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List
+from typing import Any, Dict, List, TextIO
 
 import aiofiles
 import aiofiles.os
@@ -187,19 +188,30 @@ async def map_isolates(
     intermediate.isolate_high_scores = dict(isolate_high_scores)
 
 
-async def read_fastq_grouped_lines(fastq_file: AsyncTextIOWrapper):
+def read_fastq_grouped_lines(fastq_file: TextIO):
     while True:
         fastq_read = (
-            await fastq_file.readline(),
-            await fastq_file.readline(),
-            await fastq_file.readline(),
-            await fastq_file.readline(),
+            fastq_file.readline(),
+            fastq_file.readline(),
+            fastq_file.readline(),
+            fastq_file.readline(),
         )
 
         if "" in fastq_read:
             return
 
         yield fastq_read
+
+
+def subtract_fastq(
+    current_fastq_path: Path, new_fastq_path: Path, subtracted_reads: List[str]
+):
+    with open(current_fastq_path, "r") as current_fastq_file, open(
+        new_fastq_path, "w"
+    ) as new_fastq_file:
+        for record in read_fastq_grouped_lines(current_fastq_file):
+            if record[0].strip("@\n") not in subtracted_reads:
+                new_fastq_file.write("".join(record))
 
 
 @step
@@ -274,7 +286,7 @@ async def eliminate_subtraction(
 
         await run_subprocess(
             [
-                "./eliminate_subtraction",
+                "/home/swovelandm/PycharmProjects/workflow-pathoscope/utils/eliminate_subtraction/target/release/eliminate_subtraction",
                 str(current_isolate_path),
                 str(to_subtraction_sam_path),
                 str(subtracted_sam_path),
@@ -296,14 +308,11 @@ async def eliminate_subtraction(
 
         subtracted_count += len(subtracted_reads)
 
-        # rewrite the fastq file to exclude previous reads
-        async with aiofiles.open(
-            current_fastq_path, "r"
-        ) as current_fastq_file, aiofiles.open(new_fastq_path, "w") as new_fastq_file:
+        await asyncio.to_thread(
+            subtract_fastq, current_fastq_path, new_fastq_path, subtracted_reads
+        )
 
-            async for record in read_fastq_grouped_lines(current_fastq_file):
-                if record[0].strip("@\n") not in subtracted_reads:
-                    await new_fastq_file.write("".join(record))
+        # rewrite the fastq file to exclude previous reads
 
         # set next iteration's current fastq file to newly created fastq file
         await asyncio.to_thread(shutil.copyfile, new_fastq_path, current_fastq_path)
