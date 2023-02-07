@@ -2,7 +2,6 @@ import asyncio
 import shlex
 import shutil
 from collections import defaultdict
-from io import TextIOWrapper
 from logging import getLogger
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,7 +9,6 @@ from typing import Any, Dict, List, TextIO
 
 import aiofiles
 import aiofiles.os
-from aiofiles.threadpool import AsyncTextIOWrapper
 from virtool_workflow import hooks, step
 from virtool_workflow.data_model.analysis import WFAnalysis
 from virtool_workflow.data_model.indexes import WFIndex
@@ -286,7 +284,7 @@ async def eliminate_subtraction(
 
         await run_subprocess(
             [
-                "/home/swovelandm/PycharmProjects/workflow-pathoscope/utils/eliminate_subtraction/target/release/eliminate_subtraction",
+                "./eliminate_subtraction",
                 str(current_isolate_path),
                 str(to_subtraction_sam_path),
                 str(subtracted_sam_path),
