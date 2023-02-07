@@ -1,10 +1,11 @@
 import asyncio
 import shlex
+import shutil
 from collections import defaultdict
 from logging import getLogger
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict
+from typing import Any, Dict, List, TextIO
 
 import aiofiles
 import aiofiles.os
@@ -115,7 +116,7 @@ async def build_isolate_index(
             str(proc),
             str(isolate_fasta_path),
             str(isolate_index_path),
-        ],
+        ]
     )
 
 
@@ -185,6 +186,32 @@ async def map_isolates(
     intermediate.isolate_high_scores = dict(isolate_high_scores)
 
 
+def read_fastq_grouped_lines(fastq_file: TextIO):
+    while True:
+        fastq_read = (
+            fastq_file.readline(),
+            fastq_file.readline(),
+            fastq_file.readline(),
+            fastq_file.readline(),
+        )
+
+        if "" in fastq_read:
+            return
+
+        yield fastq_read
+
+
+def subtract_fastq(
+    current_fastq_path: Path, new_fastq_path: Path, subtracted_reads: List[str]
+):
+    with open(current_fastq_path, "r") as current_fastq_file, open(
+        new_fastq_path, "w"
+    ) as new_fastq_file:
+        for record in read_fastq_grouped_lines(current_fastq_file):
+            if record[0].strip("@\n") not in subtracted_reads:
+                new_fastq_file.write("".join(record))
+
+
 @step
 async def eliminate_subtraction(
     isolate_fastq_path: Path,
@@ -192,7 +219,7 @@ async def eliminate_subtraction(
     proc: int,
     results: Dict[str, Any],
     run_subprocess: RunSubprocess,
-    subtraction: WFSubtraction,
+    subtractions: List[WFSubtraction],
     subtracted_sam_path: Path,
     work_path: Path,
 ):
@@ -214,54 +241,83 @@ async def eliminate_subtraction(
     :param proc: number of processors to use
     :param results: the results to send to the api when the workflow is complete
     :param run_subprocess: runs a subprocess with error handling
-    :param subtraction: the subtraction to align and eliminate reads against
+    :param subtractions: the subtraction to align and eliminate reads against
     :param subtracted_sam_path: path to the SAM file with subtraction-mapped reads removed
     :param work_path: path to the workflow working directory
     """
+
     to_subtraction_sam_path = work_path / "to_subtraction.sam"
 
-    # Map reads to the subtraction.
-    await run_subprocess(
-        [
-            "bowtie2",
-            "--local",
-            "--no-unal",
-            "--no-hd",
-            "--no-sq",
-            "-N",
-            "0",
-            "-p",
-            str(proc),
-            "-x",
-            shlex.quote(str(subtraction.bowtie2_index_path)),
-            "-U",
-            str(isolate_fastq_path),
-            "-S",
-            str(to_subtraction_sam_path),
-        ]
-    )
+    current_fastq_path = work_path / "current_fastq.fq"
+    new_fastq_path = work_path / "new_fastq.fq"
 
-    await run_subprocess(
-        [
-            "./eliminate_subtraction",
-            str(isolate_sam_path),
-            str(to_subtraction_sam_path),
-            str(subtracted_sam_path),
-        ]
-    )
+    # copy the original fastq file into a working fastq file
+    # as to not disrupt possible uses elsewhere
+    await asyncio.to_thread(shutil.copyfile, isolate_fastq_path, current_fastq_path)
 
-    await aiofiles.os.remove(to_subtraction_sam_path)
+    # for the first subtraction, use the original isolate file
+    current_isolate_path = isolate_sam_path
 
     subtracted_count = 0
 
-    async with aiofiles.open("subtracted_read_ids.txt", "r") as f:
-        async for line in f:
-            if line:
-                subtracted_count += 1
+    for subtraction in subtractions:
+        # Map reads to the subtraction.
+        await run_subprocess(
+            [
+                "bowtie2",
+                "--local",
+                "--no-unal",
+                "--no-hd",
+                "--no-sq",
+                "-N",
+                "0",
+                "-p",
+                str(proc),
+                "-x",
+                shlex.quote(str(subtraction.bowtie2_index_path)),
+                "-U",
+                str(current_fastq_path),
+                "-S",
+                str(to_subtraction_sam_path),
+            ]
+        )
 
-    logger.info(
-        f"Subtracted {subtracted_count} reads that mapped better to a subtraction."
-    )
+        await run_subprocess(
+            [
+                "./eliminate_subtraction",
+                str(current_isolate_path),
+                str(to_subtraction_sam_path),
+                str(subtracted_sam_path),
+            ]
+        )
+
+        await aiofiles.os.remove(to_subtraction_sam_path)
+
+        # set next iteration's current isolate file to the newly created isolate file
+        current_isolate_path = work_path / "working_isolate.sam"
+        await asyncio.to_thread(
+            shutil.copyfile, subtracted_sam_path, current_isolate_path
+        )
+
+        subtracted_reads = {}
+
+        async with aiofiles.open("subtracted_read_ids.txt", "r") as f:
+            subtracted_reads = {str(line).strip("@\n") async for line in f}
+
+        subtracted_count += len(subtracted_reads)
+
+        await asyncio.to_thread(
+            subtract_fastq, current_fastq_path, new_fastq_path, subtracted_reads
+        )
+
+        # rewrite the fastq file to exclude previous reads
+
+        # set next iteration's current fastq file to newly created fastq file
+        await asyncio.to_thread(shutil.copyfile, new_fastq_path, current_fastq_path)
+
+        logger.info(
+            "Subtracted %s reads that mapped better to a subtraction.", subtracted_count
+        )
 
     results["subtracted_count"] = subtracted_count
 
@@ -302,10 +358,7 @@ async def reassignment(
         refs,
         reads,
     ) = await asyncio.to_thread(
-        run_pathoscope,
-        subtracted_sam_path,
-        reassigned_path,
-        p_score_cutoff,
+        run_pathoscope, subtracted_sam_path, reassigned_path, p_score_cutoff
     )
 
     read_count = len(reads)

@@ -105,7 +105,7 @@ def read_file_names(sample: WFSample):
 
 
 @pytest.fixture
-def subtraction(work_path: Path):
+def subtractions(work_path: Path):
     subtractions_path = work_path / "subtractions"
     subtractions_path.mkdir(parents=True)
 
@@ -116,12 +116,24 @@ def subtraction(work_path: Path):
     class SubtractionFactory(ModelFactory):
         __model__ = Subtraction
 
-    _subtraction = SubtractionFactory.build()
+    _subtraction1 = SubtractionFactory.build()
+    _subtraction2 = SubtractionFactory.build()
+    _subtraction3 = SubtractionFactory.build()
 
-    return WFSubtraction(
-        **{**_subtraction.dict(), "ready": True},
-        path=subtraction_path,
-    )
+    return [
+        WFSubtraction(
+            **{**_subtraction1.dict(), "ready": True},
+            path=subtraction_path,
+        ),
+        WFSubtraction(
+            **{**_subtraction2.dict(), "ready": True},
+            path=subtraction_path
+        ),
+        WFSubtraction(
+            **{**_subtraction3.dict(), "ready": True},
+            path=subtraction_path
+        )
+    ]
 
 
 @pytest.fixture
@@ -182,7 +194,7 @@ async def test_map_isolates(
 
 
 @pytest.mark.datafiles(SAM_PATH, FASTQ_PATH)
-async def test_eliminate_subtraction(datafiles, subtraction, work_path, run_subprocess):
+async def test_eliminate_subtraction(datafiles, subtractions, work_path, run_subprocess):
     isolate_fastq_path = work_path / "test.fq"
     isolate_sam_path = work_path / "test_al.sam"
 
@@ -196,7 +208,7 @@ async def test_eliminate_subtraction(datafiles, subtraction, work_path, run_subp
         2,
         results,
         run_subprocess,
-        subtraction,
+        subtractions,
         subtracted_path,
         work_path,
     )

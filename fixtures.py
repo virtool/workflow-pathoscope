@@ -4,17 +4,11 @@ from typing import List
 
 from pyfixtures import fixture
 from virtool_workflow.data_model.indexes import WFIndex
-from virtool_workflow.data_model.subtractions import WFSubtraction
 
 
 @fixture
 def index(indexes: List[WFIndex]):
     return indexes[0]
-
-
-@fixture
-def subtraction(subtractions: List[WFSubtraction]):
-    return subtractions[0]
 
 
 @fixture
