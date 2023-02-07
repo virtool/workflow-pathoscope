@@ -19,6 +19,8 @@ syrupy = "^1.7.4"
 pytest-mock = "^3.7.0"
 pytest-regressions = "^2.2.0"
 pydantic-factories = "^1.15.0"
+pre-commit = "^3.0.4"
+black = "^23.1.0"
 
 [tool.pytest.ini_options]
 markers = ["datafiles: load datafiles", "asyncio_mode: auto"]

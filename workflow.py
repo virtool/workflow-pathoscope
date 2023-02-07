@@ -300,7 +300,6 @@ async def eliminate_subtraction(
         async with aiofiles.open(
             current_fastq_path, "r"
         ) as current_fastq_file, aiofiles.open(new_fastq_path, "w") as new_fastq_file:
-
             async for record in read_fastq_grouped_lines(current_fastq_file):
                 if record[0].strip("@\n") not in subtracted_reads:
                     await new_fastq_file.write("".join(record))
