@@ -523,6 +523,5 @@ def run(sam_path: Path, reassigned_path: Path, p_score_cutoff: float):
     #   computeBestHit
     #   + adjacent code
     return virtool_expectation_maximization.run(
-        str(sam_path),
-        str(reassigned_path),
-        p_score_cutoff)
+        str(sam_path), str(reassigned_path), p_score_cutoff
+    )
