@@ -13,7 +13,7 @@ COPY src src
 COPY Cargo.toml Cargo.lock ./
 RUN maturin build --release
 
-FROM virtool/workflow:5.2.1 as base
+FROM virtool/workflow:5.3.0 as base
 WORKDIR /app
 RUN pip install --upgrade pip
 COPY --from=rust /build/target/release/eliminate_subtraction ./
@@ -22,7 +22,7 @@ COPY --from=rustExpectMax /build/target/wheels/virtool_expectation_maximization*
 RUN ls
 RUN pip install virtool_expectation_maximization*.whl
 
-FROM virtool/workflow:5.2.1 as test
+FROM virtool/workflow:5.3.0 as test
 WORKDIR /test
 RUN pip install --upgrade pip
 COPY pyproject.toml poetry.lock ./
