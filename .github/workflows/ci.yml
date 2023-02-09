@@ -12,10 +12,17 @@ jobs:
   commitlint:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
         with:
           fetch-depth: 0
-      - uses: wagoid/commitlint-github-action@v4
+      - uses: wagoid/commitlint-github-action@v5
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Build
+        run: docker build .
   test:
     runs-on: ubuntu-22.04
     steps:
@@ -28,8 +35,10 @@ jobs:
     needs: test
     if: github.event_name == 'push'
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@v1
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Setup Node
+      - uses: actions/setup-node@v3
         with:
           node-version: 16
       - name: Install semantic-release
