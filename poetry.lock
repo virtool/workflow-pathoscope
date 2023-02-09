@@ -1956,14 +1956,14 @@ pydantic = ">=1.8.2,<2.0.0"
 
 [[package]]
 name = "virtool-workflow"
-version = "5.2.1"
+version = "5.3.0"
 description = "A framework for developing bioinformatics workflows for Virtool."
 category = "main"
 optional = false
 python-versions = ">=3.10,<4.0"
 files = [
-    {file = "virtool_workflow-5.2.1-py3-none-any.whl", hash = "sha256:40a37edd2fe70f0f9f02b91d1196e6863c5d00ccb094be6c2572b2054193db4f"},
-    {file = "virtool_workflow-5.2.1.tar.gz", hash = "sha256:30a1cbaebbc364ae862db90becb2642886f7f5208473062e0366e7333df78194"},
+    {file = "virtool_workflow-5.3.0-py3-none-any.whl", hash = "sha256:ccf5051f23495de3d0d86d98a6b023a54ba0f3ba9befc926b4c0135237258a58"},
+    {file = "virtool_workflow-5.3.0.tar.gz", hash = "sha256:bb38a563becc66be59dbb73b864844d3b3bbd308bb421fefdc52c907d209f621"},
 ]
 
 [package.dependencies]
