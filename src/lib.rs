@@ -1,16 +1,157 @@
+use eliminate_subtraction::{
+    check_should_eliminate, find_sam_align_score, parse_subtraction_sam, read_lines,
+};
 use pyo3::prelude::*;
-use std::collections::HashMap;
+use std::{
+    collections::{HashMap, HashSet},
+    fs::File,
+    io::Write,
+};
 
 #[pymodule]
 ///pyo3 interface
-fn virtool_expectation_maximization(_py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(run, m)?)?;
+fn rust_utils(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(run_expectation_maximization, m)?)?;
+    m.add_function(wrap_pyfunction!(run_eliminate_subtraction, m)?)?;
     return Ok(());
 }
 
 #[pyfunction]
-///Entry point for the virtool_expectation_maximization python module
-pub fn run(
+///Entry point for eliminate_subtraction
+pub fn run_eliminate_subtraction(
+    _py: Python,
+    isolate_sam_path: String,
+    subtraction_sam_path: String,
+    output_sam_path: String,
+) {
+    let subtraction_scores = parse_subtraction_sam(&subtraction_sam_path);
+
+    if let Ok(lines) = read_lines(isolate_sam_path) {
+        let mut sam_file = File::create(output_sam_path).unwrap();
+        let mut subtracted_read_ids: HashSet<String> = HashSet::new();
+
+        for line in lines {
+            if let Ok(l) = line {
+                match l.chars().next() {
+                    Some(c) => {
+                        if c == '@' || c == '#' {
+                            continue;
+                        }
+                    }
+                    None => continue,
+                };
+
+                let first = l.chars().next().unwrap();
+
+                if first == '@' || first == '#' {
+                    continue;
+                }
+
+                let fields: Vec<&str> = l.split("\t").collect();
+
+                if fields[2] == "*" {
+                    continue;
+                }
+
+                let score = find_sam_align_score(&fields);
+
+                let eliminate = check_should_eliminate(&subtraction_scores, &fields[0], score);
+
+                if eliminate {
+                    subtracted_read_ids.insert(fields[0].to_string());
+                } else {
+                    writeln!(&mut sam_file, "{}", l).unwrap();
+                }
+            }
+        }
+
+        let mut subtracted_read_ids_file = File::create("subtracted_read_ids.txt").unwrap();
+
+        for read_id in subtracted_read_ids {
+            writeln!(&mut subtracted_read_ids_file, "{}", read_id).unwrap();
+        }
+    }
+}
+
+mod eliminate_subtraction {
+    use std::{
+        collections::HashMap,
+        fs::File,
+        io::{self, BufRead},
+        path::Path,
+    };
+
+    // Check if the passed read_id should be eliminated if its isolate score is
+    // higher than the subtraction score.
+    pub fn check_should_eliminate(
+        subtraction_scores: &HashMap<String, f32>,
+        read_id: &str,
+        score: f32,
+    ) -> bool {
+        match subtraction_scores.get(read_id) {
+            Some(subtraction_score) => &subtraction_score >= &&score,
+            None => false,
+        }
+    }
+
+    /// Find the Pathoscope alignment score for a SAM line.
+    ///
+    /// # Arguments
+    /// * `fields` - The SAM fields as a vector.
+    ///
+    pub fn find_sam_align_score(fields: &Vec<&str>) -> f32 {
+        let read_length = fields[9].chars().count() as f32;
+        let mut a_score: f32 = 0.0;
+
+        for field in fields {
+            if field.starts_with("AS:i:") {
+                a_score = field[5..].parse().unwrap();
+                break;
+            }
+        }
+
+        return a_score + read_length;
+    }
+
+    pub fn parse_subtraction_sam(path: &str) -> HashMap<String, f32> {
+        let mut high_scores: HashMap<String, f32> = HashMap::new();
+
+        if let Ok(lines) = read_lines(path) {
+            for line in lines {
+                if let Ok(l) = line {
+                    let first = l.chars().next().unwrap();
+
+                    if first == '@' || first == '#' {
+                        continue;
+                    }
+
+                    let fields: Vec<&str> = l.split("\t").collect();
+
+                    if fields[2] == "*" {
+                        continue;
+                    }
+
+                    let score = find_sam_align_score(&fields);
+                    high_scores.insert(fields[0].to_string(), score);
+                }
+            }
+        }
+
+        return high_scores;
+    }
+
+    pub fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
+    where
+        P: AsRef<Path>,
+    {
+        let file = File::open(filename)?;
+        Ok(io::BufReader::new(file).lines())
+    }
+}
+
+#[pyfunction]
+///Entry point for expectation_maximization
+pub fn run_expectation_maximization(
     _py: Python,
     sam_path: String,
     reassigned_path: String,
