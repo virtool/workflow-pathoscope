@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict
 
+import rust_utils
 import aiofiles
 import aiofiles.os
 from virtool_workflow import hooks, step
@@ -115,7 +116,7 @@ async def build_isolate_index(
             str(proc),
             str(isolate_fasta_path),
             str(isolate_index_path),
-        ],
+        ]
     )
 
 
@@ -241,13 +242,8 @@ async def eliminate_subtraction(
         ]
     )
 
-    await run_subprocess(
-        [
-            "./eliminate_subtraction",
-            str(isolate_sam_path),
-            str(to_subtraction_sam_path),
-            str(subtracted_sam_path),
-        ]
+    rust_utils.run_eliminate_subtraction(
+        str(isolate_sam_path), str(to_subtraction_sam_path), str(subtracted_sam_path)
     )
 
     await aiofiles.os.remove(to_subtraction_sam_path)
@@ -302,10 +298,7 @@ async def reassignment(
         refs,
         reads,
     ) = await asyncio.to_thread(
-        run_pathoscope,
-        subtracted_sam_path,
-        reassigned_path,
-        p_score_cutoff,
+        run_pathoscope, subtracted_sam_path, reassigned_path, p_score_cutoff
     )
 
     read_count = len(reads)

@@ -1,7 +1,7 @@
 import copy
 import csv
 import math
-import virtool_expectation_maximization
+import rust_utils
 from functools import cached_property
 from pathlib import Path
 from typing import Any, Dict, Generator, List
@@ -522,7 +522,6 @@ def run(sam_path: Path, reassigned_path: Path, p_score_cutoff: float):
     #   rewriteAlign
     #   computeBestHit
     #   + adjacent code
-    return virtool_expectation_maximization.run(
-        str(sam_path),
-        str(reassigned_path),
-        p_score_cutoff)
+    return rust_utils.run_expectation_maximization(
+        str(sam_path), str(reassigned_path), p_score_cutoff
+    )

@@ -1,5 +1,5 @@
 [package]
-    name = "virtool_expectation_maximization"
+    name = "rust_utils"
     version = "0.1.0"
     edition = "2021"
     authors = ["Markus Swoveland"]
