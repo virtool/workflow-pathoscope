@@ -8,7 +8,7 @@ COPY src src
 COPY Cargo.toml Cargo.lock ./
 RUN maturin build --release
 
-FROM virtool/workflow:5.3.0 as base
+FROM ghcr.io/virtool/workflow:5.3.1 as base
 WORKDIR /app
 RUN pip install --upgrade pip
 COPY fixtures.py workflow.py pathoscope.py ./
@@ -16,7 +16,7 @@ COPY --from=rust_utils /build/target/wheels/rust_utils*.whl ./
 RUN ls
 RUN pip install rust_utils*.whl
 
-FROM virtool/workflow:5.3.0 as test
+FROM ghcr.io/virtool/workflow:5.3.1 as test
 WORKDIR /test
 RUN pip install --upgrade pip
 COPY pyproject.toml poetry.lock ./
