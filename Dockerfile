@@ -13,6 +13,7 @@ RUN wget https://github.com/BenLangmead/bowtie2/releases/download/v2.3.2/bowtie2
     cp bowtie2-2.3.2-legacy/bowtie2* bowtie2
 
 FROM python:3.10-buster as base
+WORKDIR /app
 COPY --from=prep /build/bowtie2/* /usr/local/bin/
 COPY --from=prep /build/FastQC /opt/fastqc
 COPY --from=prep /build/pigz-2.7/pigz /usr/local/bin/pigz
@@ -29,17 +30,16 @@ ENV PATH="/root/.cargo/bin:/root/.local/bin:${PATH}"
 RUN pip install --upgrade pip
 RUN pip install maturin==0.14.5
 COPY src src
-COPY Cargo.toml Cargo.lock poetry.lock pyproject.toml ./
+COPY Cargo.toml Cargo.lock fixtures.py pathoscope.py  poetry.lock pyproject.toml workflow.py ./
 RUN maturin build --release
 RUN poetry export > requirements.txt
-COPY fixtures.py workflow.py pathoscope.py ./
 RUN pip install -r requirements.txt
-RUN pip install /target/wheels/rust_utils*.whl
+RUN pip install /app/target/wheels/rust_utils*.whl
 
 
 FROM base as test
-WORKDIR /test
-COPY tests /test/tests
+WORKDIR /app
 RUN poetry export  --with dev > requirements.txt
 RUN pip install -r requirements.txt
+COPY tests ./tests
 RUN pytest
