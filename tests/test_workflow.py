@@ -125,14 +125,8 @@ def subtractions(work_path: Path):
             **{**_subtraction1.dict(), "ready": True},
             path=subtraction_path,
         ),
-        WFSubtraction(
-            **{**_subtraction2.dict(), "ready": True},
-            path=subtraction_path
-        ),
-        WFSubtraction(
-            **{**_subtraction3.dict(), "ready": True},
-            path=subtraction_path
-        )
+        WFSubtraction(**{**_subtraction2.dict(), "ready": True}, path=subtraction_path),
+        WFSubtraction(**{**_subtraction3.dict(), "ready": True}, path=subtraction_path),
     ]
 
 
@@ -194,7 +188,9 @@ async def test_map_isolates(
 
 
 @pytest.mark.datafiles(SAM_PATH, FASTQ_PATH)
-async def test_eliminate_subtraction(datafiles, subtractions, work_path, run_subprocess):
+async def test_eliminate_subtraction(
+    datafiles, subtractions, work_path, run_subprocess
+):
     isolate_fastq_path = work_path / "test.fq"
     isolate_sam_path = work_path / "test_al.sam"
 

@@ -24,7 +24,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
       - name: Build
-        run: docker build .
+        run: docker build --target=base .
   test:
     runs-on: ubuntu-22.04
     steps:
