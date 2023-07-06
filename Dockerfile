@@ -37,16 +37,7 @@ RUN pip install -r requirements.txt
 RUN pip install /target/wheels/rust_utils*.whl
 
 
-FROM ghcr.io/virtool/workflow:5.3.1 as test
+FROM base as test
 WORKDIR /test
-RUN pip install --upgrade pip
-COPY pyproject.toml poetry.lock ./
-RUN curl -sSL https://install.python-poetry.org | python -
 COPY tests /test/tests
-COPY fixtures.py workflow.py pathoscope.py ./
-COPY --from=rust_utils /build/target/wheels/rust_utils*.whl ./
-RUN pip install rust_utils*.whl
-RUN poetry install
-RUN poetry add ./rust_utils*.whl
-RUN ls
-RUN poetry run pytest
+RUN pytest
