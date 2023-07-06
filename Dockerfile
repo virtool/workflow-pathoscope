@@ -40,4 +40,6 @@ RUN pip install /target/wheels/rust_utils*.whl
 FROM base as test
 WORKDIR /test
 COPY tests /test/tests
+RUN poetry export  --with dev > requirements.txt
+RUN pip install -r requirements.txt
 RUN pytest
