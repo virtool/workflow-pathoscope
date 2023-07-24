@@ -247,6 +247,15 @@ async def eliminate_subtraction(
     :param work_path: path to the workflow working directory
     """
 
+    # if there are no subtractions, simply copy the input
+    # file into the output file path
+    if len(subtractions) == 0:
+        await asyncio.to_thread(shutil.copyfile, isolate_sam_path, subtracted_sam_path)
+
+        results["subtracted_count"] = 0
+
+        return
+
     to_subtraction_sam_path = work_path / "to_subtraction.sam"
 
     current_fastq_path = work_path / "current_fastq.fq"
