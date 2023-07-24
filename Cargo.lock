@@ -164,6 +164,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rust_utils"
+version = "0.1.0"
+dependencies = [
+ "pyo3",
+ "yaml-rust",
+]
+
+[[package]]
 name = "scopeguard"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -203,14 +211,6 @@ name = "unindent"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1766d682d402817b5ac4490b3c3002d91dfa0d22812f341609f97b08757359c"
-
-[[package]]
-name = "virtool_expectation_maximization"
-version = "0.1.0"
-dependencies = [
- "pyo3",
- "yaml-rust",
-]
 
 [[package]]
 name = "windows-sys"

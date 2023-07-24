@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, TextIO
 
+import rust_utils
 import aiofiles
 import aiofiles.os
 from virtool_workflow import hooks, step
@@ -282,13 +283,10 @@ async def eliminate_subtraction(
             ]
         )
 
-        await run_subprocess(
-            [
-                "./eliminate_subtraction",
-                str(current_isolate_path),
-                str(to_subtraction_sam_path),
-                str(subtracted_sam_path),
-            ]
+        rust_utils.run_eliminate_subtraction(
+            str(current_isolate_path),
+            str(to_subtraction_sam_path),
+            str(subtracted_sam_path),
         )
 
         await aiofiles.os.remove(to_subtraction_sam_path)
