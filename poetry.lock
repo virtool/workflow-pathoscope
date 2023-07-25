@@ -1736,21 +1736,6 @@ mock = "<=1.0.1"
 pysam = "*"
 
 [[package]]
-name = "rust_utils"
-version = "0.1.0"
-description = ""
-category = "main"
-optional = false
-python-versions = "*"
-files = [
-    {file = "rust_utils-0.1.0-cp310-cp310-manylinux_2_31_x86_64.whl", hash = "sha256:a32f8d9cfecafa331682da96e004c55bd41b534140d0a94d83e00022a24b6d0a"},
-]
-
-[package.source]
-type = "file"
-url = "target/wheels/rust_utils-0.1.0-cp310-cp310-manylinux_2_31_x86_64.whl"
-
-[[package]]
 name = "sentry-sdk"
 version = "1.11.1"
 description = "Python client for Sentry (https://sentry.io)"
