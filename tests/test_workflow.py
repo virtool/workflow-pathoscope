@@ -187,9 +187,10 @@ async def test_map_isolates(
     assert intermediate.isolate_high_scores == snapshot
 
 
+@pytest.mark.parametrize("none", [True, False])
 @pytest.mark.datafiles(SAM_PATH, FASTQ_PATH)
 async def test_eliminate_subtraction(
-    datafiles, subtractions, work_path, run_subprocess
+    none, datafiles, subtractions, work_path, run_subprocess
 ):
     isolate_fastq_path = work_path / "test.fq"
     isolate_sam_path = work_path / "test_al.sam"
@@ -197,6 +198,9 @@ async def test_eliminate_subtraction(
     subtracted_path = work_path / "subtracted.sam"
 
     results = {}
+
+    if none:
+        subtractions = []
 
     await eliminate_subtraction(
         isolate_fastq_path,
@@ -209,9 +213,13 @@ async def test_eliminate_subtraction(
         work_path,
     )
 
+    if none:
+        assert results["subtracted_count"] == 0
+    else:
+        assert results["subtracted_count"] == 4
+
     assert not (work_path / "to_subtraction.sam").is_file()
     assert (work_path / "subtracted.sam").is_file()
-    assert results["subtracted_count"] == 4
 
 
 async def test_pathoscope(
