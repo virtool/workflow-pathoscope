@@ -1,9 +1,9 @@
 FROM debian:buster as prep
 WORKDIR /build
 RUN apt-get update && apt-get install -y make gcc zlib1g-dev wget unzip
-RUN wget https://zlib.net/pigz/pigz-2.7.tar.gz && \
-    tar -xzvf pigz-2.7.tar.gz && \
-    cd pigz-2.7 && \
+RUN wget https://zlib.net/pigz/pigz-2.8.tar.gz && \
+    tar -xzvf pigz-2.8.tar.gz && \
+    cd pigz-2.8 && \
     make
 RUN wget https://www.bioinformatics.babraham.ac.uk/projects/fastqc/fastqc_v0.11.9.zip && \
     unzip fastqc_v0.11.9.zip
@@ -16,7 +16,7 @@ FROM python:3.10-buster as base
 WORKDIR /app
 COPY --from=prep /build/bowtie2/* /usr/local/bin/
 COPY --from=prep /build/FastQC /opt/fastqc
-COPY --from=prep /build/pigz-2.7/pigz /usr/local/bin/pigz
+COPY --from=prep /build/pigz-2.8/pigz /usr/local/bin/pigz
 RUN chmod ugo+x /opt/fastqc/fastqc && \
     ln -fs /opt/fastqc/fastqc /usr/local/bin/fastqc && \
     for file in `ls /opt/hmmer/bin`; do ln -fs /opt/hmmer/bin/${file} /usr/local/bin/${file};  done
