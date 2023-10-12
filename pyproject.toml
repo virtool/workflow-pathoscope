@@ -7,20 +7,20 @@ license = "MIT"
 
 [tool.poetry.dependencies]
 python = "~3.10"
-virtool-workflow = "^5.3.1"
+virtool-workflow = "^5.4.2"
 rust = "^0.1.1"
 
 [tool.poetry.group.dev.dependencies]
+black = "^23.1.0"
+pre-commit = "^3.0.4"
+pydantic-factories = "^1.15.0"
 pytest = "^6.2.0"
 pytest-aiohttp = "^0.3.0"
 pytest-asyncio = "^0.15.1"
 pytest-datafiles = "^2.0"
-syrupy = "^1.7.4"
 pytest-mock = "^3.7.0"
 pytest-regressions = "^2.2.0"
-pydantic-factories = "^1.15.0"
-pre-commit = "^3.0.4"
-black = "^23.1.0"
+syrupy = "^1.7.4"
 
 [tool.pytest.ini_options]
 markers = ["datafiles: load datafiles", "asyncio_mode: auto"]
