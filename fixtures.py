@@ -1,13 +1,12 @@
 from pathlib import Path
 from types import SimpleNamespace
-from typing import List
 
 from pyfixtures import fixture
 from virtool_workflow.data_model.indexes import WFIndex
 
 
 @fixture
-def index(indexes: List[WFIndex]):
+def index(indexes: list[WFIndex]):
     return indexes[0]
 
 

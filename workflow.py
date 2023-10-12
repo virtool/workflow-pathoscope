@@ -2,14 +2,14 @@ import asyncio
 import shlex
 import shutil
 from collections import defaultdict
-from logging import getLogger
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List, TextIO, Set
+from typing import Any, TextIO
 
-import rust_utils
 import aiofiles
 import aiofiles.os
+import rust_utils
+from structlog import get_logger
 from virtool_workflow import hooks, step
 from virtool_workflow.data_model.analysis import WFAnalysis
 from virtool_workflow.data_model.indexes import WFIndex
@@ -20,7 +20,7 @@ from pathoscope import SamLine, calculate_coverage
 from pathoscope import run as run_pathoscope
 from pathoscope import write_report
 
-logger = getLogger("pathoscope")
+logger = get_logger("pathoscope")
 
 BAD_FIRST_SAM_CHARACTERS = {"\n", "@", "#"}
 
@@ -41,7 +41,7 @@ def read_fastq_grouped_lines(fastq_file: TextIO):
 
 
 def subtract_fastq(
-    current_fastq_path: Path, new_fastq_path: Path, subtracted_reads: Set[str]
+    current_fastq_path: Path, new_fastq_path: Path, subtracted_reads: set[str]
 ):
     with open(current_fastq_path, "r") as current_fastq_file, open(
         new_fastq_path, "w"
@@ -116,7 +116,7 @@ async def map_default_isolates(
         stdout_handler=stdout_handler,
     )
 
-    logger.info("Found %i potential OTUs.", len(intermediate.to_otus))
+    logger.info("Found potential OTUs", count=len(intermediate.to_otus))
 
 
 @step
@@ -221,9 +221,9 @@ async def eliminate_subtraction(
     isolate_fastq_path: Path,
     isolate_sam_path: Path,
     proc: int,
-    results: Dict[str, Any],
+    results: dict[str, Any],
     run_subprocess: RunSubprocess,
-    subtractions: List[WFSubtraction],
+    subtractions: list[WFSubtraction],
     subtracted_sam_path: Path,
     work_path: Path,
 ):
@@ -322,10 +322,10 @@ async def eliminate_subtraction(
         await asyncio.to_thread(shutil.copyfile, new_fastq_path, current_fastq_path)
 
         logger.info(
-            "Subtracted reads that mapped better to a subtraction subtraction_id=%s subtraction_name=%s count=%i",
-            subtraction.id,
-            subtraction.name,
-            subtracted_count,
+            "Some reads mapped better to a subtraction and were removed",
+            id=subtraction.id,
+            name=subtraction.name,
+            count=subtracted_count,
         )
 
     results["subtracted_count"] = subtracted_count
@@ -350,9 +350,9 @@ async def reassignment(
     reassigned_path = work_path / "reassigned.sam"
 
     logger.info(
-        "Running Pathoscope subtracted_sam_path=%s reassigned_path=%s",
-        subtracted_sam_path,
-        reassigned_path,
+        "Running Pathoscope",
+        subtracted_path=subtracted_sam_path,
+        reassigned_path=reassigned_path,
     )
 
     (
@@ -376,7 +376,7 @@ async def reassignment(
 
     report_path = work_path / "report.tsv"
 
-    logger.info("Writing report report_path=%s", report_path)
+    logger.info("Writing report", path=report_path)
 
     report = await asyncio.to_thread(
         write_report,

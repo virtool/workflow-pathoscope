@@ -22,7 +22,7 @@ jobs:
       - name: Update pyproject.toml version
         run: sed -i 's/0\.0\.0/${{ github.event.release.tag_name }}/' pyproject.toml
       - name: Login to Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ secrets.GH_USERNAME }}
@@ -36,7 +36,8 @@ jobs:
         uses: docker/build-push-action@v4
         with:
           context: .
+          labels: ${{ steps.meta.outputs.labels }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           target: "base"
-          labels: ${{ steps.meta.outputs.labels }}
+

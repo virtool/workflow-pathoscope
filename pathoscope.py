@@ -4,7 +4,7 @@ import math
 import rust_utils
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Dict, Generator, List
+from typing import Any, Generator
 
 
 class SamLine:
@@ -36,7 +36,7 @@ class SamLine:
         return len(self.fields[9])
 
     @cached_property
-    def fields(self) -> List[Any]:
+    def fields(self) -> list[Any]:
         """
         The SAM fields
         """
@@ -135,7 +135,7 @@ def rescale_samscore(u, nu, max_score, min_score):
     return u, nu
 
 
-def find_sam_align_score(fields: List[Any]) -> float:
+def find_sam_align_score(fields: list[Any]) -> float:
     """
     Find the Bowtie2 alignment score for the given split line (``fields``).
 
@@ -494,7 +494,7 @@ def write_report(
     return results
 
 
-def calculate_coverage(sam_path: Path, ref_lengths: Dict[str, int]):
+def calculate_coverage(sam_path: Path, ref_lengths: list[str, int]):
     coverage_dict = {}
     pos_length_list = []
 
