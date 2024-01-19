@@ -23,7 +23,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - uses: docker/build-push-action@v5
+      - name: Setup Docker
+        uses: docker/setup-buildx-action@v3
+      - name: Build
+        uses: docker/build-push-action@v5
         with:
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -34,10 +37,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - uses: docker/build-push-action@v5
+      - name: Setup Docker
+        uses: docker/setup-buildx-action@v3
+      - name: Build
+        id: build
+        uses: docker/build-push-action@v5
         with:
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           context: .
           target: test
+      - name: Test
+        run: docker run ${{ steps.build.outputs.image }} pytest
   release:
     runs-on: ubuntu-22.04
     needs: test
