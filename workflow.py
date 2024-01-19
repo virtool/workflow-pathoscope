@@ -9,18 +9,15 @@ from typing import Any, TextIO
 import aiofiles
 import aiofiles.os
 import rust_utils
-from structlog import get_logger
 from virtool_workflow import hooks, step
-from virtool_workflow.data_model.analysis import WFAnalysis
-from virtool_workflow.data_model.indexes import WFIndex
-from virtool_workflow.data_model.subtractions import WFSubtraction
+from virtool_workflow.data.analyses import WFAnalysis
+from virtool_workflow.data.indexes import WFIndex
+from virtool_workflow.data.samples import WFSample
+from virtool_workflow.data.subtractions import WFSubtraction
 from virtool_workflow.runtime.run_subprocess import RunSubprocess
 
-from pathoscope import SamLine, calculate_coverage
-from pathoscope import run as run_pathoscope
-from pathoscope import write_report
-
-logger = get_logger("pathoscope")
+from utils import SamLine, calculate_coverage, write_report
+from utils import run_pathoscope as run_pathoscope
 
 BAD_FIRST_SAM_CHARACTERS = {"\n", "@", "#"}
 
@@ -41,10 +38,13 @@ def read_fastq_grouped_lines(fastq_file: TextIO):
 
 
 def subtract_fastq(
-    current_fastq_path: Path, new_fastq_path: Path, subtracted_reads: set[str]
+    current_fastq_path: Path,
+    new_fastq_path: Path,
+    subtracted_reads: set[str],
 ):
-    with open(current_fastq_path, "r") as current_fastq_file, open(
-        new_fastq_path, "w"
+    with open(current_fastq_path) as current_fastq_file, open(
+        new_fastq_path,
+        "w",
     ) as new_fastq_file:
         for record in read_fastq_grouped_lines(current_fastq_file):
             if record[0].strip("@\n") not in subtracted_reads:
@@ -52,26 +52,21 @@ def subtract_fastq(
 
 
 @hooks.on_failure
-async def delete_analysis_document(analysis_provider):
-    await analysis_provider.delete()
-
-
-@hooks.on_result
-async def upload_results(results, analysis_provider):
-    await analysis_provider.upload_result(results)
+async def delete_analysis_document(analysis: WFAnalysis):
+    await analysis.delete()
 
 
 @step
 async def map_default_isolates(
     intermediate: SimpleNamespace,
-    read_file_names: str,
+    logger,
     index: WFIndex,
     proc: int,
     p_score_cutoff: float,
     run_subprocess: RunSubprocess,
+    sample: WFSample,
 ):
-    """
-    Map sample reads to all default isolates to identify candidate OTUs.
+    """Map sample reads to all default isolates to identify candidate OTUs.
 
     This will be used to identify candidate OTUs.
     """
@@ -99,9 +94,11 @@ async def map_default_isolates(
         [
             "bowtie2",
             "-p",
-            str(proc),
-            "--no-unal",
+            proc,
             "--local",
+            "--no-unal",
+            "--no-hd",
+            "--no-sq",
             "--score-min",
             "L,20,1.0",
             "-N",
@@ -109,14 +106,14 @@ async def map_default_isolates(
             "-L",
             "15",
             "-x",
-            str(index.bowtie_path),
+            index.bowtie_path,
             "-U",
-            read_file_names,
+            *sample.read_paths,
         ],
         stdout_handler=stdout_handler,
     )
 
-    logger.info("Found potential OTUs", count=len(intermediate.to_otus))
+    logger.info("found potential OTUs", count=len(intermediate.to_otus))
 
 
 @step
@@ -128,13 +125,10 @@ async def build_isolate_index(
     run_subprocess: RunSubprocess,
     proc: int,
 ):
-    """
-    Build a mapping index containing all isolates of candidate OTUs.
-    """
+    """Build a mapping index containing all isolates of candidate OTUs."""
     intermediate.lengths = await index.write_isolate_fasta(
         [index.get_otu_id_by_sequence_id(id_) for id_ in intermediate.to_otus],
         isolate_fasta_path,
-        proc,
     )
 
     await run_subprocess(
@@ -144,20 +138,20 @@ async def build_isolate_index(
             str(proc),
             str(isolate_fasta_path),
             str(isolate_index_path),
-        ]
+        ],
     )
 
 
 @step
 async def map_isolates(
-    read_file_names: str,
     intermediate: SimpleNamespace,
     isolate_fastq_path: Path,
     isolate_index_path: Path,
     isolate_sam_path: Path,
-    run_subprocess: RunSubprocess,
     proc: int,
     p_score_cutoff: float,
+    run_subprocess: RunSubprocess,
+    sample: WFSample,
 ):
     """Map sample reads to the all isolate index."""
     isolate_high_scores = defaultdict(float)
@@ -204,11 +198,11 @@ async def map_isolates(
             "-k",
             "100",
             "--al",
-            str(isolate_fastq_path),
+            isolate_fastq_path,
             "-x",
-            str(isolate_index_path),
+            isolate_index_path,
             "-U",
-            read_file_names,
+            *sample.read_paths,
         ]
 
         await run_subprocess(command, stdout_handler=stdout_handler)
@@ -220,6 +214,7 @@ async def map_isolates(
 async def eliminate_subtraction(
     isolate_fastq_path: Path,
     isolate_sam_path: Path,
+    logger,
     proc: int,
     results: dict[str, Any],
     run_subprocess: RunSubprocess,
@@ -227,18 +222,13 @@ async def eliminate_subtraction(
     subtracted_sam_path: Path,
     work_path: Path,
 ):
-    """
-    Remove reads that map better to a subtraction than to a reference.
+    """Remove reads that map better to a subtraction than to a reference.
 
     The input to this step is the reads that aligned to an isolate at least once in the
     previous step. We will align these against a subtraction (plant) genome. If the
     alignment score is higher against the subtraction, we drop alignments involving the
     read from the SAM from the previous step and write the reduced one to
     `subtracted_sam_path`.
-
-    TODO: Go through all `subtractions` instead of just the first `subtraction`.
-          Efficiently eliminate from the subtraction SAM any reads that map to any of
-          subtractions.
 
     :param isolate_fastq_path: path to the FASTQ file containing reads that aligned to the isolates
     :param isolate_sam_path: path to the SAM file of alignments to the isolates
@@ -249,7 +239,6 @@ async def eliminate_subtraction(
     :param subtracted_sam_path: path to the SAM file with subtraction-mapped reads removed
     :param work_path: path to the workflow working directory
     """
-
     if len(subtractions) == 0:
         logger.info("No subtractions to eliminate reads against. Skipping step.")
         await asyncio.to_thread(shutil.copyfile, isolate_sam_path, subtracted_sam_path)
@@ -288,7 +277,7 @@ async def eliminate_subtraction(
                 str(current_fastq_path),
                 "-S",
                 str(to_subtraction_sam_path),
-            ]
+            ],
         )
 
         rust_utils.run_eliminate_subtraction(
@@ -302,7 +291,9 @@ async def eliminate_subtraction(
         current_sam_input_path = work_path / "working_isolate.sam"
 
         await asyncio.to_thread(
-            shutil.copyfile, subtracted_sam_path, current_sam_input_path
+            shutil.copyfile,
+            subtracted_sam_path,
+            current_sam_input_path,
         )
 
         async with aiofiles.open("subtracted_read_ids.txt", "r") as f:
@@ -315,7 +306,10 @@ async def eliminate_subtraction(
         new_fastq_path = work_path / "new_fastq.fq"
 
         await asyncio.to_thread(
-            subtract_fastq, current_fastq_path, new_fastq_path, subtracted_reads
+            subtract_fastq,
+            current_fastq_path,
+            new_fastq_path,
+            subtracted_reads,
         )
 
         # Overwrite the previous input FASTA with the subtracted one.
@@ -336,13 +330,13 @@ async def reassignment(
     analysis: WFAnalysis,
     index: WFIndex,
     intermediate: SimpleNamespace,
+    logger,
     p_score_cutoff: float,
     results,
     subtracted_sam_path: Path,
     work_path: Path,
 ):
-    """
-    Run the Pathoscope reassignment algorithm.
+    """Run the Pathoscope reassignment algorithm.
 
     Tab-separated output is written to ``pathoscope.tsv``. The results are also parsed
     and saved to `intermediate.coverage`.
@@ -350,7 +344,7 @@ async def reassignment(
     reassigned_path = work_path / "reassigned.sam"
 
     logger.info(
-        "Running Pathoscope",
+        "running pathoscope",
         subtracted_path=subtracted_sam_path,
         reassigned_path=reassigned_path,
     )
@@ -369,14 +363,17 @@ async def reassignment(
         refs,
         reads,
     ) = await asyncio.to_thread(
-        run_pathoscope, subtracted_sam_path, reassigned_path, p_score_cutoff
+        run_pathoscope,
+        subtracted_sam_path,
+        reassigned_path,
+        p_score_cutoff,
     )
 
     read_count = len(reads)
 
     report_path = work_path / "report.tsv"
 
-    logger.info("Writing report", path=report_path)
+    logger.info("writing report", path=report_path)
 
     report = await asyncio.to_thread(
         write_report,
@@ -395,15 +392,17 @@ async def reassignment(
         level_2_final,
     )
 
-    analysis.upload(report_path, "tsv")
+    await analysis.upload_file(report_path, "tsv")
 
-    logger.info("Calculating coverage")
+    logger.info("calculating coverage")
 
     intermediate.coverage = await asyncio.to_thread(
-        calculate_coverage, reassigned_path, intermediate.lengths
+        calculate_coverage,
+        reassigned_path,
+        intermediate.lengths,
     )
 
-    logger.info("Preparing hits")
+    logger.info("preparing hits")
 
     hits = list()
 
@@ -428,7 +427,4 @@ async def reassignment(
 
         hits.append(hit)
 
-    results.update({"read_count": read_count, "hits": hits})
-
-    intermediate.reassigned_path = reassigned_path
-    intermediate.report_path = report_path
+    await analysis.upload_result({**results, "read_count": read_count, "hits": hits})
