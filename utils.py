@@ -162,61 +162,62 @@ def write_report(
 
     x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11 = zip(*tmp)
 
-    no_cutoff = False
+    end = 0
 
     for i, _ in enumerate(x10):
-        if not no_cutoff and x1[i] < 0.01 and x10[i] <= 0 and x11[i] <= 0:
+        if x1[i] < 0.01 and x10[i] <= 0 and x11[i] <= 0:
             break
 
-        if i == (len(x10) - 1):
-            i += 1
-
-    # Changing the column order here
-    tmp = zip(
-        x2[:i],
-        x1[:i],
-        x6[:i],
-        x7[:i],
-        x10[:i],
-        x11[:i],
-        x3[:i],
-        x4[:i],
-        x5[:i],
-        x8[:i],
-        x9[:i],
-    )
+        end += 1
 
     with open(path, "w") as handle:
         csv_writer = csv.writer(handle, delimiter="\t")
 
-        header = [
-            "Genome",
-            "Final Guess",
-            "Final Best Hit",
-            "Final Best Hit Read Numbers",
-            "Final High Confidence Hits",
-            "Final Low Confidence Hits",
-            "Initial Guess",
-            "Initial Best Hit",
-            "Initial Best Hit Read Numbers",
-            "Initial High Confidence Hits",
-            "Initial Low Confidence Hits",
-        ]
+        csv_writer.writerow(
+            [
+                "Total Number of Aligned Reads:",
+                read_count,
+                "Total Number of Mapped Genomes:",
+                len(refs),
+            ],
+        )
 
-        header1 = [
-            "Total Number of Aligned Reads:",
-            read_count,
-            "Total Number of Mapped Genomes:",
-            len(refs),
-        ]
+        csv_writer.writerow(
+            [
+                "Genome",
+                "Final Guess",
+                "Final Best Hit",
+                "Final Best Hit Read Numbers",
+                "Final High Confidence Hits",
+                "Final Low Confidence Hits",
+                "Initial Guess",
+                "Initial Best Hit",
+                "Initial Best Hit Read Numbers",
+                "Initial High Confidence Hits",
+                "Initial Low Confidence Hits",
+            ],
+        )
 
-        csv_writer.writerow(header1)
-        csv_writer.writerow(header)
-        csv_writer.writerows(tmp)
+        # Change the column order with zip.
+        csv_writer.writerows(
+            zip(
+                x2[:end],
+                x1[:end],
+                x6[:end],
+                x7[:end],
+                x10[:end],
+                x11[:end],
+                x3[:end],
+                x4[:end],
+                x5[:end],
+                x8[:end],
+                x9[:end],
+            ),
+        )
 
     results = {}
 
-    for i, ref_id in enumerate(x2[:i]):
+    for i, ref_id in enumerate(x2[:end]):
         if x1[i] < 0.01 and x10[i] <= 0 and x11[i] <= 0:
             pass
         else:
