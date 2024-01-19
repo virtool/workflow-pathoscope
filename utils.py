@@ -85,8 +85,8 @@ def calculate_coverage(sam_path: Path, ref_lengths: list[str, int]):
 def find_sam_align_score(fields: list[Any]) -> float:
     """Find the Bowtie2 alignment score for the given split line (``fields``).
 
-    Searches the SAM fields for the ``AS:i`` substring and extracts the Bowtie2-specific alignment score. This will not
-    work for other aligners.
+    Searches the SAM fields for the ``AS:i`` substring and extracts the Bowtie2-specific
+    alignment score. This will not work for other aligners.
 
     :param fields: a SAM line that has been split on "\t"
     :return: the alignment score
