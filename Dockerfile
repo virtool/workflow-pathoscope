@@ -30,16 +30,15 @@ ENV PATH="/root/.cargo/bin:/root/.local/bin:${PATH}"
 RUN pip install --upgrade pip
 RUN pip install maturin==0.14.5
 COPY src src
-COPY Cargo.toml Cargo.lock fixtures.py pathoscope.py  poetry.lock pyproject.toml workflow.py ./
+COPY Cargo.toml Cargo.lock fixtures.py utils.py  poetry.lock pyproject.toml workflow.py ./
 RUN maturin build --release
 RUN poetry export > requirements.txt
 RUN pip install -r requirements.txt
 RUN pip install /app/target/wheels/rust_utils*.whl
 
-
 FROM base as test
 WORKDIR /app
-RUN poetry export  --with dev > requirements.txt
+RUN poetry export --with dev > requirements.txt
 RUN pip install -r requirements.txt
+COPY example ./example
 COPY tests ./tests
-RUN pytest

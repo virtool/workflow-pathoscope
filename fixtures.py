@@ -2,12 +2,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from pyfixtures import fixture
-from virtool_workflow.data_model.indexes import WFIndex
-
-
-@fixture
-def index(indexes: list[WFIndex]):
-    return indexes[0]
 
 
 @fixture
@@ -50,17 +44,6 @@ def isolate_sam_path(isolate_path: Path):
 @fixture
 def p_score_cutoff():
     return 0.01
-
-
-@fixture
-def read_file_names(sample) -> str:
-    return ",".join(str(path) for path in sample.read_paths)
-
-
-@fixture
-def reassigned_sam_path(work_path: Path):
-    """The path to the SAM file after Pathoscope reassignment."""
-    return work_path / "reassigned.sam"
 
 
 @fixture
