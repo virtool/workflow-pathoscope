@@ -42,4 +42,3 @@ RUN poetry export --with dev > requirements.txt
 RUN pip install -r requirements.txt
 COPY example ./example
 COPY tests ./tests
-# RUN pytest
