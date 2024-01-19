@@ -23,7 +23,7 @@ def test_write_report(
 
 
 def test_calculate_coverage(example_path: Path, tmp_path):
-    ref_lengths = dict()
+    ref_lengths = {}
 
     sam_path = tmp_path / "mapped.sam"
 

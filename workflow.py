@@ -16,8 +16,7 @@ from virtool_workflow.data.samples import WFSample
 from virtool_workflow.data.subtractions import WFSubtraction
 from virtool_workflow.runtime.run_subprocess import RunSubprocess
 
-from utils import SamLine, calculate_coverage, write_report
-from utils import run_pathoscope as run_pathoscope
+from utils import SamLine, calculate_coverage, run_pathoscope, write_report
 
 BAD_FIRST_SAM_CHARACTERS = {"\n", "@", "#"}
 

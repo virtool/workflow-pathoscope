@@ -214,7 +214,7 @@ def write_report(
         csv_writer.writerow(header)
         csv_writer.writerows(tmp)
 
-    results = dict()
+    results = {}
 
     for i, ref_id in enumerate(x2[:i]):
         if x1[i] < 0.01 and x10[i] <= 0 and x11[i] <= 0:
