@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: commitlint
@@ -22,29 +22,35 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
-      - name: Build
-        run: docker build --target=base .
+        uses: actions/checkout@v4
+      - uses: docker/build-push-action@v5
+        with:
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          context: .
+          target: base
   test:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
-      - name: Test
-        run: docker build --target=test .
+        uses: actions/checkout@v4
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: test
   release:
     runs-on: ubuntu-22.04
     needs: test
     if: github.event_name == 'push'
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Setup Node
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
       - name: Install semantic-release
-        run: npm i semantic-release@v18.0.0 conventional-changelog-conventionalcommits@4.6.1
+        run: npm i semantic-release@v23.0.0 conventional-changelog-conventionalcommits@7.0.2
       - name: Release
         env:
           GITHUB_USERNAME: ${{ secrets.GH_USERNAME }}
