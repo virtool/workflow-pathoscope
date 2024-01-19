@@ -34,10 +34,10 @@ jobs:
           context: .
           target: test
       - name: Test
-        run: docker run --rm -t ${{ steps.build.outputs.image }} pytest
+        run: docker run --rm -t ${{ steps.build.outputs.imageid }} pytest
   release:
     runs-on: ubuntu-22.04
-    needs: test
+    needs: [commitlint, test]
     if: github.event_name == 'push'
     steps:
       - name: Checkout
