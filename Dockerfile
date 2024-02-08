@@ -11,7 +11,7 @@ RUN wget https://github.com/BenLangmead/bowtie2/releases/download/v2.3.2/bowtie2
     unzip bowtie2-2.3.2-legacy-linux-x86_64.zip && \
     mkdir bowtie2 && \
     cp bowtie2-2.3.2-legacy/bowtie2* bowtie2
-COPY VERSION* ./
+
 
 FROM python:3.10-buster as base
 WORKDIR /app
@@ -36,6 +36,7 @@ RUN maturin build --release
 RUN poetry export > requirements.txt
 RUN pip install -r requirements.txt
 RUN pip install /app/target/wheels/rust_utils*.whl
+COPY VERSION* ./
 
 FROM base as test
 WORKDIR /app
