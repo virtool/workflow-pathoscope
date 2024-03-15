@@ -107,7 +107,7 @@ async def map_default_isolates(
             "-x",
             index.bowtie_path,
             "-U",
-            *sample.read_paths,
+            ",".join(str(path) for path in sample.read_paths),
         ],
         stdout_handler=stdout_handler,
     )
@@ -201,7 +201,7 @@ async def map_isolates(
             "-x",
             isolate_index_path,
             "-U",
-            *sample.read_paths,
+            ",".join(str(path) for path in sample.read_paths),
         ]
 
         await run_subprocess(command, stdout_handler=stdout_handler)
