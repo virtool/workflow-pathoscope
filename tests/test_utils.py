@@ -4,7 +4,11 @@ from pathlib import Path
 
 from syrupy import SnapshotAssertion
 
-from python.workflow_pathoscope import calculate_coverage, find_sam_align_score, write_report
+from workflow_pathoscope.utils import (
+    calculate_coverage,
+    find_sam_align_score,
+    write_report,
+)
 
 
 def test_write_report(
@@ -14,7 +18,7 @@ def test_write_report(
     """Test that a report is written correctly given a set of Pathoscope results."""
     report_path = tmp_path / "report.tsv"
 
-    with open(Path(__file__).parent / "test_utils" / "report_input.json") as f:
+    with open(Path(__file__).parent / "report_input.json") as f:
         data = json.load(f)
 
     write_report(report_path, **data)

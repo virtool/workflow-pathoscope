@@ -3,6 +3,8 @@ from functools import cached_property
 from pathlib import Path
 from typing import Any, Generator
 
+from workflow_pathoscope.rust import run_expectation_maximization
+
 
 class SamLine:
     def __init__(self, line: str):
@@ -249,7 +251,7 @@ def run_pathoscope(sam_path: Path, reassigned_path: Path, p_score_cutoff: float)
     :param reassigned_path: The path to the reassigned SAM file.
     :param p_score_cutoff: The minimum allowed ``p_score`` for an alignment.
     """
-    return rust_utils.run_expectation_maximization(
+    return run_expectation_maximization(
         str(sam_path),
         str(reassigned_path),
         p_score_cutoff,

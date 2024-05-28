@@ -10,7 +10,7 @@ use std::{
 
 #[pymodule]
 ///pyo3 interface
-fn workflow_pathoscope(_py: Python, m: &PyModule) -> PyResult<()> {
+fn rust(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_expectation_maximization, m)?)?;
     m.add_function(wrap_pyfunction!(run_eliminate_subtraction, m)?)?;
     return Ok(());
@@ -852,18 +852,18 @@ mod tests {
 
     #[test]
     fn test_rewrite_align() {
-        let (u, nu, refs, reads) = build_matrix("TestFiles/test_al.sam", None);
+        let (u, nu, refs, reads) = build_matrix("example/test_al.sam", None);
         let (init_pi, pi, theta, nu) = em(&u, nu, &refs, 5, 1e-7, 0.0, 0.0);
         rewrite_align(
             &u,
             &nu,
-            "TestFiles/test_al.sam",
+            "example/rust/test_al.sam",
             &0.01,
-            "TestFiles/rewrite.sam",
+            "example/rust/rewrite.sam",
         );
 
         let mut new_file =
-            BufReader::new(File::open("TestFiles/rewrite.sam").expect("Invalid file"));
+            BufReader::new(File::open("example/rust/rewrite.sam").expect("Invalid file"));
         let mut test_file = BufReader::new(
             File::open("tests/test_pathoscope/test_rewrite_align.txt").expect("Invalid file"),
         );
@@ -913,7 +913,7 @@ mod tests {
 
     #[test]
     fn test_em() {
-        let (u, nu, refs, reads) = build_matrix("TestFiles/test_al.sam", None);
+        let (u, nu, refs, reads) = build_matrix("example/rust/test_al.sam", None);
         let (init_pi, pi, theta, nu) = em(&u, nu, &refs, 5, 1e-6, 0.0, 0.0);
 
         let mut test_file = File::open("tests/test_pathoscope/test_em_5_1e_06_0_0_.yml")
@@ -991,7 +991,7 @@ mod tests {
 
     #[test]
     fn test_best_hit() {
-        let (u, nu, refs, reads) = build_matrix("TestFiles/test_al.sam", None);
+        let (u, nu, refs, reads) = build_matrix("example/rust/test_al.sam", None);
         let (best_hit_reads, best_hit, level1, level2) = compute_best_hit(&u, &nu, &refs, &reads);
 
         let mut test_file = File::open("tests/test_pathoscope/test_compute_best_hit.yml")
@@ -1028,7 +1028,7 @@ mod tests {
 
     #[test]
     fn test_build_matrix() {
-        let (u, nu, refs, reads) = build_matrix("TestFiles/test_al.sam", None);
+        let (u, nu, refs, reads) = build_matrix("example/rust/test_al.sam", None);
 
         let mut test_file = File::open("tests/test_pathoscope/test_build_matrix.yml")
             .expect("tests::test_build_matrix: `unable to open test file`");
