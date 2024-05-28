@@ -35,7 +35,7 @@ jobs:
           load: true
           target: test
       - name: Test
-        run: docker run --rm -t ${{ steps.build.outputs.imageid }} pytest
+        run: docker run --rm -t ${{ steps.build.outputs.imageid }} poetry run pytest
   release:
     runs-on: ubuntu-22.04
     needs: [commitlint, test]

@@ -8,7 +8,6 @@ from typing import Any, TextIO
 
 import aiofiles
 import aiofiles.os
-import rust_utils
 from virtool_workflow import hooks, step
 from virtool_workflow.data.analyses import WFAnalysis
 from virtool_workflow.data.indexes import WFIndex
@@ -16,7 +15,13 @@ from virtool_workflow.data.samples import WFSample
 from virtool_workflow.data.subtractions import WFSubtraction
 from virtool_workflow.runtime.run_subprocess import RunSubprocess
 
-from utils import SamLine, calculate_coverage, run_pathoscope, write_report
+from workflow_pathoscope.utils import (
+    SamLine,
+    calculate_coverage,
+    run_pathoscope,
+    write_report,
+)
+from workflow_pathoscope.rust import run_eliminate_subtraction
 
 BAD_FIRST_SAM_CHARACTERS = {"\n", "@", "#"}
 
@@ -279,7 +284,7 @@ async def eliminate_subtraction(
             ],
         )
 
-        rust_utils.run_eliminate_subtraction(
+        run_eliminate_subtraction(
             str(current_sam_input_path),
             str(to_subtraction_sam_path),
             str(subtracted_sam_path),

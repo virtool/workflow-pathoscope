@@ -12,23 +12,26 @@ authors = [
 license = "MIT"
 
 [tool.poetry.dependencies]
-python = "~3.10"
-virtool-workflow = {version ="^6.0.0-alpha10", allow-prereleases = true}
+python = "~3.12"
+virtool-workflow = "^6.0.0"
+setuptools = "^70.0.0"
 
 [tool.poetry.group.dev.dependencies]
-pre-commit = "^3.0.4"
 pytest = "^7.4.2"
-pytest-aiohttp = "^0.3.0"
-pytest-asyncio = "^0.15.1"
+pytest-asyncio = "^0.23.7"
 pytest-mock = "^3.7.0"
 syrupy = "^1.7.4"
+maturin = "^1.5.1"
+ruff = "^0.4.5"
 
 [tool.pytest.ini_options]
-markers = ["asyncio_mode: auto"]
+asyncio_mode = "auto"
 
 [build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
 
 [tool.maturin]
 python-source = "python"
+module-name = "workflow_pathoscope.rust"
+features = ["pyo3/extension-module"]

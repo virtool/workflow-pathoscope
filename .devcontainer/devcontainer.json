@@ -1,0 +1,7 @@
+{
+  "name": "pathoscope-test",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+}
