@@ -4,7 +4,7 @@ from pathlib import Path
 
 from syrupy import SnapshotAssertion
 
-from utils import calculate_coverage, find_sam_align_score, write_report
+from python.workflow_pathoscope import calculate_coverage, find_sam_align_score, write_report
 
 
 def test_write_report(

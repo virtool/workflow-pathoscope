@@ -10,7 +10,7 @@ use std::{
 
 #[pymodule]
 ///pyo3 interface
-fn rust_utils(_py: Python, m: &PyModule) -> PyResult<()> {
+fn workflow_pathoscope(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_expectation_maximization, m)?)?;
     m.add_function(wrap_pyfunction!(run_eliminate_subtraction, m)?)?;
     return Ok(());
