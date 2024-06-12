@@ -16,7 +16,7 @@ RUN wget https://zlib.net/pigz/pigz-2.8.tar.gz && \
     cd pigz-2.8 && \
     make
 
-FROM python:3.12-bookworm
+FROM python:3.12.3-bookworm
 COPY --from=bowtie2 /build/bowtie2/* /usr/local/bin/
 COPY --from=ghcr.io/virtool/workflow-tools:2.0.1 /opt/fastqc /opt/fastqc
 COPY --from=ghcr.io/virtool/workflow-tools:2.0.1 /opt/hmmer /opt/hmmer

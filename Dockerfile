@@ -16,7 +16,7 @@ RUN wget https://zlib.net/pigz/pigz-2.8.tar.gz && \
     cd pigz-2.8 && \
     make
 
-FROM python:3.12-bookworm as deps
+FROM python:3.12.3-bookworm as deps
 WORKDIR /app
 COPY --from=bowtie2 /build/bowtie2/* /usr/local/bin/
 COPY --from=ghcr.io/virtool/workflow-tools:2.0.1 /opt/fastqc /opt/fastqc
@@ -27,7 +27,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/* && \
     apt-get clean
 
-FROM python:3.12-bookworm as poetry
+FROM python:3.12.3-bookworm as poetry
 WORKDIR /app
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 RUN curl -sSL https://install.python-poetry.org | python -
