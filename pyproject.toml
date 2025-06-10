@@ -1,29 +1,30 @@
-[tool.poetry]
+[project]
 name = "workflow-pathoscope"
 version = "0.0.0"
 description = ""
 authors = [
-    "Ian Boyes",
-    "Blake Smith",
-    "Mallory Loria",
-    "Lilly Roberts",
-    "Markus Swoveland"
+    {name="Ian Boyes"},
+    {name="Blake Smith"},
+    {name="Mallory Loria"},
+    {name="Lilly Roberts"},
+    {name="Markus Swoveland"},
 ]
 license = "MIT"
+requires-python = ">=3.12.3,<3.13.0"
+
+[tool.poetry]
 package-mode = false
 
 [tool.poetry.dependencies]
-python = "~3.12"
-virtool-workflow = "^7.1.0"
-setuptools = "^70.0.0"
+virtool-workflow = { git = "https://github.com/virtool/virtool-workflow.git", rev="7.1.4" }
 
 [tool.poetry.group.dev.dependencies]
+maturin = "^1.5.1"
 pytest = "^7.4.2"
 pytest-asyncio = "^0.23.7"
 pytest-mock = "^3.7.0"
-syrupy = "^1.7.4"
-maturin = "^1.5.1"
 ruff = "^0.4.5"
+syrupy = "^1.7.4"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
