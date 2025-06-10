@@ -1,4 +1,4 @@
-FROM debian:bookworm as bowtie2
+FROM debian:bookworm AS bowtie2
 WORKDIR /build
 RUN apt-get update && apt-get install -y build-essential cmake wget zlib1g-dev
 RUN wget https://github.com/BenLangmead/bowtie2/archive/refs/tags/v2.5.4.tar.gz
@@ -8,7 +8,7 @@ RUN make
 RUN mkdir /build/bowtie2
 RUN cp bowtie2* /build/bowtie2/
 
-FROM debian:bookworm as pigz
+FROM debian:bookworm AS pigz
 WORKDIR /build
 RUN apt-get update && apt-get install -y gcc make wget zlib1g-dev
 RUN wget https://zlib.net/pigz/pigz-2.8.tar.gz && \
@@ -16,7 +16,7 @@ RUN wget https://zlib.net/pigz/pigz-2.8.tar.gz && \
     cd pigz-2.8 && \
     make
 
-FROM python:3.12.3-bookworm as deps
+FROM python:3.12.3-bookworm AS deps
 WORKDIR /app
 COPY --from=bowtie2 /build/bowtie2/* /usr/local/bin/
 COPY --from=ghcr.io/virtool/workflow-tools:2.0.1 /opt/fastqc /opt/fastqc
@@ -27,7 +27,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/* && \
     apt-get clean
 
-FROM python:3.12.3-bookworm as poetry
+FROM python:3.12.3-bookworm AS poetry
 WORKDIR /app
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 RUN curl -sSL https://install.python-poetry.org | python -
@@ -42,7 +42,7 @@ COPY src ./src
 RUN poetry install
 RUN poetry run maturin develop --release
 
-FROM deps as base
+FROM deps AS base
 WORKDIR /app
 ENV VIRTUAL_ENV=/app/.venv \
     PATH="/app/.venv/bin:/opt/fastqc:/opt/hmmer/bin:${PATH}"
@@ -51,7 +51,7 @@ COPY --from=poetry /app/.venv /app/.venv
 COPY --from=poetry /app/python /app/python
 COPY fixtures.py workflow.py VERSION* ./
 
-FROM deps as test
+FROM deps AS test
 WORKDIR /app
 ENV PATH="/root/.local/bin:/root/.cargo/bin:${PATH}"
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
