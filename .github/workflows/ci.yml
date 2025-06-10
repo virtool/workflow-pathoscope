@@ -56,7 +56,7 @@ jobs:
         run: docker run --rm -t ${{ steps.build.outputs.imageid }} poetry run pytest
   release:
     runs-on: ubuntu-24.04
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: [build, commitlint, test]
     outputs:
       git-tag: ${{ steps.semantic.outputs.git-tag }}
@@ -66,18 +66,20 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - name: Install semantic-release
         run: npm i semantic-release@v24.2.5 @semantic-release/exec@7.1.0 conventional-changelog-conventionalcommits@9.0.0
       - name: Run semantic-release
         id: semantic
         env:
-          GITHUB_USERNAME: ${{ secrets.GH_USERNAME }}
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx semantic-release
   ghcr:
     runs-on: ubuntu-24.04
-    if: github.repository_owner == 'Virtool' && github.event_name == 'push' && needs.release.outputs.git-tag != ''
+    if: |
+      github.repository_owner == 'Virtool' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      needs.release.outputs.git-tag != ''
     needs: [release]
     steps:
       - name: Checkout
@@ -88,12 +90,13 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.GH_USERNAME }}
-          password: ${{ secrets.GH_TOKEN }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Extract Metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
+          context: git
           images: ${{ env.REGISTRY }}/virtool/pathoscope
       - name: Build and Push
         uses: docker/build-push-action@v5
