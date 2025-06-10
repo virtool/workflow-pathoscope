@@ -8,6 +8,9 @@ on:
     branches:
       - "main"
 
+env:
+  REGISTRY: ghcr.io
+
 jobs:
   commitlint:
     runs-on: ubuntu-24.04
@@ -18,6 +21,21 @@ jobs:
           fetch-depth: 0
       - name: commitlint
         uses: wagoid/commitlint-github-action@v5
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Docker
+        uses: docker/setup-buildx-action@v3
+      - name: Build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: virtool/pathoscope:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
   test:
     runs-on: ubuntu-24.04
     steps:
@@ -38,8 +56,10 @@ jobs:
         run: docker run --rm -t ${{ steps.build.outputs.imageid }} poetry run pytest
   release:
     runs-on: ubuntu-24.04
-    needs: [commitlint, test]
     if: github.event_name == 'push'
+    needs: [build, commitlint, test]
+    outputs:
+      git-tag: ${{ steps.semantic.outputs.git-tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,10 +68,38 @@ jobs:
         with:
           node-version: 20
       - name: Install semantic-release
-        run: npm i semantic-release@v23.0.0 conventional-changelog-conventionalcommits@7.0.2
-      - name: Release
+        run: npm i semantic-release@v24.2.5 @semantic-release/exec@7.1.0 conventional-changelog-conventionalcommits@9.0.0
+      - name: Run semantic-release
+        id: semantic
         env:
           GITHUB_USERNAME: ${{ secrets.GH_USERNAME }}
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
         run: npx semantic-release
-      
+  ghcr:
+    runs-on: ubuntu-24.04
+    if: github.repository_owner == 'Virtool' && github.event_name == 'push' && needs.release.outputs.git-tag != ''
+    needs: [release]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Write VERSION file
+        run: echo ${{ needs.release.outputs.git-tag }} > VERSION
+      - name: Login to Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.GH_USERNAME }}
+          password: ${{ secrets.GH_TOKEN }}
+      - name: Extract Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/virtool/pathoscope
+      - name: Build and Push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          labels: ${{ steps.meta.outputs.labels }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          target: "base"

@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import pytest
 from structlog import get_logger
 from syrupy import SnapshotAssertion
-from virtool_core.models.enums import LibraryType
 from virtool_workflow import RunSubprocess
 from virtool_workflow.data.analyses import WFAnalysis
 from virtool_workflow.data.indexes import WFIndex
@@ -87,7 +86,7 @@ def index(data: Data, example_path: Path, work_path: Path):
 
 @pytest.fixture()
 def sample(data: Data, example_path: Path, work_path: Path):
-    data.sample.library_type = LibraryType.normal
+    data.sample.library_type = "normal"
 
     path = work_path / "samples" / data.sample.id
     path.mkdir(parents=True)
