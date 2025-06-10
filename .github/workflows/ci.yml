@@ -10,7 +10,7 @@ on:
 
 jobs:
   commitlint:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -19,7 +19,7 @@ jobs:
       - name: commitlint
         uses: wagoid/commitlint-github-action@v5
   test:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,7 +37,7 @@ jobs:
       - name: Test
         run: docker run --rm -t ${{ steps.build.outputs.imageid }} poetry run pytest
   release:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: [commitlint, test]
     if: github.event_name == 'push'
     steps:
