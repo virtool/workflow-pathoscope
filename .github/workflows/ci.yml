@@ -86,6 +86,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.git-tag }}
       - name: Write VERSION file
         run: echo ${{ needs.release.outputs.git-tag }} > VERSION
       - name: Login to Registry
