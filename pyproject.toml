@@ -19,7 +19,7 @@ package-mode = false
 virtool-workflow = { git = "https://github.com/virtool/virtool-workflow.git", rev="7.1.4" }
 
 [tool.poetry.group.dev.dependencies]
-maturin = "^1.5.1"
+maturin = "^1.8.7"
 pytest = "^7.4.2"
 pytest-asyncio = "^0.23.8"
 pytest-mock = "^3.14.1"
