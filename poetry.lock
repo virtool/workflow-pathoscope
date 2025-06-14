@@ -323,7 +323,7 @@ version = "21.4.0"
 description = "Classes Without Boilerplate"
 optional = false
 python-versions = ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*"
-groups = ["main", "dev"]
+groups = ["main"]
 files = [
     {file = "attrs-21.4.0-py2.py3-none-any.whl", hash = "sha256:2d27e3784d7a565d36ab851fe94887c5eccd6a463168875832a1be79c82828b4"},
     {file = "attrs-21.4.0.tar.gz", hash = "sha256:626ba8234211db98e869df76230a137c4c40a12d72445c45d5f5b716f076e2fd"},
@@ -870,17 +870,6 @@ files = [
     {file = "colorama-0.4.6.tar.gz", hash = "sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44"},
 ]
 markers = {main = "platform_system == \"Windows\" or sys_platform == \"win32\"", dev = "sys_platform == \"win32\""}
-
-[[package]]
-name = "colored"
-version = "1.4.4"
-description = "Simple library for color and formatting to terminal"
-optional = false
-python-versions = "*"
-groups = ["dev"]
-files = [
-    {file = "colored-1.4.4.tar.gz", hash = "sha256:04ff4d4dd514274fe3b99a21bb52fb96f2688c01e93fba7bef37221e7cb56ce0"},
-]
 
 [[package]]
 name = "cryptography"
@@ -2720,20 +2709,18 @@ Jinja2 = ">=3.0.0,<4.0.0"
 
 [[package]]
 name = "syrupy"
-version = "1.7.4"
-description = "PyTest Snapshot Test Utility"
+version = "4.9.1"
+description = "Pytest Snapshot Test Utility"
 optional = false
-python-versions = ">=3.6,<4"
+python-versions = ">=3.8.1"
 groups = ["dev"]
 files = [
-    {file = "syrupy-1.7.4-py3-none-any.whl", hash = "sha256:4634baba491ad93217300329e5c2d84bc38739f35e4d5790b678d06b666a2c98"},
-    {file = "syrupy-1.7.4.tar.gz", hash = "sha256:54e475ef161e1531e1a81e99e2a9f88be4aaeeddf3b356b4d10fd5803c725e38"},
+    {file = "syrupy-4.9.1-py3-none-any.whl", hash = "sha256:b94cc12ed0e5e75b448255430af642516842a2374a46936dd2650cfb6dd20eda"},
+    {file = "syrupy-4.9.1.tar.gz", hash = "sha256:b7d0fcadad80a7d2f6c4c71917918e8ebe2483e8c703dfc8d49cdbb01081f9a4"},
 ]
 
 [package.dependencies]
-attrs = ">=18.2.0,<22.0.0"
-colored = ">=1.3.92,<2.0.0"
-pytest = ">=5.1.0,<8.0.0"
+pytest = ">=7.0.0,<9.0.0"
 
 [[package]]
 name = "types-python-dateutil"
@@ -3059,4 +3046,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12.3,<3.13.0"
-content-hash = "e9bd9fe16c5ef088226f4a30d7d20b4fb7eb552da74bc36a525e775a8a1a4177"
+content-hash = "847199f52cfdef09906c34981f47ffd00ca4d2d380f1d6fed0d3c86ce27c77fc"
