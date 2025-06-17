@@ -17,14 +17,14 @@ pycares = ">=4.0.0"
 
 [[package]]
 name = "aiofiles"
-version = "0.7.0"
+version = "24.1.0"
 description = "File support for asyncio."
 optional = false
-python-versions = ">=3.6,<4.0"
+python-versions = ">=3.8"
 groups = ["main"]
 files = [
-    {file = "aiofiles-0.7.0-py3-none-any.whl", hash = "sha256:c67a6823b5f23fcab0a2595a289cec7d8c863ffcb4322fb8cd6b90400aedfdbc"},
-    {file = "aiofiles-0.7.0.tar.gz", hash = "sha256:a1c4fc9b2ff81568c83e21392a82f344ea9d23da906e4f6a52662764545e19d4"},
+    {file = "aiofiles-24.1.0-py3-none-any.whl", hash = "sha256:b4ec55f4195e3eb5d7abd1bf7e061763e864dd4954231fb8539a0ef8bb8260e5"},
+    {file = "aiofiles-24.1.0.tar.gz", hash = "sha256:22a075c9e5a3810f0c2e48f3008c94d68c65d763b9b03857924c99e57355166c"},
 ]
 
 [[package]]
@@ -818,14 +818,14 @@ files = [
 
 [[package]]
 name = "click"
-version = "8.1.7"
+version = "8.2.1"
 description = "Composable command line interface toolkit"
 optional = false
-python-versions = ">=3.7"
+python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "click-8.1.7-py3-none-any.whl", hash = "sha256:ae74fb96c20a0277a1d615f1e4d73c8414f5a98db8b799a7931d1582f3390c28"},
-    {file = "click-8.1.7.tar.gz", hash = "sha256:ca9853ad459e787e2192211578cc907e7594e294c7ccc834310722b41b9ca6de"},
+    {file = "click-8.2.1-py3-none-any.whl", hash = "sha256:61a3265b914e850b85317d0b3109c7f8cd35a670f963866005d6ef1d5175a12b"},
+    {file = "click-8.2.1.tar.gz", hash = "sha256:27c491cc05d968d271d5a1db13e3b5a184636d9d930f148c50b038f0d0646202"},
 ]
 
 [package.dependencies]
@@ -2658,21 +2658,21 @@ visvalingamwyatt = ">=0.1.4,<0.2.0"
 
 [[package]]
 name = "virtool-workflow"
-version = "7.2.0"
+version = "7.2.1"
 description = "A framework for developing bioinformatics workflows for Virtool."
 optional = false
 python-versions = "<3.13.0,>=3.12.3"
 groups = ["main"]
 files = [
-    {file = "virtool_workflow-7.2.0-py3-none-any.whl", hash = "sha256:c8570140f6024999dcb6d991eed87f2765174b114bee272e7859bbddfd8d36bd"},
-    {file = "virtool_workflow-7.2.0.tar.gz", hash = "sha256:81784fe377a75ffa6650f2fd47b1039062199c890bac11a7587ee48f06883e94"},
+    {file = "virtool_workflow-7.2.1-py3-none-any.whl", hash = "sha256:454434dc285ae9116ae07da8cd5d66b2519a9a746d861afa3fe2f2fc29731731"},
+    {file = "virtool_workflow-7.2.1.tar.gz", hash = "sha256:386567d53aef76ea3b00cf6c05b592685b13e2fde5dc38571dac3369cb4410d8"},
 ]
 
 [package.dependencies]
-aiofiles = ">=0.7.0,<0.8.0"
+aiofiles = ">=24.1.0,<25.0.0"
 aiohttp = ">=3.8.1,<4.0.0"
 biopython = ">=1.81,<2.0"
-click = ">=8.1.7,<9.0.0"
+click = ">=8.2.1,<9.0.0"
 orjson = ">=3.9.9,<4.0.0"
 pydantic-factories = ">=1.17.3,<2.0.0"
 pyfixtures = ">=1.0.0,<2.0.0"
@@ -2820,4 +2820,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12.3,<3.13.0"
-content-hash = "88ef88a5c7bdb9d778dae6720ba37377499cf32db482aaec82171b403186de0e"
+content-hash = "6cdb2397603fbc27669123eccb9f26ff019923eda898166e5b187bf26a60af90"
