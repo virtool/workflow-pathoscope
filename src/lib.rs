@@ -41,12 +41,6 @@ pub fn run_eliminate_subtraction(
                     None => continue,
                 };
 
-                let first = l.chars().next().unwrap();
-
-                if first == '@' || first == '#' {
-                    continue;
-                }
-
                 let fields: Vec<&str> = l.split("\t").collect();
 
                 if fields[2] == "*" {
