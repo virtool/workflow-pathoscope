@@ -563,15 +563,15 @@ pub fn compute_best_hit(
 
     let best_hit: Vec<f64> = best_hit_reads
         .iter()
-        .map(|val| val.clone() / read_count as f64)
+        .map(|val| *val / read_count as f64)
         .collect();
     let level1: Vec<f64> = level_1_reads
         .iter()
-        .map(|val| val.clone() / read_count as f64)
+        .map(|val| *val / read_count as f64)
         .collect();
     let level2: Vec<f64> = level_2_reads
         .iter()
-        .map(|val| val.clone() / read_count as f64)
+        .map(|val| *val / read_count as f64)
         .collect();
 
     return (best_hit_reads, best_hit, level1, level2);
