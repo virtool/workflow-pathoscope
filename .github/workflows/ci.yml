@@ -1,4 +1,4 @@
-name: ci
+name: CI
 
 on:
   pull_request:
@@ -24,6 +24,7 @@ jobs:
       - name: commitlint
         uses: wagoid/commitlint-github-action@v5
   build:
+    name: Build
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -39,6 +40,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
   test:
+    name: Test
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -57,6 +59,7 @@ jobs:
       - name: Test
         run: docker run --rm -t ${{ steps.build.outputs.imageid }} poetry run pytest
   release:
+    name: "Publish / Release"
     runs-on: ubuntu-24.04
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: [build, commitlint, test]
@@ -77,6 +80,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx semantic-release
   ghcr:
+    name: "Publish / GHCR"
     runs-on: ubuntu-24.04
     if: |
       github.repository_owner == 'Virtool' &&
