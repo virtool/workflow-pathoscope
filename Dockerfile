@@ -51,11 +51,19 @@ COPY --from=poetry /app/.venv /app/.venv
 COPY --from=poetry /app/python /app/python
 COPY fixtures.py workflow.py VERSION* ./
 
-FROM deps AS test
+FROM deps AS dev
 WORKDIR /app
-ENV PATH="/root/.local/bin:/root/.cargo/bin:${PATH}"
+ENV PATH="/root/.local/bin:/root/.cargo/bin:${PATH}" \
+    POETRY_CACHE_DIR='/tmp/poetry_cache' \
+    POETRY_NO_INTERACTION=1 \
+    POETRY_VIRTUALENVS_IN_PROJECT=1 \
+    POETRY_VIRTUALENVS_CREATE=1
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 RUN curl -sSL https://install.python-poetry.org | python -
+# Pre-install common dev tools for faster iterations
+RUN pip install pytest-watch
+
+FROM dev AS test
 COPY Cargo.lock Cargo.toml pyproject.toml poetry.lock ./
 COPY src ./src
 COPY python ./python
