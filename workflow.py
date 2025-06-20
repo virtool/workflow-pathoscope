@@ -46,10 +46,13 @@ def subtract_fastq(
     new_fastq_path: Path,
     subtracted_reads: set[str],
 ):
-    with open(current_fastq_path) as current_fastq_file, open(
-        new_fastq_path,
-        "w",
-    ) as new_fastq_file:
+    with (
+        open(current_fastq_path) as current_fastq_file,
+        open(
+            new_fastq_path,
+            "w",
+        ) as new_fastq_file,
+    ):
         for record in read_fastq_grouped_lines(current_fastq_file):
             if record[0].strip("@\n") not in subtracted_reads:
                 new_fastq_file.write("".join(record))
@@ -284,7 +287,8 @@ async def eliminate_subtraction(
             ],
         )
 
-        run_eliminate_subtraction(
+        await asyncio.to_thread(
+            run_eliminate_subtraction,
             str(current_sam_input_path),
             str(to_subtraction_sam_path),
             str(subtracted_sam_path),
