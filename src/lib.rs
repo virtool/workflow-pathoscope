@@ -354,10 +354,11 @@ mod build_matrix {
             }
         }
 
-        for k in nu.clone().keys() {
-            if let Some(nu_entry) = nu.get(k) {
+        let nu_keys: Vec<i32> = nu.keys().cloned().collect();
+        for k in nu_keys {
+            if let Some(nu_entry) = nu.get(&k) {
                 let p_score_sum = nu_entry.1.iter().sum::<f64>();
-                if let Some(nu_entry_mut) = nu.get_mut(k) {
+                if let Some(nu_entry_mut) = nu.get_mut(&k) {
                     nu_entry_mut.2 = nu_entry_mut
                         .1
                         .iter()
@@ -388,8 +389,9 @@ mod build_matrix {
             scaling_factor = 100.0 / max_score;
         }
 
-        for k in u.clone().keys() {
-            if let Some(entry) = u.get_mut(k) {
+        let u_keys: Vec<i32> = u.keys().cloned().collect();
+        for k in u_keys {
+            if let Some(entry) = u.get_mut(&k) {
                 if min_score < 0.0 {
                     entry.1[0] = entry.1[0] - min_score;
                 }
@@ -398,8 +400,9 @@ mod build_matrix {
             }
         }
 
-        for k in nu.clone().keys() {
-            if let Some(entry) = nu.get_mut(k) {
+        let nu_keys: Vec<i32> = nu.keys().cloned().collect();
+        for k in nu_keys {
+            if let Some(entry) = nu.get_mut(&k) {
                 entry.3 = 0.0;
 
                 for i in 0..entry.1.len() {
@@ -691,8 +694,9 @@ pub fn em(
         let mut theta_sum = vec![0.0; genome_count];
 
         //E step
-        for j in nu.clone().keys() {
-            if let Some(z) = nu.get(j).cloned() {
+        let nu_keys: Vec<i32> = nu.keys().cloned().collect();
+        for j in nu_keys {
+            if let Some(z) = nu.get(&j).cloned() {
                 //A set of any genome mapping with j
                 let ind = &z.0;
 
@@ -727,7 +731,7 @@ pub fn em(
                 };
 
                 //Update x in nu
-                if let Some(nu_entry) = nu.get_mut(j) {
+                if let Some(nu_entry) = nu.get_mut(&j) {
                     nu_entry.2 = x_norm.clone();
 
                     for (k, &ref_idx) in ind.iter().enumerate() {
@@ -831,23 +835,23 @@ mod rewrite_align {
                 }
             };
 
-            let mut ref_index = ref_id_dict.get(&sam_line.ref_id).unwrap_or(&-1).clone();
+            let mut ref_index = *ref_id_dict.get(&sam_line.ref_id).unwrap_or(&-1);
 
             if ref_index == -1 {
-                ref_index = ref_count.clone();
+                ref_index = ref_count;
                 ref_id_dict.insert(sam_line.ref_id.clone(), ref_index);
                 genomes.push(sam_line.ref_id);
                 ref_count += 1;
             }
 
-            let mut read_index = read_id_dict.get(&sam_line.read_id).unwrap_or(&-1).clone();
+            let mut read_index = *read_id_dict.get(&sam_line.read_id).unwrap_or(&-1);
 
             if read_index == -1 {
                 // hold on to this new read
                 // first, wrap previous read profile and see if any previous read has a
                 // same profile with that!
 
-                read_index = read_count.clone();
+                read_index = read_count;
                 read_id_dict.insert(sam_line.read_id.clone(), read_index);
                 read.push(sam_line.read_id);
                 read_count += 1;
