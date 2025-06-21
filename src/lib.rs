@@ -312,8 +312,8 @@ mod build_matrix {
             u_return.insert(
                 *k,
                 (
-                    u.get(k).unwrap().0.get(0).unwrap().clone(),
-                    u.get(k).unwrap().1.get(0).unwrap().clone(),
+                    *u.get(k).unwrap().0.get(0).unwrap(),
+                    *u.get(k).unwrap().1.get(0).unwrap(),
                 ),
             );
         }
@@ -352,26 +352,27 @@ mod build_matrix {
         }
 
         for k in u.clone().keys() {
+            let entry = u.get_mut(k).unwrap();
             if min_score < 0.0 {
-                u.get_mut(k).unwrap().1[0] = u.get(k).unwrap().1[0].clone() - min_score;
+                entry.1[0] = entry.1[0] - min_score;
             }
-
-            u.get_mut(k).unwrap().1[0] = f64::exp(u.get(k).unwrap().1[0] * scaling_factor);
-            u.get_mut(k).unwrap().3 = u.get(k).unwrap().1[0];
+            entry.1[0] = f64::exp(entry.1[0] * scaling_factor);
+            entry.3 = entry.1[0];
         }
 
         for k in nu.clone().keys() {
-            nu.get_mut(k).unwrap().3 = 0.0;
+            let entry = nu.get_mut(k).unwrap();
+            entry.3 = 0.0;
 
-            for i in 0..nu.get(k).unwrap().1.len() {
+            for i in 0..entry.1.len() {
                 if min_score < 0.0 {
-                    nu.get_mut(k).unwrap().1[i] = nu.get(k).unwrap().1[i] - min_score;
+                    entry.1[i] = entry.1[i] - min_score;
                 }
 
-                nu.get_mut(k).unwrap().1[i] = f64::exp(nu.get(k).unwrap().1[i] * scaling_factor);
+                entry.1[i] = f64::exp(entry.1[i] * scaling_factor);
 
-                if nu.get(k).unwrap().1[i] > nu.get(k).unwrap().3 {
-                    nu.get_mut(k).unwrap().3 = nu.get(k).unwrap().1[i];
+                if entry.1[i] > entry.3 {
+                    entry.3 = entry.1[i];
                 }
             }
         }
@@ -443,7 +444,7 @@ mod parse_sam {
     }
 
     fn find_sam_align_score(data: &SamLine) -> f64 {
-        for field in data.sam_fields.clone() {
+        for field in &data.sam_fields {
             if field.starts_with("AS:i:") {
                 return (field[5..]
                     .parse::<i32>()
