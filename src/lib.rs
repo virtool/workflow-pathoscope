@@ -9,15 +9,15 @@ use std::{
 };
 
 #[pymodule]
-///pyo3 interface
+/// pyo3 interface
 fn rust(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_expectation_maximization, m)?)?;
     m.add_function(wrap_pyfunction!(run_eliminate_subtraction, m)?)?;
-    return Ok(());
+    Ok(())
 }
 
 #[pyfunction]
-///Entry point for eliminate_subtraction
+/// Entry point for eliminate_subtraction
 pub fn run_eliminate_subtraction(
     _py: Python,
     isolate_sam_path: String,
@@ -41,7 +41,7 @@ pub fn run_eliminate_subtraction(
                     None => continue,
                 };
 
-                let fields: Vec<&str> = l.split("\t").collect();
+                let fields: Vec<&str> = l.split('\t').collect();
 
                 if fields[2] == "*" {
                     continue;
@@ -104,7 +104,7 @@ mod eliminate_subtraction {
             }
         }
 
-        return a_score + read_length;
+        a_score + read_length
     }
 
     pub fn parse_subtraction_sam(path: &str) -> HashMap<String, f32> {
@@ -119,7 +119,7 @@ mod eliminate_subtraction {
                         continue;
                     }
 
-                    let fields: Vec<&str> = l.split("\t").collect();
+                    let fields: Vec<&str> = l.split('\t').collect();
 
                     if fields[2] == "*" {
                         continue;
@@ -131,7 +131,7 @@ mod eliminate_subtraction {
             }
         }
 
-        return high_scores;
+        high_scores
     }
 
     pub fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
@@ -144,7 +144,7 @@ mod eliminate_subtraction {
 }
 
 #[pyfunction]
-///Entry point for expectation_maximization
+/// Entry point for expectation_maximization
 pub fn run_expectation_maximization(
     _py: Python,
     sam_path: String,
@@ -182,7 +182,7 @@ pub fn run_expectation_maximization(
         &reassigned_path,
     );
 
-    return (
+    (
         best_hit_initial_reads,
         best_hit_initial,
         level_1_initial,
@@ -195,7 +195,7 @@ pub fn run_expectation_maximization(
         pi,
         refs,
         reads,
-    );
+    )
 }
 
 mod build_matrix {
@@ -330,10 +330,10 @@ mod build_matrix {
                 .collect();
         }
 
-        return (u_return, nu, refs, reads);
+        (u_return, nu, refs, reads)
     }
 
-    ///modifies the scores of u and nu with respect to max_score and min_score
+    /// modifies the scores of u and nu with respect to max_score and min_score
     fn rescale_samscore(
         mut u: HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>,
         mut nu: HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>,
@@ -376,7 +376,7 @@ mod build_matrix {
                 }
             }
         }
-        return (u, nu);
+        (u, nu)
     }
 }
 
@@ -387,7 +387,7 @@ mod parse_sam {
         io::{BufRead, BufReader},
     };
 
-    ///Stores the desired fields of a .SAM record and the line itself as a String
+    /// Stores the desired fields of a .SAM record and the line itself as a String
     #[derive(Debug)]
     pub struct SamLine {
         pub read_id: String,
@@ -402,15 +402,15 @@ mod parse_sam {
     }
 
     impl SamLine {
-        ///Create a new Some(SamLine) object by consuming a String object
+        /// Create a new Some(SamLine) object by consuming a String object
         ///
-        ///Returns none if the provided String is to be ignored
+        /// Returns none if the provided String is to be ignored
         pub fn new(new_line: String) -> Option<SamLine> {
             if new_line.is_empty() || new_line.starts_with("#") || new_line.starts_with("@") {
                 return None;
             }
 
-            let fields = new_line.split("\t").collect::<Vec<&str>>();
+            let fields = new_line.split('\t').collect::<Vec<&str>>();
 
             //extremely inefficient; should optimize later on
             let mut new_sam_line = SamLine {
@@ -439,7 +439,7 @@ mod parse_sam {
 
             new_sam_line.score = Some(find_sam_align_score(&mut new_sam_line));
 
-            return Some(new_sam_line);
+            Some(new_sam_line)
         }
     }
 
@@ -527,7 +527,7 @@ pub fn compute_best_hit(
         let z = nu.get(i).unwrap();
         let ind = &z.0;
         let x_norm = &z.2;
-        let best_ref = x_norm.iter().cloned().fold(-1. / 0. /* -inf */, f64::max);
+        let best_ref = x_norm.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let mut num_best_ref = 0;
 
         for (j, _) in x_norm.iter().enumerate() {
@@ -575,7 +575,7 @@ pub fn compute_best_hit(
         .map(|val| *val / read_count as f64)
         .collect();
 
-    return (best_hit_reads, best_hit, level1, level2);
+    (best_hit_reads, best_hit, level1, level2)
 }
 
 pub fn em(
@@ -607,7 +607,7 @@ pub fn em(
         max_u_weights = u_weights
             .iter()
             .cloned()
-            .fold(-1. / 0. /* -inf */, f64::max);
+            .fold(f64::NEG_INFINITY, f64::max);
         u_total = u_weights.iter().sum();
     }
 
@@ -623,7 +623,7 @@ pub fn em(
         max_nu_weights = nu_weights
             .iter()
             .cloned()
-            .fold(-1. / 0. /* -inf */, f64::max);
+            .fold(f64::NEG_INFINITY, f64::max);
         nu_total = nu_weights.iter().sum();
     }
 
@@ -720,7 +720,7 @@ pub fn em(
         }
     }
 
-    return (init_pi, pi, theta, nu);
+    (init_pi, pi, theta, nu)
 }
 
 mod rewrite_align {
@@ -824,11 +824,11 @@ mod rewrite_align {
             }
         }
 
-        return nu.get(&read_index).unwrap().2[idx];
+        nu.get(&read_index).unwrap().2[idx]
     }
 }
 
-///tests and whatnot
+/// tests and whatnot
 #[cfg(test)]
 mod tests {
 
