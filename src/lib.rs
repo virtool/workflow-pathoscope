@@ -412,32 +412,31 @@ mod parse_sam {
 
             let fields = new_line.split('\t').collect::<Vec<&str>>();
 
-            //extremely inefficient; should optimize later on
+            // Parse flag field once and reuse
+            let flag_value = fields
+                .get(1)
+                .expect("error reading btws_flg field")
+                .parse::<u32>()
+                .expect("error parsing btws_flg as u32");
+
+            let read_length = fields.get(9).expect("error parsing length field").len();
+            let score = find_sam_align_score_from_fields(&fields, read_length);
+
             let mut new_sam_line = SamLine {
-                read_id: String::from(*(fields.get(0).expect("error parsing read_id"))),
-                read_length: fields.get(9).expect("error parsing length field").len(),
+                read_id: fields.get(0).expect("error parsing read_id").to_string(),
+                read_length,
                 position: fields
                     .get(3)
                     .expect("error reading position field")
                     .parse::<u32>()
                     .expect("error parsing position as u32"),
-                score: None,
-                btws_flg: fields
-                    .get(1)
-                    .expect("error reading btws_flg field")
-                    .parse::<u32>()
-                    .expect("error parsing btws_flg as u32"),
-                unmapped: ((fields.get(1).unwrap().parse::<u32>().unwrap()) & (4 as u32)
-                    == (4 as u32)),
-                ref_id: String::from(*(fields.get(2).expect("error parsing ref_id"))),
-                sam_fields: fields
-                    .into_iter()
-                    .map(|data| String::from(data))
-                    .collect::<Vec<String>>(),
+                score: Some(score),
+                btws_flg: flag_value,
+                unmapped: (flag_value & 4u32) == 4u32,
+                ref_id: fields.get(2).expect("error parsing ref_id").to_string(),
+                sam_fields: fields.iter().map(|&data| data.to_string()).collect(),
                 line: new_line,
             };
-
-            new_sam_line.score = Some(find_sam_align_score(&mut new_sam_line));
 
             Some(new_sam_line)
         }
@@ -451,6 +450,20 @@ mod parse_sam {
                     .expect("unable to parse field as i32 in find_sam_align_score")
                     as f64)
                     + (data.read_length as f64);
+            }
+        }
+
+        panic!("unable to find sam alignment score!")
+    }
+
+    fn find_sam_align_score_from_fields(fields: &[&str], read_length: usize) -> f64 {
+        for field in fields {
+            if field.starts_with("AS:i:") {
+                return (field[5..]
+                    .parse::<i32>()
+                    .expect("unable to parse field as i32 in find_sam_align_score_from_fields")
+                    as f64)
+                    + (read_length as f64);
             }
         }
 
@@ -604,10 +617,7 @@ pub fn em(
     let mut u_total = 0.0;
 
     if !u_weights.is_empty() {
-        max_u_weights = u_weights
-            .iter()
-            .cloned()
-            .fold(f64::NEG_INFINITY, f64::max);
+        max_u_weights = u_weights.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         u_total = u_weights.iter().sum();
     }
 
@@ -620,10 +630,7 @@ pub fn em(
     let mut nu_total = 0.0;
 
     if !nu_weights.is_empty() {
-        max_nu_weights = nu_weights
-            .iter()
-            .cloned()
-            .fold(f64::NEG_INFINITY, f64::max);
+        max_nu_weights = nu_weights.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         nu_total = nu_weights.iter().sum();
     }
 
