@@ -195,8 +195,9 @@ pub fn run_expectation_maximization(
     Vec<String>,
     Vec<String>,
 )> {
-    let (u, nu, refs, reads) = build_matrix::build_matrix(sam_path.as_str(), None)
-        .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to build matrix: {}", e)))?;
+    let (u, nu, refs, reads, all_sam_lines) =
+        build_matrix::build_matrix(sam_path.as_str(), None)
+            .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to build matrix: {}", e)))?;
 
     let (best_hit_initial_reads, best_hit_initial, level_1_initial, level_2_initial) =
         compute_best_hit(&u, &nu, &refs, &reads);
@@ -206,10 +207,10 @@ pub fn run_expectation_maximization(
     let (best_hit_final_reads, best_hit_final, level_1_final, level_2_final) =
         compute_best_hit(&u, &nu, &refs, &reads);
 
-    rewrite_align::rewrite_align(
+    rewrite_align::rewrite_align_from_memory(
         &u,
         &nu,
-        sam_path.as_str(),
+        &all_sam_lines,
         &p_score_cutoff,
         &reassigned_path,
     )
@@ -246,6 +247,7 @@ mod build_matrix {
             HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>,
             Vec<String>,
             Vec<String>,
+            Vec<SamLine>,
         ),
         String,
     > {
@@ -257,6 +259,7 @@ mod build_matrix {
 
         let mut refs: Vec<String> = Vec::new();
         let mut reads: Vec<String> = Vec::new();
+        let mut all_sam_lines: Vec<SamLine> = Vec::new();
 
         let mut ref_count: i32 = 0;
         let mut read_count: i32 = 0;
@@ -285,6 +288,9 @@ mod build_matrix {
                 }
                 ParseResult::Ignore => continue,
             }
+
+            // Store the SAM line for later use in rewrite_align
+            all_sam_lines.push(new_line.clone());
 
             let score = new_line.score.ok_or("Missing score in SAM line")?;
             min_score = score.min(min_score);
@@ -368,7 +374,7 @@ mod build_matrix {
             }
         }
 
-        Ok((u_return, nu, refs, reads))
+        Ok((u_return, nu, refs, reads, all_sam_lines))
     }
 
     /// modifies the scores of u and nu with respect to max_score and min_score
@@ -430,7 +436,7 @@ mod parse_sam {
     };
 
     /// Stores the desired fields of a .SAM record and the line itself as a String
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct SamLine {
         pub read_id: String,
         pub read_length: usize,
@@ -799,6 +805,69 @@ mod rewrite_align {
     use std::io::LineWriter;
     use std::io::Write;
 
+    pub fn rewrite_align_from_memory(
+        u: &HashMap<i32, (i32, f64)>,
+        nu: &HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>,
+        all_sam_lines: &[SamLine],
+        p_score_cutoff: &f64,
+        path: &str,
+    ) -> Result<(), String> {
+        let mut read_id_dict: HashMap<String, i32> = HashMap::new();
+        let mut ref_id_dict: HashMap<String, i32> = HashMap::new();
+
+        let mut genomes: Vec<String> = Vec::new();
+        let mut read: Vec<String> = Vec::new();
+
+        let mut ref_count = 0;
+        let mut read_count = 0;
+
+        let new_file = File::create(path)
+            .map_err(|e| format!("Failed to create output file '{}': {}", path, e))?;
+        let mut sam_writer = LineWriter::new(new_file);
+
+        // Process each SAM line from memory
+        for sam_line in all_sam_lines {
+            let mut ref_index = *ref_id_dict.get(&sam_line.ref_id).unwrap_or(&-1);
+
+            if ref_index == -1 {
+                ref_index = ref_count;
+                ref_id_dict.insert(sam_line.ref_id.clone(), ref_index);
+                genomes.push(sam_line.ref_id.clone());
+                ref_count += 1;
+            }
+
+            let mut read_index = *read_id_dict.get(&sam_line.read_id).unwrap_or(&-1);
+
+            if read_index == -1 {
+                // hold on to this new read
+                // first, wrap previous read profile and see if any previous read has a
+                // same profile with that!
+
+                read_index = read_count;
+                read_id_dict.insert(sam_line.read_id.clone(), read_index);
+                read.push(sam_line.read_id.clone());
+                read_count += 1;
+
+                if u.contains_key(&read_index) {
+                    sam_writer
+                        .write(sam_line.line.as_bytes())
+                        .map_err(|e| format!("Failed to write to output file: {}", e))?;
+                    continue;
+                }
+            }
+
+            if nu.contains_key(&read_index) {
+                if find_updated_score(&nu, read_index, ref_index) < *p_score_cutoff {
+                    continue;
+                }
+                sam_writer
+                    .write(sam_line.line.as_bytes())
+                    .map_err(|e| format!("Failed to write to output file: {}", e))?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn rewrite_align(
         u: &HashMap<i32, (i32, f64)>,
         nu: &HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>,
@@ -921,7 +990,7 @@ mod tests {
 
     #[test]
     fn test_rewrite_align() {
-        let (u, nu, refs, reads) = build_matrix("example/test_al.sam", None).unwrap();
+        let (u, nu, refs, reads, _) = build_matrix("example/rust/test_al.sam", None).unwrap();
         let (init_pi, pi, theta, nu) = em(&u, nu, &refs, 5, 1e-7, 0.0, 0.0);
         rewrite_align(
             &u,
@@ -983,7 +1052,7 @@ mod tests {
 
     #[test]
     fn test_em() {
-        let (u, nu, refs, reads) = build_matrix("example/rust/test_al.sam", None).unwrap();
+        let (u, nu, refs, reads, _) = build_matrix("example/rust/test_al.sam", None).unwrap();
         let (init_pi, pi, theta, nu) = em(&u, nu, &refs, 5, 1e-6, 0.0, 0.0);
 
         let mut test_file = File::open("tests/test_pathoscope/test_em_5_1e_06_0_0_.yml")
@@ -1061,7 +1130,7 @@ mod tests {
 
     #[test]
     fn test_best_hit() {
-        let (u, nu, refs, reads) = build_matrix("example/rust/test_al.sam", None).unwrap();
+        let (u, nu, refs, reads, _) = build_matrix("example/rust/test_al.sam", None).unwrap();
         let (best_hit_reads, best_hit, level1, level2) = compute_best_hit(&u, &nu, &refs, &reads);
 
         let mut test_file = File::open("tests/test_pathoscope/test_compute_best_hit.yml")
@@ -1098,7 +1167,7 @@ mod tests {
 
     #[test]
     fn test_build_matrix() {
-        let (u, nu, refs, reads) = build_matrix("example/rust/test_al.sam", None).unwrap();
+        let (u, nu, refs, reads, _) = build_matrix("example/rust/test_al.sam", None).unwrap();
 
         let mut test_file = File::open("tests/test_pathoscope/test_build_matrix.yml")
             .expect("tests::test_build_matrix: `unable to open test file`");
