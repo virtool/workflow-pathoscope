@@ -253,7 +253,7 @@ mod build_matrix {
             min_score = new_line.score.unwrap().min(min_score);
             max_score = new_line.score.unwrap().max(max_score);
 
-            let mut ref_index = *(h_ref_id.get(&new_line.ref_id).unwrap_or(&-1));
+            let mut ref_index = *h_ref_id.get(&new_line.ref_id).unwrap_or(&-1);
 
             if ref_index == -1 {
                 ref_index = ref_count;
@@ -262,7 +262,7 @@ mod build_matrix {
                 ref_count += 1;
             }
 
-            let mut read_index = *(h_read_id.get(&new_line.read_id).unwrap_or(&-1));
+            let mut read_index = *h_read_id.get(&new_line.read_id).unwrap_or(&-1);
 
             if read_index == -1 {
                 read_index = read_count;
@@ -653,7 +653,7 @@ pub fn em(
             let theta_temp: Vec<f64> = ind.iter().map(|val| theta[*val as usize].clone()).collect();
 
             //Calculate non-normalized xs
-            let mut x_temp: Vec<f64> = Vec::new();
+            let mut x_temp: Vec<f64> = Vec::with_capacity(ind.len());
 
             for k in 0..ind.len() {
                 x_temp.push(pi_temp[k] * theta_temp[k] * z.1[k]);
@@ -824,7 +824,7 @@ mod rewrite_align {
             }
         }
 
-        return nu.get(&read_index).unwrap().2.get(idx).unwrap().clone();
+        return nu.get(&read_index).unwrap().2[idx];
     }
 }
 
