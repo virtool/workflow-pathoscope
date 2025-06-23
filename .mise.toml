@@ -1,0 +1,31 @@
+[tools]
+python = "3.12"
+poetry = "latest"
+
+[tasks.test-setup]
+description = "Build base Docker image for testing"
+run = "docker build --target dev -t pathoscope:dev ."
+
+[tasks.test]
+description = "Run tests in Docker"
+depends = ["test-setup"]
+run = "./scripts/test-docker.sh"
+
+[tasks.test-watch]
+description = "Run tests in watch mode"
+depends = ["test-setup"]
+run = "./scripts/test-docker.sh --watch"
+
+[tasks.test-shell]
+description = "Interactive shell in test container"
+depends = ["test-setup"]
+run = "./scripts/test-docker.sh --shell"
+
+[tasks.test-rust]
+description = "Run Rust tests only"
+depends = ["test-setup"]
+run = "docker run --rm -v \"$(pwd):/app\" -w /app pathoscope:dev cargo test"
+
+[tasks.test-clean]
+description = "Clean up test Docker resources"
+run = "docker rmi pathoscope:dev 2>/dev/null || true"
