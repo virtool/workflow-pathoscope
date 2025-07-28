@@ -19,7 +19,7 @@ package-mode = false
 virtool-workflow = "7.2.2"
 
 [tool.poetry.group.dev.dependencies]
-maturin = "^1.9.1"
+maturin = "^1.9.2"
 pytest = "^7.4.2"
 pytest-asyncio = "^0.23.8"
 pytest-mock = "^3.14.1"
