@@ -23,7 +23,7 @@ maturin = "^1.9.2"
 pytest = "^7.4.2"
 pytest-asyncio = "^0.23.8"
 pytest-mock = "^3.14.1"
-ruff = "^0.12.5"
+ruff = "^0.12.7"
 syrupy = "^1.7.4"
 
 [tool.pytest.ini_options]
