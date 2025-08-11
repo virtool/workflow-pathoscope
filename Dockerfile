@@ -1,13 +1,3 @@
-FROM debian:bookworm AS bowtie2
-WORKDIR /build
-RUN apt-get update && apt-get install -y build-essential cmake wget zlib1g-dev
-RUN wget https://github.com/BenLangmead/bowtie2/archive/refs/tags/v2.5.4.tar.gz
-RUN tar -xvf v2.5.4.tar.gz
-WORKDIR bowtie2-2.5.4
-RUN make
-RUN mkdir /build/bowtie2
-RUN cp bowtie2* /build/bowtie2/
-
 FROM debian:bookworm AS pigz
 WORKDIR /build
 RUN apt-get update && apt-get install -y gcc make wget zlib1g-dev
@@ -18,7 +8,7 @@ RUN wget https://zlib.net/pigz/pigz-2.8.tar.gz && \
 
 FROM python:3.12.3-bookworm AS deps
 WORKDIR /app
-COPY --from=bowtie2 /build/bowtie2/* /usr/local/bin/
+COPY --from=ghcr.io/virtool/tools:1.0.0 /tools/bowtie2/2.5.4/bowtie* /usr/local/bin/
 COPY --from=ghcr.io/virtool/workflow-tools:2.0.1 /opt/fastqc /opt/fastqc
 COPY --from=ghcr.io/virtool/workflow-tools:2.0.1 /opt/hmmer /opt/hmmer
 COPY --from=ghcr.io/virtool/workflow-tools:2.0.1 /usr/local/bin/pigz /usr/local/bin/
