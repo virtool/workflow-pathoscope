@@ -21,7 +21,6 @@ description = "Interactive shell in test container"
 depends = ["test-setup"]
 run = "./scripts/test-docker.sh --shell"
 
-
 [tasks.test-clean]
 description = "Clean up test Docker resources"
 run = "docker rmi pathoscope:dev 2>/dev/null || true"
