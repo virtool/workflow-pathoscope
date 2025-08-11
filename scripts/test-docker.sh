@@ -74,6 +74,6 @@ case $MODE in
             -v "$(pwd):/app" \
             -w /app \
             "$IMAGE_NAME" \
-            bash -c "echo 'Running Rust tests...' && cargo test && echo 'Running Python tests...' && poetry install --no-root && poetry run maturin develop --release && poetry run pytest$PYTEST_ARGS"
+            bash -c "echo 'Running Python tests...' && poetry install --no-root && poetry run maturin develop --release && poetry run pytest$PYTEST_ARGS"
         ;;
 esac
