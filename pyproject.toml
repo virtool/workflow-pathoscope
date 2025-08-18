@@ -1,7 +1,13 @@
 [project]
 name = "workflow-pathoscope"
-version = "0.0.0"
-description = ""
+version = "0.1.0"
+description = "A workflow for detecting known viruses in Virtool"
+readme = "README.md"
+requires-python = ">=3.12.3,<3.13"
+license = "MIT"
+dependencies = [
+    "virtool-workflow==7.2.2",
+]
 authors = [
     {name="Ian Boyes"},
     {name="Blake Smith"},
@@ -9,22 +15,21 @@ authors = [
     {name="Lilly Roberts"},
     {name="Markus Swoveland"},
 ]
-license = "MIT"
-requires-python = ">=3.12.3,<3.13.0"
 
-[tool.poetry]
-package-mode = false
+[dependency-groups]
+dev = [
+    "maturin>=1.9.2",
+    "pytest>=7.4.2,<8.0.0",
+    "pytest-asyncio<=0.23.8,<1.0.0",
+    "pytest-mock<=3.14,<4.0.0",
+    "ruff>=0.12.7",
+    "syrupy>=4.9.1",
+]
 
-[tool.poetry.dependencies]
-virtool-workflow = "7.2.2"
-
-[tool.poetry.group.dev.dependencies]
-maturin = "^1.9.2"
-pytest = "^7.4.2"
-pytest-asyncio = "^0.23.8"
-pytest-mock = "^3.14.1"
-ruff = "^0.12.7"
-syrupy = "^1.7.4"
+[tool.maturin]
+python-source = "python"
+module-name = "workflow_pathoscope.rust"
+features = ["pyo3/extension-module"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -32,8 +37,3 @@ asyncio_mode = "auto"
 [build-system]
 requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
-
-[tool.maturin]
-python-source = "python"
-module-name = "workflow_pathoscope.rust"
-features = ["pyo3/extension-module"]

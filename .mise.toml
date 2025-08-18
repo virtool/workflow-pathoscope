@@ -1,26 +1,58 @@
 [tools]
 python = "3.12"
-poetry = "latest"
+uv = "latest"
 
-[tasks.test-setup]
-description = "Build base Docker image for testing"
-run = "docker build --target dev -t pathoscope:dev ."
+[vars]
+dev_exec = "docker compose exec dev"
+
+[tasks."dev:start"]
+description = "Start the dev container"
+run = "docker compose up -d dev"
+
+[tasks."dev:stop"]
+description = "Stop the dev container"
+run = "docker compose stop dev"
+
+[tasks."test:rust"]
+description = "Run Rust unit tests in container"
+depends = ["dev:start"]
+run = [
+  "{{vars.dev_exec}} bash -c 'uv sync && uv run maturin develop --release'",
+  '{{vars.dev_exec}} cargo test --lib {{arg(name="cargo_args", var=true, default="")}}'
+]
+
+[tasks."test:python"]
+description = "Run Python/e2e tests in container"
+depends = ["dev:start"]
+run = [
+  "{{vars.dev_exec}} bash -c 'uv sync && uv run maturin develop --release'",
+  '{{vars.dev_exec}} uv run pytest {{arg(name="pytest_args", var=true, default="")}}'
+]
+
+[tasks.clippy]
+description = "Run clippy linter in container"
+run = "{{vars.dev_exec}} cargo clippy -- -W clippy::all"
 
 [tasks.test]
-description = "Run tests in Docker"
-depends = ["test-setup"]
-run = "./scripts/test-docker.sh"
+description = "Run all tests (Rust + Python)"
+depends = ["dev:start"]
+run = [
+  "mise run test:rust",
+  "mise run test:python"
+]
 
-[tasks.test-watch]
-description = "Run tests in watch mode"
-depends = ["test-setup"]
-run = "./scripts/test-docker.sh --watch"
+[tasks.dev]
+description = "Interactive shell in dev container"
+run = "{{vars.dev_exec}} bash"
 
-[tasks.test-shell]
-description = "Interactive shell in test container"
-depends = ["test-setup"]
-run = "./scripts/test-docker.sh --shell"
+[tasks."dev:clean"]
+description = "Clean up all dev containers and volumes"
+run = "docker compose down -v --remove-orphans"
 
-[tasks.test-clean]
-description = "Clean up test Docker resources"
-run = "docker rmi pathoscope:dev 2>/dev/null || true"
+[tasks."dev:rebuild"]
+description = "Force rebuild the dev container"
+run = [
+  "docker compose down dev",
+  "docker compose build --no-cache dev",
+  "docker compose up -d dev"
+]

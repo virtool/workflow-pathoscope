@@ -9,48 +9,49 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/* && \
     apt-get clean
 
-FROM python:3.12.3-bookworm AS poetry
+FROM python:3.12.3-bookworm AS uv
 WORKDIR /app
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-RUN curl -sSL https://install.python-poetry.org | python -
-ENV PATH="/root/.local/bin:/root/.cargo/bin:${PATH}" \
-    POETRY_CACHE_DIR='/tmp/poetry_cache' \
-    POETRY_NO_INTERACTION=1 \
-    POETRY_VIRTUALENVS_IN_PROJECT=1 \
-    POETRY_VIRTUALENVS_CREATE=1
-COPY Cargo.toml Cargo.lock poetry.lock pyproject.toml ./
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libclang-dev && \
+    rm -rf /var/lib/apt/lists/* && \
+    apt-get clean
+ENV PATH="/root/.cargo/bin:/root/.local/bin:${PATH}" \
+    UV_CACHE_DIR='/tmp/uv_cache'
+COPY Cargo.toml Cargo.lock uv.lock pyproject.toml README.md ./
 COPY python/ ./python
 COPY src ./src
-RUN poetry install
-RUN poetry run maturin develop --release
+RUN uv sync
+RUN uv run maturin develop --release
 
 FROM deps AS base
 WORKDIR /app
 ENV VIRTUAL_ENV=/app/.venv \
     PATH="/app/.venv/bin:/opt/fastqc:/opt/hmmer/bin:${PATH}"
 RUN chmod ugo+x /opt/fastqc/fastqc
-COPY --from=poetry /app/.venv /app/.venv
-COPY --from=poetry /app/python /app/python
+COPY --from=uv /app/.venv /app/.venv
+COPY --from=uv /app/python /app/python
 COPY fixtures.py workflow.py VERSION* ./
 
 FROM deps AS dev
 WORKDIR /app
-ENV PATH="/root/.local/bin:/root/.cargo/bin:${PATH}" \
-    POETRY_CACHE_DIR='/tmp/poetry_cache' \
-    POETRY_NO_INTERACTION=1 \
-    POETRY_VIRTUALENVS_IN_PROJECT=1 \
-    POETRY_VIRTUALENVS_CREATE=1
+ENV PATH="/root/.cargo/bin:/root/.local/bin:${PATH}" \
+    UV_CACHE_DIR='/tmp/uv_cache'
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libclang-dev && \
+    rm -rf /var/lib/apt/lists/* && \
+    apt-get clean
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-RUN curl -sSL https://install.python-poetry.org | python -
-# Pre-install common dev tools for faster iterations
-RUN pip install pytest-watch
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
 FROM dev AS test
-COPY Cargo.lock Cargo.toml pyproject.toml poetry.lock ./
+COPY Cargo.lock Cargo.toml pyproject.toml uv.lock ./
+COPY README.md ./
 COPY src ./src
 COPY python ./python
-RUN poetry install
-RUN poetry run maturin develop --release
+RUN uv sync
+RUN uv run maturin develop --release
 COPY example ./example
 COPY tests ./tests
 COPY fixtures.py workflow.py VERSION* ./
