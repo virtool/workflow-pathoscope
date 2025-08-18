@@ -50,6 +50,7 @@ pub struct PathoscopeResults {
 /// pyo3 interface
 fn rust(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PathoscopeResults>()?;
+    m.add_function(wrap_pyfunction!(parse_isolate_scores, m)?)?;
     m.add_function(wrap_pyfunction!(run_expectation_maximization, m)?)?;
     m.add_function(wrap_pyfunction!(run_eliminate_subtraction, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_coverage_from_em_results, m)?)?;
@@ -98,6 +99,65 @@ pub fn run_eliminate_subtraction(
         .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))
 }
 
+
+#[pyfunction]
+/// Parse isolate SAM file and extract high scores for each read
+pub fn parse_isolate_scores(
+    _py: Python,
+    sam_path: String,
+    p_score_cutoff: f64,
+) -> PyResult<HashMap<String, f64>> {
+    use rust_htslib::{bam, bam::Read};
+    
+    let mut reader = bam::Reader::from_path(&sam_path)
+        .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to open SAM file '{}': {}", sam_path, e)))?;
+
+    let mut isolate_high_scores: HashMap<String, f64> = HashMap::new();
+
+    for result in reader.records() {
+        let record = result.map_err(|e| PyErr::new::<PyIOError, _>(format!("Error reading record: {}", e)))?;
+
+        // Skip unmapped reads
+        if record.is_unmapped() {
+            continue;
+        }
+
+        // Get read ID (qname)
+        let read_id = std::str::from_utf8(record.qname())
+            .map_err(|e| PyErr::new::<PyIOError, _>(format!("Invalid UTF-8 in read ID: {}", e)))?
+            .to_string();
+
+        // Get read length
+        let read_length = record.seq_len();
+
+        // Get alignment score from AS:i: auxiliary field
+        let as_score = match record.aux(b"AS") {
+            Ok(aux) => match aux {
+                rust_htslib::bam::record::Aux::I32(score) => score as f64,
+                rust_htslib::bam::record::Aux::I8(score) => score as f64,
+                rust_htslib::bam::record::Aux::I16(score) => score as f64,
+                rust_htslib::bam::record::Aux::U8(score) => score as f64,
+                rust_htslib::bam::record::Aux::U16(score) => score as f64,
+                rust_htslib::bam::record::Aux::U32(score) => score as f64,
+                _ => continue, // Skip records with unexpected AS type
+            },
+            Err(_) => continue, // Skip records without AS field
+        };
+
+        // Calculate total score (AS score + read length, matching original logic)
+        let total_score = as_score + read_length as f64;
+
+        // Apply score cutoff
+        if total_score >= p_score_cutoff {
+            // Track highest score for this read
+            if total_score > *isolate_high_scores.get(&read_id).unwrap_or(&0.0) {
+                isolate_high_scores.insert(read_id, total_score);
+            }
+        }
+    }
+
+    Ok(isolate_high_scores)
+}
 
 #[pyfunction]
 /// Entry point for expectation_maximization

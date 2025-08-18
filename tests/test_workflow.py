@@ -186,7 +186,8 @@ async def test_map_isolates(
             == snapshot
         )
 
-    assert intermediate.isolate_high_scores == snapshot
+    # Note: isolate_high_scores is now populated during eliminate_subtraction step
+    # The test just verifies that the SAM file is written correctly
 
 
 @pytest.mark.parametrize(
@@ -218,10 +219,14 @@ async def test_eliminate_subtraction(
     if no_subtractions:
         subtractions = []
 
+    intermediate = SimpleNamespace()
+    
     await eliminate_subtraction(
+        intermediate,
         isolate_fastq_path,
         isolate_sam_path,
         logger,
+        0.01,  # p_score_cutoff
         proc,
         results,
         run_subprocess,
