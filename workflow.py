@@ -103,8 +103,6 @@ async def map_default_isolates(
             proc,
             "--local",
             "--no-unal",
-            "--no-hd",
-            "--no-sq",
             "--score-min",
             "L,20,1.0",
             "-N",
@@ -167,7 +165,17 @@ async def map_isolates(
         async def stdout_handler(line: bytes):
             line = line.decode()
 
-            if not line or line[0] in BAD_FIRST_SAM_CHARACTERS:
+            if not line or line.strip() == "":
+                return
+
+            # Write header lines directly to preserve SAM structure
+            if line[0] == "@":
+                await f.write(f"{line}")
+                await f.flush()
+                return
+
+            # Skip comment lines
+            if line[0] == "#":
                 return
 
             sam_line = SamLine(line)
@@ -186,6 +194,7 @@ async def map_isolates(
                 isolate_high_scores[sam_line.read_id] = sam_line.score
 
             await f.write(f"{line}")
+            await f.flush()
 
         command = [
             "bowtie2",

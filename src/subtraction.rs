@@ -1,7 +1,9 @@
 use crate::parse_sam::parse_sam;
+use rust_htslib::{bam, bam::Read};
+use rust_htslib::bam::Format;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::Path;
 use thiserror::Error;
 
@@ -15,6 +17,12 @@ pub enum SubtractionError {
     
     #[error("Failed to parse SAM file: {0}")]
     SamParse(String),
+    
+    #[error("Failed to read BAM/SAM record: {source}")]
+    BamRead { source: rust_htslib::errors::Error },
+    
+    #[error("Failed to write BAM/SAM record: {source}")]
+    BamWrite { source: rust_htslib::errors::Error },
     
     #[error("Insufficient fields in SAM line")]
     InsufficientFields,
@@ -162,46 +170,78 @@ pub fn eliminate_subtraction(
     Ok(())
 }
 
-/// Process the isolate SAM file and write filtered output
+/// Process the isolate SAM file and write filtered output using rust-htslib
 fn process_isolate_file(
     input_path: &str,
     output_path: &str,
     processor: &SubtractionProcessor,
 ) -> Result<HashSet<String>, SubtractionError> {
-    // Open input file
-    let file = File::open(input_path)
-        .map_err(|e| SubtractionError::FileOpen {
-            path: input_path.to_string(),
-            source: e,
-        })?;
-    let lines = BufReader::new(file).lines();
-
-    // Create output file
-    let mut sam_file = File::create(output_path)
-        .map_err(|e| SubtractionError::FileCreate {
-            path: output_path.to_string(),
-            source: e,
-        })?;
+    // Open input file with rust-htslib reader
+    let mut reader = bam::Reader::from_path(input_path)
+        .map_err(|e| SubtractionError::BamRead { source: e })?;
+    
+    // Get the header from input to preserve SQ lines and other headers
+    let header_view = reader.header().clone();
+    
+    // Create a new Header from the HeaderView
+    let header = bam::Header::from_template(&header_view);
+    
+    // Create output writer with the same header
+    let mut writer = bam::Writer::from_path(output_path, &header, Format::Sam)
+        .map_err(|e| SubtractionError::BamWrite { source: e })?;
 
     let mut subtracted_read_ids = HashSet::new();
 
-    // Process each line
-    for line in lines {
-        let l = line.map_err(|e| SubtractionError::LineRead { source: e })?;
-
-        // Use processor to determine action
-        match processor.process_sam_line(&l)? {
-            Some(ProcessResult::Keep(output_line)) => {
-                writeln!(&mut sam_file, "{}", output_line)
-                    .map_err(|e| SubtractionError::WriteOutput { source: e })?;
-            }
-            Some(ProcessResult::Eliminate(read_id)) => {
-                subtracted_read_ids.insert(read_id);
-            }
-            None => {
-                // Skip this line (empty, unmapped, malformed)
-                continue;
-            }
+    // Process each record
+    for result in reader.records() {
+        let record = result.map_err(|e| SubtractionError::BamRead { source: e })?;
+        
+        // Skip unmapped reads
+        if record.is_unmapped() {
+            continue;
+        }
+        
+        // Get read ID
+        let read_id = std::str::from_utf8(record.qname())
+            .map_err(|_| SubtractionError::InsufficientFields)?
+            .to_string();
+        
+        // Get reference name
+        let ref_name = if record.tid() >= 0 {
+            std::str::from_utf8(header_view.tid2name(record.tid() as u32))
+                .unwrap_or("*")
+        } else {
+            "*"
+        };
+        
+        // Skip if reference is unmapped
+        if ref_name == "*" {
+            continue;
+        }
+        
+        // Calculate alignment score (AS score + read length)
+        let read_length = record.seq_len() as f32;
+        let as_score = match record.aux(b"AS") {
+            Ok(aux) => match aux {
+                rust_htslib::bam::record::Aux::I32(score) => score as f32,
+                rust_htslib::bam::record::Aux::I8(score) => score as f32,
+                rust_htslib::bam::record::Aux::I16(score) => score as f32,
+                rust_htslib::bam::record::Aux::U8(score) => score as f32,
+                rust_htslib::bam::record::Aux::U16(score) => score as f32,
+                rust_htslib::bam::record::Aux::U32(score) => score as f32,
+                _ => 0.0,
+            },
+            Err(_) => 0.0,
+        };
+        let isolate_score = as_score + read_length;
+        
+        // Check if this read should be eliminated
+        if processor.should_eliminate(&read_id, isolate_score) {
+            subtracted_read_ids.insert(read_id);
+        } else {
+            // Write the record to output
+            writer.write(&record)
+                .map_err(|e| SubtractionError::BamWrite { source: e })?;
         }
     }
 
