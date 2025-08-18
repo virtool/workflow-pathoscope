@@ -14,28 +14,42 @@ to eliminate contaminating reads (usually host).
 5. **Reassignment**. Use Pathoscope 2.0 to statistically reassign read weight to the most likely reference
 genomes of origin. Minimize the impact of multi-mapping and similar reference genomes on the analysis.
 
+## Development
+
+### Container Infrastructure
+
+The project uses Docker containers for development and testing to ensure consistent environments. The development container (`dev` service) automatically starts when running tests and includes all necessary dependencies including Rust toolchain, Python, and bioinformatics tools (bowtie2, HMMER, FastQC, pigz).
+
+The container mounts the project directory and uses persistent volumes for build artifacts (`.venv`, `target`, and UV cache) to speed up subsequent builds. All test commands (`mise run test`, `mise run test:rust`, `mise run test:python`) automatically ensure the development container is running via the `dev:start` dependency. You can also interact with the container directly using `mise run dev` for an interactive shell, or manage it with `mise run dev:stop`, `mise run dev:clean`, and `mise run dev:rebuild`.
+
+### Testing
+
+Run all tests (Rust + Python):
+
+```bash
+mise run test
+```
+
+Run only Rust unit tests:
+
+```bash
+mise run test:rust
+```
+
+Run only Python/e2e tests:
+
+```bash
+mise run test:python
+```
+
+Run clippy for linting:
+
+```bash
+mise run clippy
+```
+
 ## Contributing
 
 ### Commits
 
-All commits must follow the [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0) specification.
-
-These standardized commit messages are used to automatically publish releases using [`semantic-release`](https://semantic-release.gitbook.io/semantic-release)
-after commits are merged to `main` from successful PRs.
-
-**Example**
-
-```text
-feat: add API support for assigning labels to existing samples
-```
-
-Descriptive bodies and footers are required where necessary to describe the impact of the commit. Use bullets where appropriate.
-
-Additional Requirements
-1. **Write in the imperative**. For example, _"fix bug"_, not _"fixed bug"_ or _"fixes bug"_.
-2. **Don't refer to issues or code reviews**. For example, don't write something like this: _"make style changes requested in review"_.
-Instead, _"update styles to improve accessibility"_.
-3. **Commits are not your personal journal**. For example, don't write something like this: _"got server running again"_
-or _"oops. fixed my code smell"_.
-
-From Tim Pope: [A Note About Git Commit Messages](https://tbaggery.com/2008/04/19/a-note-about-git-commit-messages.html)
+All commits must follow the [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0) specification. See the [Virtool development documentation](https://dev.virtool.ca/en/latest/commits_releases.html) for detailed commit guidelines and examples.
