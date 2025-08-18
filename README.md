@@ -42,6 +42,14 @@ Run only Python/e2e tests:
 mise run test:python
 ```
 
+Pass arguments to pytest:
+
+```bash
+mise run test:python -- -vv
+mise run test:python -- --snapshot-update
+mise run test:python -- tests/test_workflow.py::test_map_isolates
+```
+
 Run clippy for linting:
 
 ```bash

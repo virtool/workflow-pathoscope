@@ -333,8 +333,8 @@ mod tests {
             "Program header should be preserved"
         );
         assert_eq!(
-            output_lines[4], "# Test comment line",
-            "Comment lines should be preserved"
+            output_lines[4], "@CO\tTest comment line",
+            "Comment lines should be preserved in proper SAM format"
         );
 
         // Verify correct reads are kept

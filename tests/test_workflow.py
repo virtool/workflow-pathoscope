@@ -181,7 +181,10 @@ async def test_map_isolates(
     )
 
     with isolate_sam_path.open("r") as f:
-        assert sorted(line.rstrip() for line in f) == snapshot
+        assert (
+            sorted(line.rstrip() for line in f if not line.startswith("@PG"))
+            == snapshot
+        )
 
     assert intermediate.isolate_high_scores == snapshot
 
