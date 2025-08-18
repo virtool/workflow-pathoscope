@@ -3,7 +3,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import Any, Generator
 
-from workflow_pathoscope.rust import run_expectation_maximization
+from workflow_pathoscope.rust import run_expectation_maximization, PathoscopeResults
 
 
 class SamLine:
@@ -62,26 +62,6 @@ class SamLine:
         return self.fields[2]
 
 
-def calculate_coverage(sam_path: Path, ref_lengths: list[str, int]):
-    coverage_dict = {}
-    pos_length_list = []
-
-    for line in parse_sam(sam_path):
-        coverage_dict[line.ref_id] = [0] * ref_lengths[line.ref_id]
-        pos_length_list.append((line.ref_id, line.position, line.read_length))
-
-    for ref_id, pos, length in pos_length_list:
-        start_index = pos - 1
-
-        for i in range(start_index, start_index + length):
-            try:
-                coverage_dict[ref_id][i] += 1
-            except IndexError:
-                pass
-
-    return coverage_dict
-
-
 def find_sam_align_score(fields: list[Any]) -> float:
     """Find the Bowtie2 alignment score for the given split line (``fields``).
 
@@ -131,31 +111,27 @@ def parse_sam(
 
 def write_report(
     path,
-    pi,
-    refs,
-    read_count,
-    init_pi,
-    best_hit_initial,
-    best_hit_initial_reads,
-    best_hit_final,
-    best_hit_final_reads,
-    level_1_initial,
-    level_2_initial,
-    level_1_final,
-    level_2_final,
+    pathoscope_results: PathoscopeResults,
 ):
+    """Write pathoscope results to TSV report and return processed results dict.
+
+    Float values are rounded to 10 decimal places for consistent precision
+    across Rust/Python computations.
+    """
+    read_count = len(pathoscope_results.reads)
+
     tmp = zip(
-        pi,
-        refs,
-        init_pi,
-        best_hit_initial,
-        best_hit_initial_reads,
-        best_hit_final,
-        best_hit_final_reads,
-        level_1_initial,
-        level_2_initial,
-        level_1_final,
-        level_2_final,
+        pathoscope_results.pi,
+        pathoscope_results.refs,
+        pathoscope_results.init_pi,
+        pathoscope_results.best_hit_initial,
+        pathoscope_results.best_hit_initial_reads,
+        pathoscope_results.best_hit_final,
+        pathoscope_results.best_hit_final_reads,
+        pathoscope_results.level_1_initial,
+        pathoscope_results.level_2_initial,
+        pathoscope_results.level_1_final,
+        pathoscope_results.level_2_final,
     )
 
     tmp = sorted(tmp, reverse=True)
@@ -178,7 +154,7 @@ def write_report(
                 "Total Number of Aligned Reads:",
                 read_count,
                 "Total Number of Mapped Genomes:",
-                len(refs),
+                len(pathoscope_results.refs),
             ],
         )
 
@@ -223,17 +199,17 @@ def write_report(
         else:
             results[ref_id] = {
                 "final": {
-                    "pi": x1[i],
-                    "best": x6[i],
-                    "high": x10[i],
-                    "low": x11[i],
+                    "pi": round(x1[i], 10),
+                    "best": round(x6[i], 10),
+                    "high": round(x10[i], 10),
+                    "low": round(x11[i], 10),
                     "reads": int(x7[i]),
                 },
                 "initial": {
-                    "pi": x3[i],
-                    "best": x4[i],
-                    "high": x8[i],
-                    "low": x9[i],
+                    "pi": round(x3[i], 10),
+                    "best": round(x4[i], 10),
+                    "high": round(x8[i], 10),
+                    "low": round(x9[i], 10),
                     "reads": int(x5[i]),
                 },
             }
@@ -241,18 +217,21 @@ def write_report(
     return results
 
 
-def run_pathoscope(sam_path: Path, reassigned_path: Path, p_score_cutoff: float):
+def run_pathoscope(
+    sam_path: Path,
+    p_score_cutoff: float,
+    ref_lengths: dict[str, int],
+):
     """Run Pathoscope on the SAM file at ``sam_path`` with the given ``p_score_cutoff``.
 
-    The output is a reassigned SAM file at ``reassigned_path``. The SAM file can be
-    used to generate a report with :func:`write_report`.
+    Returns PathoscopeResults containing EM results and coverage data.
 
     :param sam_path: The path to the SAM file.
-    :param reassigned_path: The path to the reassigned SAM file.
     :param p_score_cutoff: The minimum allowed ``p_score`` for an alignment.
+    :param ref_lengths: Dictionary mapping reference IDs to their lengths.
     """
     return run_expectation_maximization(
         str(sam_path),
-        str(reassigned_path),
         p_score_cutoff,
+        ref_lengths,
     )

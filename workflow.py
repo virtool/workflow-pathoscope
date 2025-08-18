@@ -17,7 +17,6 @@ from virtool_workflow.runtime.run_subprocess import RunSubprocess
 
 from workflow_pathoscope.utils import (
     SamLine,
-    calculate_coverage,
     run_pathoscope,
     write_report,
 )
@@ -272,8 +271,6 @@ async def eliminate_subtraction(
                 "bowtie2",
                 "--local",
                 "--no-unal",
-                "--no-hd",
-                "--no-sq",
                 "-N",
                 "0",
                 "-p",
@@ -304,7 +301,7 @@ async def eliminate_subtraction(
             current_sam_input_path,
         )
 
-        async with aiofiles.open("subtracted_read_ids.txt", "r") as f:
+        async with aiofiles.open(work_path / "subtracted_read_ids.txt", "r") as f:
             subtracted_reads = {str(line).strip("@\n") async for line in f}
 
         subtracted_count += len(subtracted_reads)
@@ -349,35 +346,17 @@ async def reassignment(
     Tab-separated output is written to ``pathoscope.tsv``. The results are also parsed
     and saved to `intermediate.coverage`.
     """
-    reassigned_path = work_path / "reassigned.sam"
-
     logger.info(
         "running pathoscope",
         subtracted_path=subtracted_sam_path,
-        reassigned_path=reassigned_path,
     )
 
-    (
-        best_hit_initial_reads,
-        best_hit_initial,
-        level_1_initial,
-        level_2_initial,
-        best_hit_final_reads,
-        best_hit_final,
-        level_1_final,
-        level_2_final,
-        init_pi,
-        pi,
-        refs,
-        reads,
-    ) = await asyncio.to_thread(
+    pathoscope_results = await asyncio.to_thread(
         run_pathoscope,
         subtracted_sam_path,
-        reassigned_path,
         p_score_cutoff,
+        intermediate.lengths,
     )
-
-    read_count = len(reads)
 
     report_path = work_path / "report.tsv"
 
@@ -386,29 +365,10 @@ async def reassignment(
     report = await asyncio.to_thread(
         write_report,
         report_path,
-        pi,
-        refs,
-        read_count,
-        init_pi,
-        best_hit_initial,
-        best_hit_initial_reads,
-        best_hit_final,
-        best_hit_final_reads,
-        level_1_initial,
-        level_2_initial,
-        level_1_final,
-        level_2_final,
+        pathoscope_results,
     )
 
     await analysis.upload_file(report_path, "tsv")
-
-    logger.info("calculating coverage")
-
-    intermediate.coverage = await asyncio.to_thread(
-        calculate_coverage,
-        reassigned_path,
-        intermediate.lengths,
-    )
 
     logger.info("preparing hits")
 
@@ -423,7 +383,7 @@ async def reassignment(
         hit["otu"] = {"id": otu_id, "version": index.manifest[otu_id]}
 
         # Get the coverage for the sequence.
-        hit_coverage = intermediate.coverage[sequence_id]
+        hit_coverage = pathoscope_results.coverage[sequence_id]
 
         hit["align"] = hit_coverage
 
@@ -435,4 +395,6 @@ async def reassignment(
 
         hits.append(hit)
 
-    await analysis.upload_result({**results, "read_count": read_count, "hits": hits})
+    await analysis.upload_result(
+        {**results, "read_count": len(pathoscope_results.reads), "hits": hits}
+    )

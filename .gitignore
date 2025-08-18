@@ -4,6 +4,7 @@
 .vscode
 *.pyc
 __pycache__
-subtracted_read_ids.txt
-target
 CLAUDE.md
+Pathoscope
+rust.abi3.so
+target

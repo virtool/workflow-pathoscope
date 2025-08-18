@@ -1,11 +1,10 @@
 import json
-import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 from syrupy import SnapshotAssertion
 
 from workflow_pathoscope.utils import (
-    calculate_coverage,
     find_sam_align_score,
     write_report,
 )
@@ -21,36 +20,26 @@ def test_write_report(
     with open(Path(__file__).parent / "report_input.json") as f:
         data = json.load(f)
 
-    write_report(report_path, **data)
+    # Create a mock PathoscopeResults object from the test data
+    pathoscope_results = SimpleNamespace(
+        best_hit_initial=data["best_hit_initial"],
+        best_hit_initial_reads=data["best_hit_initial_reads"],
+        best_hit_final=data["best_hit_final"],
+        best_hit_final_reads=data["best_hit_final_reads"],
+        init_pi=data["init_pi"],
+        pi=data["pi"],
+        refs=data["refs"],
+        reads=["dummy_read"] * data["read_count"],  # Create dummy reads list
+        level_1_initial=data["level_1_initial"],
+        level_2_initial=data["level_2_initial"],
+        level_1_final=data["level_1_final"],
+        level_2_final=data["level_2_final"],
+        coverage={}  # Not used in write_report
+    )
+
+    write_report(report_path, pathoscope_results)
 
     assert open(report_path).read() == snapshot
-
-
-def test_calculate_coverage(example_path: Path, tmp_path):
-    ref_lengths = {}
-
-    sam_path = tmp_path / "mapped.sam"
-
-    shutil.copyfile(example_path / "to_isolates.sam", sam_path)
-
-    with open(sam_path) as handle:
-        for line in handle:
-            if line[0:3] == "@SQ":
-                ref_id = None
-                length = None
-
-                for field in line.rstrip().split("\t"):
-                    if "SN:" in field:
-                        ref_id = field.split(":")[1]
-                    if "LN:" in field:
-                        length = int(field.split(":")[1])
-
-                assert ref_id and length
-                assert ref_id not in ref_lengths
-
-                ref_lengths[ref_id] = length
-
-    calculate_coverage(sam_path, ref_lengths)
 
 
 def test_find_sam_align_score(sam_line, snapshot: SnapshotAssertion):

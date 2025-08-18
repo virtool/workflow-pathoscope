@@ -246,6 +246,7 @@ async def test_pathoscope(
     analysis: WFAnalysis,
     example_path: Path,
     index: WFIndex,
+    mocker,
     ref_lengths,
     snapshot: SnapshotAssertion,
     work_path: Path,
@@ -259,6 +260,9 @@ async def test_pathoscope(
 
     logger = get_logger("test")
 
+    # Mock upload_result to capture the hits
+    upload_result_mock = mocker.patch.object(analysis, "upload_result")
+
     await reassignment(
         analysis,
         index,
@@ -269,6 +273,31 @@ async def test_pathoscope(
         subtracted_sam_path,
         work_path,
     )
+
+    # Verify upload_result was called
+    upload_result_mock.assert_called_once()
+
+    # Extract the hits from the call
+    call_args = upload_result_mock.call_args[0][0]
+    hits = call_args["hits"]
+
+    # Verify each hit has the expected structure
+    for hit in hits:
+        assert "id" in hit
+        assert "otu" in hit
+        assert "id" in hit["otu"]
+        assert "version" in hit["otu"]
+        assert "align" in hit
+        assert "coverage" in hit
+        assert "depth" in hit
+        assert "final" in hit
+        assert "initial" in hit
+        assert isinstance(hit["align"], list)
+        assert isinstance(hit["coverage"], float)
+        assert isinstance(hit["depth"], (int, float))
+
+    # Snapshot test for the hits structure
+    assert hits == snapshot
 
     report: dict[str, list] = {}
 

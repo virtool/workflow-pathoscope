@@ -1,3 +1,38 @@
-.github
-subtracted_read_ids.txt
+# Git
+.git
+.gitignore
+
+# Build artifacts (handled by named volumes)
+.venv
 target
+node_modules
+
+# IDE and editor files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+.cache
+subtracted_read_ids.txt
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Rust artifacts
+rust.abi3.so
+
+# Docker files (avoid recursion)
+Dockerfile
+.dockerignore
