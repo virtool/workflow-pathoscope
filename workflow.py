@@ -191,8 +191,6 @@ async def map_isolates(
             "bowtie2",
             "-p",
             str(proc),
-            "--no-hd",
-            "--no-sq",
             "--no-unal",
             "--local",
             "--score-min",
