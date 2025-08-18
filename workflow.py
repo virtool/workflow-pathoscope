@@ -20,7 +20,7 @@ from workflow_pathoscope.utils import (
     run_pathoscope,
     write_report,
 )
-from workflow_pathoscope.rust import run_eliminate_subtraction
+from workflow_pathoscope.rust import run_eliminate_subtraction, parse_isolate_scores
 
 BAD_FIRST_SAM_CHARACTERS = {"\n", "@", "#"}
 
@@ -158,76 +158,40 @@ async def map_isolates(
     sample: WFSample,
 ):
     """Map sample reads to the all isolate index."""
-    isolate_high_scores = defaultdict(float)
+    command = [
+        "bowtie2",
+        "-p",
+        str(proc),
+        "--no-unal",
+        "--local",
+        "--score-min",
+        "L,20,1.0",
+        "-N",
+        "0",
+        "-L",
+        "15",
+        "-k",
+        "100",
+        "--al",
+        isolate_fastq_path,
+        "-x",
+        isolate_index_path,
+        "-U",
+        ",".join(str(path) for path in sample.read_paths),
+        "-S",
+        isolate_sam_path,
+    ]
 
-    async with aiofiles.open(isolate_sam_path, "w") as f:
-
-        async def stdout_handler(line: bytes):
-            line = line.decode()
-
-            if not line or line.strip() == "":
-                return
-
-            # Write header lines directly to preserve SAM structure
-            if line[0] == "@":
-                await f.write(f"{line}")
-                await f.flush()
-                return
-
-            # Skip comment lines
-            if line[0] == "#":
-                return
-
-            sam_line = SamLine(line)
-
-            if sam_line.unmapped:
-                return
-
-            if sam_line.ref_id == "*":
-                return
-
-            # Skip if the p_score does not meet the minimum cutoff.
-            if sam_line.score < p_score_cutoff:
-                return
-
-            if sam_line.score > isolate_high_scores[sam_line.read_id]:
-                isolate_high_scores[sam_line.read_id] = sam_line.score
-
-            await f.write(f"{line}")
-            await f.flush()
-
-        command = [
-            "bowtie2",
-            "-p",
-            str(proc),
-            "--no-unal",
-            "--local",
-            "--score-min",
-            "L,20,1.0",
-            "-N",
-            "0",
-            "-L",
-            "15",
-            "-k",
-            "100",
-            "--al",
-            isolate_fastq_path,
-            "-x",
-            isolate_index_path,
-            "-U",
-            ",".join(str(path) for path in sample.read_paths),
-        ]
-
-        await run_subprocess(command, stdout_handler=stdout_handler)
-
-    intermediate.isolate_high_scores = dict(isolate_high_scores)
+    await run_subprocess(command)
 
 
 @step
 async def eliminate_subtraction(
+    intermediate: SimpleNamespace,
     isolate_fastq_path: Path,
     isolate_sam_path: Path,
     logger,
+    p_score_cutoff: float,
     proc: int,
     results: dict[str, Any],
     run_subprocess: RunSubprocess,
@@ -243,8 +207,11 @@ async def eliminate_subtraction(
     read from the SAM from the previous step and write the reduced one to
     `subtracted_sam_path`.
 
+    :param intermediate: intermediate data storage for the workflow
     :param isolate_fastq_path: path to the FASTQ file containing reads that aligned to the isolates
     :param isolate_sam_path: path to the SAM file of alignments to the isolates
+    :param logger: workflow logger
+    :param p_score_cutoff: minimum p_score cutoff for alignments
     :param proc: number of processors to use
     :param results: the results to send to the api when the workflow is complete
     :param run_subprocess: runs a subprocess with error handling
@@ -252,6 +219,15 @@ async def eliminate_subtraction(
     :param subtracted_sam_path: path to the SAM file with subtraction-mapped reads removed
     :param work_path: path to the workflow working directory
     """
+    # Parse isolate scores from the SAM file
+    logger.info("Parsing isolate scores from SAM file")
+    intermediate.isolate_high_scores = await asyncio.to_thread(
+        parse_isolate_scores,
+        str(isolate_sam_path),
+        p_score_cutoff,
+    )
+    logger.info("Found isolate scores", count=len(intermediate.isolate_high_scores))
+
     if len(subtractions) == 0:
         logger.info("No subtractions to eliminate reads against. Skipping step.")
         await asyncio.to_thread(shutil.copyfile, isolate_sam_path, subtracted_sam_path)
