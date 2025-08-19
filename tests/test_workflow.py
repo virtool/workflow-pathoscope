@@ -1,4 +1,5 @@
 import shutil
+import pysam
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -153,8 +154,6 @@ async def test_map_isolates(
     snapshot: SnapshotAssertion,
     work_path: Path,
 ):
-    import pysam
-
     for path in (example_path / "index").iterdir():
         if "reference" in path.name:
             shutil.copyfile(
@@ -162,22 +161,17 @@ async def test_map_isolates(
                 work_path / path.name.replace("reference", "isolates"),
             )
 
-    intermediate = SimpleNamespace(isolate_high_scores={})
-
     isolate_fastq_path = work_path / "mapped.fq"
     isolate_index_path = work_path / "isolates"
     isolate_bam_path = work_path / "to_isolates.bam"
 
     proc = 1
-    p_score = 0.01
 
     await map_isolates(
-        intermediate,
         isolate_fastq_path,
         isolate_index_path,
         isolate_bam_path,
         proc,
-        p_score,
         run_subprocess,
         sample,
     )

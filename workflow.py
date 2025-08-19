@@ -156,12 +156,10 @@ async def build_isolate_index(
 
 @step
 async def map_isolates(
-    intermediate: SimpleNamespace,
     isolate_fastq_path: Path,
     isolate_index_path: Path,
     isolate_bam_path: Path,
     proc: int,
-    p_score_cutoff: float,
     run_subprocess: RunSubprocess,
     sample: WFSample,
 ):
@@ -175,13 +173,13 @@ async def map_isolates(
 
     samtools_cmd = f"samtools view -bS - -o {isolate_bam_path}"
 
-    command = [
-        "bash",
-        "-c",
-        f"{bowtie_cmd} | {samtools_cmd}",
-    ]
-
-    await run_subprocess(command)
+    await run_subprocess(
+        [
+            "bash",
+            "-c",
+            f"{bowtie_cmd} | {samtools_cmd}",
+        ]
+    )
 
 
 @step
