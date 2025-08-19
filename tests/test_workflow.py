@@ -1,4 +1,5 @@
 import shutil
+import pysam
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -126,6 +127,7 @@ async def test_map_default_isolates(
     index: WFIndex,
     run_subprocess,
     sample: WFSample,
+    work_path: Path,
     snapshot: SnapshotAssertion,
 ):
     intermediate = SimpleNamespace(to_otus=set())
@@ -138,7 +140,6 @@ async def test_map_default_isolates(
         index,
         2,
         0.01,
-        run_subprocess,
         sample,
     )
 
@@ -153,8 +154,6 @@ async def test_map_isolates(
     snapshot: SnapshotAssertion,
     work_path: Path,
 ):
-    import pysam
-
     for path in (example_path / "index").iterdir():
         if "reference" in path.name:
             shutil.copyfile(
@@ -162,22 +161,17 @@ async def test_map_isolates(
                 work_path / path.name.replace("reference", "isolates"),
             )
 
-    intermediate = SimpleNamespace(isolate_high_scores={})
-
     isolate_fastq_path = work_path / "mapped.fq"
     isolate_index_path = work_path / "isolates"
     isolate_bam_path = work_path / "to_isolates.bam"
 
     proc = 1
-    p_score = 0.01
 
     await map_isolates(
-        intermediate,
         isolate_fastq_path,
         isolate_index_path,
         isolate_bam_path,
         proc,
-        p_score,
         run_subprocess,
         sample,
     )
@@ -188,7 +182,7 @@ async def test_map_isolates(
         for read in bam:
             # Convert each record to SAM format text (excluding header)
             lines.append(read.to_string())
-        
+
         assert sorted(lines) == snapshot
 
     # Note: isolate_high_scores is now populated during eliminate_subtraction step
@@ -215,9 +209,16 @@ async def test_eliminate_subtraction(
     logger = get_logger("test")
 
     # Convert example SAM to BAM for this test
-    await run_subprocess([
-        "samtools", "view", "-bS", "-o", str(isolate_bam_path), str(example_path / "to_isolates.sam")
-    ])
+    await run_subprocess(
+        [
+            "samtools",
+            "view",
+            "-bS",
+            "-o",
+            str(isolate_bam_path),
+            str(example_path / "to_isolates.sam"),
+        ]
+    )
     shutil.copyfile(example_path / "to_isolates.fq", isolate_fastq_path)
 
     proc = 2
@@ -228,7 +229,7 @@ async def test_eliminate_subtraction(
         subtractions = []
 
     intermediate = SimpleNamespace()
-    
+
     await eliminate_subtraction(
         intermediate,
         isolate_fastq_path,
