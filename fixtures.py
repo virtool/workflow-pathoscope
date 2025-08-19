@@ -37,8 +37,8 @@ def isolate_index_path(isolate_path: Path):
 
 
 @fixture
-def isolate_sam_path(isolate_path: Path):
-    return isolate_path / "to_isolates.sam"
+def isolate_bam_path(isolate_path: Path):
+    return isolate_path / "to_isolates.bam"
 
 
 @fixture
