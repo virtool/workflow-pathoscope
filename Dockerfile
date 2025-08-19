@@ -1,9 +1,10 @@
 FROM python:3.12.3-bookworm AS deps
 WORKDIR /app
-COPY --from=ghcr.io/virtool/tools:1.0.0 /tools/bowtie2/2.5.4/bowtie* /usr/local/bin/
-COPY --from=ghcr.io/virtool/tools:1.0.0 /tools/hmmer/3.2.1 /opt/hmmer
-COPY --from=ghcr.io/virtool/tools:1.0.0 /tools/fastqc/0.11.9 /opt/fastqc
-COPY --from=ghcr.io/virtool/tools:1.0.0 /tools/pigz/2.8/pigz /usr/local/bin/
+COPY --from=ghcr.io/virtool/tools:1.1.0 /tools/bowtie2/2.5.4/bowtie* /usr/local/bin/
+COPY --from=ghcr.io/virtool/tools:1.1.0 /tools/hmmer/3.2.1 /opt/hmmer
+COPY --from=ghcr.io/virtool/tools:1.1.0 /tools/fastqc/0.11.9 /opt/fastqc
+COPY --from=ghcr.io/virtool/tools:1.1.0 /tools/pigz/2.8/pigz /usr/local/bin/
+COPY --from=ghcr.io/virtool/tools:1.1.0 /tools/samtools/1.22.1/bin/samtools /usr/local/bin/
 RUN apt-get update && \
     apt-get install -y --no-install-recommends default-jre && \
     rm -rf /var/lib/apt/lists/* && \

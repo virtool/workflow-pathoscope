@@ -153,6 +153,8 @@ async def test_map_isolates(
     snapshot: SnapshotAssertion,
     work_path: Path,
 ):
+    import pysam
+
     for path in (example_path / "index").iterdir():
         if "reference" in path.name:
             shutil.copyfile(
@@ -164,7 +166,7 @@ async def test_map_isolates(
 
     isolate_fastq_path = work_path / "mapped.fq"
     isolate_index_path = work_path / "isolates"
-    isolate_sam_path = work_path / "to_isolates.sam"
+    isolate_bam_path = work_path / "to_isolates.bam"
 
     proc = 1
     p_score = 0.01
@@ -173,18 +175,21 @@ async def test_map_isolates(
         intermediate,
         isolate_fastq_path,
         isolate_index_path,
-        isolate_sam_path,
+        isolate_bam_path,
         proc,
         p_score,
         run_subprocess,
         sample,
     )
 
-    with isolate_sam_path.open("r") as f:
-        assert (
-            sorted(line.rstrip() for line in f if not line.startswith("@PG"))
-            == snapshot
-        )
+    # Convert BAM to text for snapshot comparison
+    with pysam.AlignmentFile(isolate_bam_path, "rb") as bam:
+        lines = []
+        for read in bam:
+            # Convert each record to SAM format text (excluding header)
+            lines.append(read.to_string())
+        
+        assert sorted(lines) == snapshot
 
     # Note: isolate_high_scores is now populated during eliminate_subtraction step
     # The test just verifies that the SAM file is written correctly
@@ -204,12 +209,15 @@ async def test_eliminate_subtraction(
     work_path: Path,
 ):
     isolate_fastq_path = work_path / "to_isolates.fq"
-    isolate_sam_path = work_path / "to_isolates.sam"
+    isolate_bam_path = work_path / "to_isolates.bam"
     subtracted_path = work_path / "subtracted.sam"
 
     logger = get_logger("test")
 
-    shutil.copyfile(example_path / "to_isolates.sam", isolate_sam_path)
+    # Convert example SAM to BAM for this test
+    await run_subprocess([
+        "samtools", "view", "-bS", "-o", str(isolate_bam_path), str(example_path / "to_isolates.sam")
+    ])
     shutil.copyfile(example_path / "to_isolates.fq", isolate_fastq_path)
 
     proc = 2
@@ -224,7 +232,7 @@ async def test_eliminate_subtraction(
     await eliminate_subtraction(
         intermediate,
         isolate_fastq_path,
-        isolate_sam_path,
+        isolate_bam_path,
         logger,
         0.01,  # p_score_cutoff
         proc,
@@ -245,7 +253,17 @@ async def test_eliminate_subtraction(
     with open(work_path / "subtracted.sam") as f:
         for line in f:
             split = line.split("\t")
-            lines[split[0]] = split[1:]
+            # Filter out @PG lines that contain variable paths
+            if split[0].startswith("@PG") and len(split) > 1:
+                filtered_parts = []
+                for part in split[1:]:
+                    # Skip the CL (command line) field that contains variable paths
+                    if part.startswith("CL:"):
+                        continue
+                    filtered_parts.append(part)
+                lines[split[0]] = filtered_parts
+            else:
+                lines[split[0]] = split[1:]
 
     assert lines == snapshot
 

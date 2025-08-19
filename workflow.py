@@ -151,7 +151,7 @@ async def map_isolates(
     intermediate: SimpleNamespace,
     isolate_fastq_path: Path,
     isolate_index_path: Path,
-    isolate_sam_path: Path,
+    isolate_bam_path: Path,
     proc: int,
     p_score_cutoff: float,
     run_subprocess: RunSubprocess,
@@ -159,27 +159,9 @@ async def map_isolates(
 ):
     """Map sample reads to the all isolate index."""
     command = [
-        "bowtie2",
-        "-p",
-        str(proc),
-        "--no-unal",
-        "--local",
-        "--score-min",
-        "L,20,1.0",
-        "-N",
-        "0",
-        "-L",
-        "15",
-        "-k",
-        "100",
-        "--al",
-        isolate_fastq_path,
-        "-x",
-        isolate_index_path,
-        "-U",
-        ",".join(str(path) for path in sample.read_paths),
-        "-S",
-        isolate_sam_path,
+        "bash",
+        "-c",
+        f"bowtie2 -p {proc} --no-unal --local --score-min L,20,1.0 -N 0 -L 15 -k 100 --al {isolate_fastq_path} -x {isolate_index_path} -U {','.join(str(path) for path in sample.read_paths)} | samtools view -bS - -o {isolate_bam_path}"
     ]
 
     await run_subprocess(command)
@@ -189,7 +171,7 @@ async def map_isolates(
 async def eliminate_subtraction(
     intermediate: SimpleNamespace,
     isolate_fastq_path: Path,
-    isolate_sam_path: Path,
+    isolate_bam_path: Path,
     logger,
     p_score_cutoff: float,
     proc: int,
@@ -204,12 +186,12 @@ async def eliminate_subtraction(
     The input to this step is the reads that aligned to an isolate at least once in the
     previous step. We will align these against a subtraction (plant) genome. If the
     alignment score is higher against the subtraction, we drop alignments involving the
-    read from the SAM from the previous step and write the reduced one to
+    read from the BAM from the previous step and write the reduced one to
     `subtracted_sam_path`.
 
     :param intermediate: intermediate data storage for the workflow
     :param isolate_fastq_path: path to the FASTQ file containing reads that aligned to the isolates
-    :param isolate_sam_path: path to the SAM file of alignments to the isolates
+    :param isolate_bam_path: path to the BAM file of alignments to the isolates
     :param logger: workflow logger
     :param p_score_cutoff: minimum p_score cutoff for alignments
     :param proc: number of processors to use
@@ -219,18 +201,21 @@ async def eliminate_subtraction(
     :param subtracted_sam_path: path to the SAM file with subtraction-mapped reads removed
     :param work_path: path to the workflow working directory
     """
-    # Parse isolate scores from the SAM file
-    logger.info("Parsing isolate scores from SAM file")
+    # Parse isolate scores from the BAM file
+    logger.info("Parsing isolate scores from BAM file")
     intermediate.isolate_high_scores = await asyncio.to_thread(
         parse_isolate_scores,
-        str(isolate_sam_path),
+        str(isolate_bam_path),
         p_score_cutoff,
     )
     logger.info("Found isolate scores", count=len(intermediate.isolate_high_scores))
 
     if len(subtractions) == 0:
         logger.info("No subtractions to eliminate reads against. Skipping step.")
-        await asyncio.to_thread(shutil.copyfile, isolate_sam_path, subtracted_sam_path)
+        # Convert BAM to SAM since downstream expects SAM
+        await run_subprocess([
+            "samtools", "view", "-h", "-o", str(subtracted_sam_path), str(isolate_bam_path)
+        ])
         results["subtracted_count"] = 0
         return
 
@@ -241,9 +226,9 @@ async def eliminate_subtraction(
     # as to not disrupt possible uses elsewhere
     await asyncio.to_thread(shutil.copyfile, isolate_fastq_path, current_fastq_path)
 
-    # The SAM file that reads should be subtracted from if they map better to a
-    # subtraction.
-    current_sam_input_path = isolate_sam_path
+    # The file that reads should be subtracted from if they map better to a
+    # subtraction. Start with BAM, then use working SAM for subsequent iterations.
+    current_sam_input_path = isolate_bam_path
 
     subtracted_count = 0
 
