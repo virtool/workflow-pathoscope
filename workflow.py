@@ -166,10 +166,19 @@ async def map_isolates(
     sample: WFSample,
 ):
     """Map sample reads to the all isolate index."""
+    read_paths = ",".join(str(path) for path in sample.read_paths)
+
+    bowtie_cmd = (
+        f"bowtie2 -p {proc} --no-unal --local --score-min L,20,1.0 -N 0 -L 15 -k 100 "
+        f"--al {isolate_fastq_path} -x {isolate_index_path} -U {read_paths}"
+    )
+
+    samtools_cmd = f"samtools view -bS - -o {isolate_bam_path}"
+
     command = [
         "bash",
         "-c",
-        f"bowtie2 -p {proc} --no-unal --local --score-min L,20,1.0 -N 0 -L 15 -k 100 --al {isolate_fastq_path} -x {isolate_index_path} -U {','.join(str(path) for path in sample.read_paths)} | samtools view -bS - -o {isolate_bam_path}",
+        f"{bowtie_cmd} | {samtools_cmd}",
     ]
 
     await run_subprocess(command)
