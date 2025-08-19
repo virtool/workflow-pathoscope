@@ -21,7 +21,6 @@ from workflow_pathoscope.utils import (
 from workflow_pathoscope.rust import (
     run_eliminate_subtraction,
     parse_isolate_scores,
-    find_candidate_otus,
     find_candidate_otus_from_bytes,
 )
 
@@ -100,23 +99,25 @@ async def map_default_isolates(
     ]
 
     logger.info("running bowtie2 and capturing output")
-    
+
     # Execute bowtie2 and capture stdout
     process = await asyncio.create_subprocess_exec(
         *command,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    
+
     stdout, stderr = await process.communicate()
-    
+
     if process.returncode != 0:
-        logger.error("bowtie2 failed", returncode=process.returncode, stderr=stderr.decode())
+        logger.error(
+            "bowtie2 failed", returncode=process.returncode, stderr=stderr.decode()
+        )
         raise RuntimeError(f"bowtie2 failed with return code {process.returncode}")
-    
+
     # Use Rust implementation to process the SAM bytes directly
     logger.info("extracting candidate otus from memory")
-    
+
     candidate_otus = await asyncio.to_thread(
         find_candidate_otus_from_bytes,
         stdout,
