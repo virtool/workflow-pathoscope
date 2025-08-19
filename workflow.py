@@ -1,7 +1,6 @@
 import asyncio
 import shlex
 import shutil
-from collections import defaultdict
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, TextIO
@@ -16,11 +15,15 @@ from virtool_workflow.data.subtractions import WFSubtraction
 from virtool_workflow.runtime.run_subprocess import RunSubprocess
 
 from workflow_pathoscope.utils import (
-    SamLine,
     run_pathoscope,
     write_report,
 )
-from workflow_pathoscope.rust import run_eliminate_subtraction, parse_isolate_scores
+from workflow_pathoscope.rust import (
+    run_eliminate_subtraction,
+    parse_isolate_scores,
+    find_candidate_otus,
+    find_candidate_otus_from_bytes,
+)
 
 BAD_FIRST_SAM_CHARACTERS = {"\n", "@", "#"}
 
@@ -71,53 +74,59 @@ async def map_default_isolates(
     p_score_cutoff: float,
     run_subprocess: RunSubprocess,
     sample: WFSample,
+    work_path: Path,
 ):
     """Map sample reads to all default isolates to identify candidate OTUs.
 
     This will be used to identify candidate OTUs.
     """
+    # Run bowtie2 and capture output in memory
+    command = [
+        "bowtie2",
+        "-p",
+        str(proc),
+        "--local",
+        "--no-unal",
+        "--score-min",
+        "L,20,1.0",
+        "-N",
+        "0",
+        "-L",
+        "15",
+        "-x",
+        index.bowtie_path,
+        "-U",
+        ",".join(str(path) for path in sample.read_paths),
+    ]
 
-    async def stdout_handler(line: bytes):
-        line = line.decode()
-
-        if line[0] == "#" or line[0] == "@":
-            return
-
-        sam_line = SamLine(line)
-
-        if sam_line.unmapped:
-            return
-
-        if sam_line.ref_id == "*":
-            return
-
-        if sam_line.score < p_score_cutoff:
-            return
-
-        intermediate.to_otus.add(sam_line.ref_id)
-
-    await run_subprocess(
-        [
-            "bowtie2",
-            "-p",
-            proc,
-            "--local",
-            "--no-unal",
-            "--score-min",
-            "L,20,1.0",
-            "-N",
-            "0",
-            "-L",
-            "15",
-            "-x",
-            index.bowtie_path,
-            "-U",
-            ",".join(str(path) for path in sample.read_paths),
-        ],
-        stdout_handler=stdout_handler,
+    logger.info("running bowtie2 and capturing output")
+    
+    # Execute bowtie2 and capture stdout
+    process = await asyncio.create_subprocess_exec(
+        *command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    
+    stdout, stderr = await process.communicate()
+    
+    if process.returncode != 0:
+        logger.error("bowtie2 failed", returncode=process.returncode, stderr=stderr.decode())
+        raise RuntimeError(f"bowtie2 failed with return code {process.returncode}")
+    
+    # Use Rust implementation to process the SAM bytes directly
+    logger.info("extracting candidate otus from memory")
+    
+    candidate_otus = await asyncio.to_thread(
+        find_candidate_otus_from_bytes,
+        stdout,
+        p_score_cutoff,
     )
 
-    logger.info("found potential OTUs", count=len(intermediate.to_otus))
+    # Convert Rust HashSet to Python set
+    intermediate.to_otus = set(candidate_otus)
+
+    logger.info("found candidate OTUs", count=len(intermediate.to_otus))
 
 
 @step
@@ -161,7 +170,7 @@ async def map_isolates(
     command = [
         "bash",
         "-c",
-        f"bowtie2 -p {proc} --no-unal --local --score-min L,20,1.0 -N 0 -L 15 -k 100 --al {isolate_fastq_path} -x {isolate_index_path} -U {','.join(str(path) for path in sample.read_paths)} | samtools view -bS - -o {isolate_bam_path}"
+        f"bowtie2 -p {proc} --no-unal --local --score-min L,20,1.0 -N 0 -L 15 -k 100 --al {isolate_fastq_path} -x {isolate_index_path} -U {','.join(str(path) for path in sample.read_paths)} | samtools view -bS - -o {isolate_bam_path}",
     ]
 
     await run_subprocess(command)
@@ -213,9 +222,16 @@ async def eliminate_subtraction(
     if len(subtractions) == 0:
         logger.info("No subtractions to eliminate reads against. Skipping step.")
         # Convert BAM to SAM since downstream expects SAM
-        await run_subprocess([
-            "samtools", "view", "-h", "-o", str(subtracted_sam_path), str(isolate_bam_path)
-        ])
+        await run_subprocess(
+            [
+                "samtools",
+                "view",
+                "-h",
+                "-o",
+                str(subtracted_sam_path),
+                str(isolate_bam_path),
+            ]
+        )
         results["subtracted_count"] = 0
         return
 

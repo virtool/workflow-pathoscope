@@ -3,13 +3,14 @@ mod coverage;
 mod matrix;
 mod em;
 mod parse_sam;
+mod stream_processor;
 
 use subtraction::eliminate_subtraction;
 use matrix::build_matrix;
 use em::{em, compute_best_hit};
 use pyo3::exceptions::PyIOError;
 use pyo3::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 // Type aliases for complex HashMap types used throughout the codebase
 pub type UniqueReads = HashMap<i32, (i32, f64)>;
@@ -54,6 +55,8 @@ fn rust(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_expectation_maximization, m)?)?;
     m.add_function(wrap_pyfunction!(run_eliminate_subtraction, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_coverage_from_em_results, m)?)?;
+    m.add_function(wrap_pyfunction!(find_candidate_otus, m)?)?;
+    m.add_function(wrap_pyfunction!(find_candidate_otus_from_bytes, m)?)?;
     Ok(())
 }
 
@@ -206,8 +209,48 @@ pub fn run_expectation_maximization(
     })
 }
 
+#[pyfunction]
+/// Extract candidate OTU reference IDs from a SAM/BAM file
+/// 
+/// This function replaces the Python line-by-line processing in map_default_isolates
+/// with high-performance Rust processing. It reads a SAM/BAM file and extracts
+/// reference IDs for reads that meet the score cutoff.
+/// 
+/// # Arguments
+/// * `sam_path` - Path to the SAM/BAM file to process
+/// * `p_score_cutoff` - Minimum score threshold (AS:i score + read length)
+/// 
+/// # Returns
+/// Set of reference IDs that have reads meeting the score cutoff
+pub fn find_candidate_otus(
+    _py: Python,
+    sam_path: String,
+    p_score_cutoff: f64,
+) -> PyResult<HashSet<String>> {
+    stream_processor::extract_candidate_otus_from_sam_file(&sam_path, p_score_cutoff)
+        .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))
+}
 
-
+#[pyfunction]
+/// Extract candidate OTU reference IDs from SAM text data
+/// 
+/// This function parses SAM format data directly from bytes without using rust-htslib.
+/// It provides memory-based processing that doesn't require temporary files or unsafe code.
+/// 
+/// # Arguments
+/// * `sam_bytes` - Raw SAM format data as bytes (typically from subprocess stdout)
+/// * `p_score_cutoff` - Minimum score threshold (AS:i score + read length)
+/// 
+/// # Returns
+/// Set of reference IDs that have reads meeting the score cutoff
+pub fn find_candidate_otus_from_bytes(
+    _py: Python,
+    sam_bytes: &[u8],
+    p_score_cutoff: f64,
+) -> PyResult<HashSet<String>> {
+    stream_processor::extract_candidate_otus_from_bytes(sam_bytes, p_score_cutoff)
+        .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))
+}
 
 
 

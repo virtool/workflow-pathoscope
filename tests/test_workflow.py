@@ -126,6 +126,7 @@ async def test_map_default_isolates(
     index: WFIndex,
     run_subprocess,
     sample: WFSample,
+    work_path: Path,
     snapshot: SnapshotAssertion,
 ):
     intermediate = SimpleNamespace(to_otus=set())
@@ -140,6 +141,7 @@ async def test_map_default_isolates(
         0.01,
         run_subprocess,
         sample,
+        work_path,
     )
 
     assert sorted(intermediate.to_otus) == snapshot
