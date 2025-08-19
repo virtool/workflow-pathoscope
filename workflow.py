@@ -71,9 +71,7 @@ async def map_default_isolates(
     index: WFIndex,
     proc: int,
     p_score_cutoff: float,
-    run_subprocess: RunSubprocess,
     sample: WFSample,
-    work_path: Path,
 ):
     """Map sample reads to all default isolates to identify candidate OTUs.
 

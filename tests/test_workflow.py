@@ -139,9 +139,7 @@ async def test_map_default_isolates(
         index,
         2,
         0.01,
-        run_subprocess,
         sample,
-        work_path,
     )
 
     assert sorted(intermediate.to_otus) == snapshot
@@ -190,7 +188,7 @@ async def test_map_isolates(
         for read in bam:
             # Convert each record to SAM format text (excluding header)
             lines.append(read.to_string())
-        
+
         assert sorted(lines) == snapshot
 
     # Note: isolate_high_scores is now populated during eliminate_subtraction step
@@ -217,9 +215,16 @@ async def test_eliminate_subtraction(
     logger = get_logger("test")
 
     # Convert example SAM to BAM for this test
-    await run_subprocess([
-        "samtools", "view", "-bS", "-o", str(isolate_bam_path), str(example_path / "to_isolates.sam")
-    ])
+    await run_subprocess(
+        [
+            "samtools",
+            "view",
+            "-bS",
+            "-o",
+            str(isolate_bam_path),
+            str(example_path / "to_isolates.sam"),
+        ]
+    )
     shutil.copyfile(example_path / "to_isolates.fq", isolate_fastq_path)
 
     proc = 2
@@ -230,7 +235,7 @@ async def test_eliminate_subtraction(
         subtractions = []
 
     intermediate = SimpleNamespace()
-    
+
     await eliminate_subtraction(
         intermediate,
         isolate_fastq_path,
