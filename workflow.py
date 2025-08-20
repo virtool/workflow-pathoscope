@@ -3,7 +3,7 @@ import shlex
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, TextIO
+from typing import Any
 
 import aiofiles
 import aiofiles.os
@@ -22,41 +22,9 @@ from workflow_pathoscope.rust import (
     run_eliminate_subtraction,
     parse_isolate_scores,
     find_candidate_otus_from_bytes,
+    subtract_fastq,
+    eliminate_subtraction_and_filter_fastq,
 )
-
-BAD_FIRST_SAM_CHARACTERS = {"\n", "@", "#"}
-
-
-def read_fastq_grouped_lines(fastq_file: TextIO):
-    while True:
-        fastq_read = (
-            fastq_file.readline(),
-            fastq_file.readline(),
-            fastq_file.readline(),
-            fastq_file.readline(),
-        )
-
-        if "" in fastq_read:
-            return
-
-        yield fastq_read
-
-
-def subtract_fastq(
-    current_fastq_path: Path,
-    new_fastq_path: Path,
-    subtracted_reads: set[str],
-):
-    with (
-        open(current_fastq_path) as current_fastq_file,
-        open(
-            new_fastq_path,
-            "w",
-        ) as new_fastq_file,
-    ):
-        for record in read_fastq_grouped_lines(current_fastq_file):
-            if record[0].strip("@\n") not in subtracted_reads:
-                new_fastq_file.write("".join(record))
 
 
 @hooks.on_failure
@@ -125,7 +93,7 @@ async def map_default_isolates(
     # Convert Rust HashSet to Python set
     intermediate.to_otus = set(candidate_otus)
 
-    logger.info("found candidate OTUs", count=len(intermediate.to_otus))
+    logger.info("found candidate otus", count=len(intermediate.to_otus))
 
 
 @step
@@ -193,7 +161,7 @@ async def eliminate_subtraction(
     results: dict[str, Any],
     run_subprocess: RunSubprocess,
     subtractions: list[WFSubtraction],
-    subtracted_sam_path: Path,
+    subtracted_bam_path: Path,
     work_path: Path,
 ):
     """Remove reads that map better to a subtraction than to a reference.
@@ -202,7 +170,7 @@ async def eliminate_subtraction(
     previous step. We will align these against a subtraction (plant) genome. If the
     alignment score is higher against the subtraction, we drop alignments involving the
     read from the BAM from the previous step and write the reduced one to
-    `subtracted_sam_path`.
+    `subtracted_bam_path`.
 
     :param intermediate: intermediate data storage for the workflow
     :param isolate_fastq_path: path to the FASTQ file containing reads that aligned to the isolates
@@ -213,7 +181,7 @@ async def eliminate_subtraction(
     :param results: the results to send to the api when the workflow is complete
     :param run_subprocess: runs a subprocess with error handling
     :param subtractions: the subtraction to align and eliminate reads against
-    :param subtracted_sam_path: path to the SAM file with subtraction-mapped reads removed
+    :param subtracted_bam_path: path to the BAM file with subtraction-mapped reads removed
     :param work_path: path to the workflow working directory
     """
     # Parse isolate scores from the BAM file
@@ -234,7 +202,7 @@ async def eliminate_subtraction(
                 "view",
                 "-h",
                 "-o",
-                str(subtracted_sam_path),
+                str(subtracted_bam_path),
                 str(isolate_bam_path),
             ]
         )
@@ -274,11 +242,14 @@ async def eliminate_subtraction(
             ],
         )
 
-        await asyncio.to_thread(
-            run_eliminate_subtraction,
+        # Combined operation: eliminate subtraction reads from BAM and filter FASTQ
+        eliminated_count = await asyncio.to_thread(
+            eliminate_subtraction_and_filter_fastq,
             str(current_sam_input_path),
             str(to_subtraction_sam_path),
-            str(subtracted_sam_path),
+            str(subtracted_bam_path),
+            str(current_fastq_path),
+            str(current_fastq_path),  # Write directly back to current_fastq_path
         )
 
         await aiofiles.os.remove(to_subtraction_sam_path)
@@ -287,28 +258,11 @@ async def eliminate_subtraction(
 
         await asyncio.to_thread(
             shutil.copyfile,
-            subtracted_sam_path,
+            subtracted_bam_path,
             current_sam_input_path,
         )
 
-        async with aiofiles.open(work_path / "subtracted_read_ids.txt", "r") as f:
-            subtracted_reads = {str(line).strip("@\n") async for line in f}
-
-        subtracted_count += len(subtracted_reads)
-
-        # Rewrite the input FASTQ file to exclude reads that mapped better to a
-        # subtraction.
-        new_fastq_path = work_path / "new_fastq.fq"
-
-        await asyncio.to_thread(
-            subtract_fastq,
-            current_fastq_path,
-            new_fastq_path,
-            subtracted_reads,
-        )
-
-        # Overwrite the previous input FASTA with the subtracted one.
-        await asyncio.to_thread(shutil.copyfile, new_fastq_path, current_fastq_path)
+        subtracted_count += eliminated_count
 
         logger.info(
             "Some reads mapped better to a subtraction and were removed",
@@ -328,7 +282,7 @@ async def reassignment(
     logger,
     p_score_cutoff: float,
     results,
-    subtracted_sam_path: Path,
+    subtracted_bam_path: Path,
     work_path: Path,
 ):
     """Run the Pathoscope reassignment algorithm.
@@ -338,12 +292,12 @@ async def reassignment(
     """
     logger.info(
         "running pathoscope",
-        subtracted_path=subtracted_sam_path,
+        subtracted_path=subtracted_bam_path,
     )
 
     pathoscope_results = await asyncio.to_thread(
         run_pathoscope,
-        subtracted_sam_path,
+        subtracted_bam_path,
         p_score_cutoff,
         intermediate.lengths,
     )

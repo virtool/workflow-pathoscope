@@ -171,7 +171,7 @@ pub fn eliminate_subtraction(
 }
 
 /// Process the isolate SAM file and write filtered output using rust-htslib
-fn process_isolate_file(
+pub fn process_isolate_file(
     input_path: &str,
     output_path: &str,
     processor: &SubtractionProcessor,
@@ -187,7 +187,7 @@ fn process_isolate_file(
     let header = bam::Header::from_template(&header_view);
     
     // Create output writer with the same header
-    let mut writer = bam::Writer::from_path(output_path, &header, Format::Sam)
+    let mut writer = bam::Writer::from_path(output_path, &header, Format::Bam)
         .map_err(|e| SubtractionError::BamWrite { source: e })?;
 
     let mut subtracted_read_ids = HashSet::new();

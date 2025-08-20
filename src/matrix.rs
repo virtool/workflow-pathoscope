@@ -3,7 +3,7 @@ use crate::{UniqueReads, MultiMappingReads};
 use std::collections::HashMap;
 
 pub fn build_matrix(
-    sam_path: &str,
+    alignment_path: &str,
     p_score_cutoff: Option<f64>,
 ) -> Result<
     (
@@ -31,8 +31,8 @@ pub fn build_matrix(
     // First pass: collect all alignments per read
     let mut read_alignments: HashMap<i32, Vec<(i32, f64)>> = HashMap::new();
 
-    // Parse all valid SAM lines from the file
-    let sam_lines = parse_sam(sam_path, p_score_cutoff)?;
+    // Parse all valid alignment lines from the file (SAM or BAM)
+    let sam_lines = parse_alignment(alignment_path, p_score_cutoff)?;
 
     for new_line in sam_lines {
 

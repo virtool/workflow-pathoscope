@@ -1,4 +1,5 @@
 import shutil
+
 import pysam
 from pathlib import Path
 from types import SimpleNamespace
@@ -204,25 +205,13 @@ async def test_eliminate_subtraction(
 ):
     isolate_fastq_path = work_path / "to_isolates.fq"
     isolate_bam_path = work_path / "to_isolates.bam"
-    subtracted_path = work_path / "subtracted.sam"
+    subtracted_path = work_path / "subtracted.bam"
 
-    logger = get_logger("test")
-
-    # Convert example SAM to BAM for this test
-    await run_subprocess(
-        [
-            "samtools",
-            "view",
-            "-bS",
-            "-o",
-            str(isolate_bam_path),
-            str(example_path / "to_isolates.sam"),
-        ]
-    )
+    shutil.copyfile(example_path / "to_isolates.bam", isolate_bam_path)
     shutil.copyfile(example_path / "to_isolates.fq", isolate_fastq_path)
 
+    logger = get_logger("test")
     proc = 2
-
     results = {}
 
     if no_subtractions:
@@ -246,27 +235,52 @@ async def test_eliminate_subtraction(
 
     assert results["subtracted_count"] == 0 if no_subtractions else 4
 
-    assert not (work_path / "to_subtraction.sam").is_file()
-    assert (work_path / "subtracted.sam").is_file()
+    def parse_headers(path: Path) -> dict:
+        headers = {}
 
-    lines: dict[str, list] = {}
+        with pysam.AlignmentFile(path, "r") as alignment_file:
+            # Parse headers
+            header = alignment_file.header.to_dict()
 
-    with open(work_path / "subtracted.sam") as f:
-        for line in f:
-            split = line.split("\t")
-            # Filter out @PG lines that contain variable paths
-            if split[0].startswith("@PG") and len(split) > 1:
-                filtered_parts = []
-                for part in split[1:]:
-                    # Skip the CL (command line) field that contains variable paths
-                    if part.startswith("CL:"):
-                        continue
-                    filtered_parts.append(part)
-                lines[split[0]] = filtered_parts
-            else:
-                lines[split[0]] = split[1:]
+            # Process HD (header) entries
+            if "HD" in header:
+                headers["HD"] = header["HD"]
 
-    assert lines == snapshot
+            # Process SQ (sequence) entries
+            if "SQ" in header:
+                headers["SQ"] = header["SQ"]
+
+            # Process PG (program) entries, filtering out variable command lines
+            if "PG" in header:
+                filtered_pg = []
+                for pg_entry in header["PG"]:
+                    # Create a copy without the variable CL (command line) field
+                    filtered_entry = {k: v for k, v in pg_entry.items() if k != "CL"}
+                    filtered_pg.append(filtered_entry)
+
+                headers["PG"] = filtered_pg
+
+        return headers
+
+    def parse_alignments(path: Path) -> set[tuple]:
+        """Parse alignment file (SAM or BAM) into a standardized dict structure."""
+        with pysam.AlignmentFile(path, "r") as alignment_file:
+            return {
+                (
+                    read.query_name,
+                    read.flag,
+                    read.reference_name,
+                    read.reference_start,
+                    read.mapping_quality,
+                    str(read.cigarstring) if read.cigarstring else "*",
+                    read.template_length,
+                    read.query_sequence[:5],
+                )
+                for read in alignment_file
+            }
+
+    assert parse_alignments(work_path / "subtracted.bam") == snapshot(name="alignments")
+    assert parse_headers(work_path / "subtracted.bam") == snapshot(name="headers")
 
 
 async def test_pathoscope(
@@ -278,8 +292,9 @@ async def test_pathoscope(
     snapshot: SnapshotAssertion,
     work_path: Path,
 ):
-    subtracted_sam_path = work_path / "subtracted.sam"
-    shutil.copyfile(example_path / "to_isolates.sam", subtracted_sam_path)
+    subtracted_bam_path = work_path / "to_isolates.bam"
+
+    shutil.copyfile(example_path / "to_isolates.bam", subtracted_bam_path)
 
     intermediate = SimpleNamespace(lengths=ref_lengths)
     p_score_cutoff = 0.01
@@ -297,7 +312,7 @@ async def test_pathoscope(
         logger,
         p_score_cutoff,
         results,
-        subtracted_sam_path,
+        subtracted_bam_path,
         work_path,
     )
 

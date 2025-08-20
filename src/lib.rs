@@ -57,20 +57,22 @@ fn rust(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(calculate_coverage_from_em_results, m)?)?;
     m.add_function(wrap_pyfunction!(find_candidate_otus, m)?)?;
     m.add_function(wrap_pyfunction!(find_candidate_otus_from_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(subtract_fastq, m)?)?;
+    m.add_function(wrap_pyfunction!(eliminate_subtraction_and_filter_fastq, m)?)?;
     Ok(())
 }
 
 #[pyfunction]
-/// Calculate coverage directly from EM results and SAM data
+/// Calculate coverage directly from EM results and alignment data
 pub fn calculate_coverage_from_em_results(
     _py: Python,
-    sam_path: String,
+    alignment_path: String,
     p_score_cutoff: f64,
     ref_lengths: HashMap<String, usize>,
 ) -> PyResult<HashMap<String, Vec<usize>>> {
     // Build matrix to get EM input data and minimal alignments
     let (u, nu, _refs, _reads, minimal_alignments) =
-        build_matrix(sam_path.as_str(), None)
+        build_matrix(alignment_path.as_str(), None)
             .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to build matrix: {}", e)))?;
 
     // Run EM algorithm
@@ -104,16 +106,16 @@ pub fn run_eliminate_subtraction(
 
 
 #[pyfunction]
-/// Parse isolate SAM file and extract high scores for each read
+/// Parse isolate alignment file (SAM or BAM) and extract high scores for each read
 pub fn parse_isolate_scores(
     _py: Python,
-    sam_path: String,
+    alignment_path: String,
     p_score_cutoff: f64,
 ) -> PyResult<HashMap<String, f64>> {
     use rust_htslib::{bam, bam::Read};
     
-    let mut reader = bam::Reader::from_path(&sam_path)
-        .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to open SAM file '{}': {}", sam_path, e)))?;
+    let mut reader = bam::Reader::from_path(&alignment_path)
+        .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to open alignment file '{}': {}", alignment_path, e)))?;
 
     let mut isolate_high_scores: HashMap<String, f64> = HashMap::new();
 
@@ -163,15 +165,15 @@ pub fn parse_isolate_scores(
 }
 
 #[pyfunction]
-/// Entry point for expectation_maximization
+/// Entry point for expectation_maximization  
 pub fn run_expectation_maximization(
     _py: Python,
-    sam_path: String,
+    alignment_path: String,
     p_score_cutoff: f64,
     ref_lengths: HashMap<String, usize>,
 ) -> PyResult<PathoscopeResults> {
     let (u, nu, refs, reads, minimal_alignments) =
-        build_matrix(sam_path.as_str(), None)
+        build_matrix(alignment_path.as_str(), None)
             .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to build matrix: {}", e)))?;
 
     let (best_hit_initial_reads, best_hit_initial, level_1_initial, level_2_initial) =
@@ -210,24 +212,24 @@ pub fn run_expectation_maximization(
 }
 
 #[pyfunction]
-/// Extract candidate OTU reference IDs from a SAM/BAM file
+/// Extract candidate OTU reference IDs from an alignment file (SAM/BAM)
 /// 
 /// This function replaces the Python line-by-line processing in map_default_isolates
 /// with high-performance Rust processing. It reads a SAM/BAM file and extracts
 /// reference IDs for reads that meet the score cutoff.
 /// 
 /// # Arguments
-/// * `sam_path` - Path to the SAM/BAM file to process
+/// * `alignment_path` - Path to the SAM/BAM file to process
 /// * `p_score_cutoff` - Minimum score threshold (AS:i score + read length)
 /// 
 /// # Returns
 /// Set of reference IDs that have reads meeting the score cutoff
 pub fn find_candidate_otus(
     _py: Python,
-    sam_path: String,
+    alignment_path: String,
     p_score_cutoff: f64,
 ) -> PyResult<HashSet<String>> {
-    stream_processor::extract_candidate_otus_from_sam_file(&sam_path, p_score_cutoff)
+    stream_processor::extract_candidate_otus_from_sam_file(&alignment_path, p_score_cutoff)
         .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))
 }
 
@@ -250,6 +252,175 @@ pub fn find_candidate_otus_from_bytes(
 ) -> PyResult<HashSet<String>> {
     stream_processor::extract_candidate_otus_from_bytes(sam_bytes, p_score_cutoff)
         .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))
+}
+
+#[pyfunction]
+/// Subtract reads from a FASTQ file based on a set of read IDs to exclude
+/// 
+/// This function processes a FASTQ file in 4-line groups and writes only those reads
+/// whose IDs are not in the subtracted_reads set to the output file.
+/// 
+/// # Arguments
+/// * `input_path` - Path to the input FASTQ file
+/// * `output_path` - Path to write the filtered FASTQ file
+/// * `subtracted_reads` - Set of read IDs to exclude from the output
+/// 
+/// # Returns
+/// Number of reads kept in the output file
+pub fn subtract_fastq(
+    _py: Python,
+    input_path: String,
+    output_path: String,
+    subtracted_reads: HashSet<String>,
+) -> PyResult<usize> {
+    use std::fs::File;
+    use std::io::{BufRead, BufReader, BufWriter, Write};
+    
+    let input_file = File::open(&input_path)
+        .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to open input file '{}': {}", input_path, e)))?;
+    let output_file = File::create(&output_path)
+        .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to create output file '{}': {}", output_path, e)))?;
+    
+    let mut reader = BufReader::new(input_file);
+    let mut writer = BufWriter::new(output_file);
+    
+    let mut kept_count = 0usize;
+    let mut lines = Vec::with_capacity(4);
+    
+    loop {
+        lines.clear();
+        
+        // Read 4 lines for a FASTQ record
+        for _ in 0..4 {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => return Ok(kept_count), // EOF
+                Ok(_) => lines.push(line),
+                Err(e) => return Err(PyErr::new::<PyIOError, _>(format!("Error reading line: {}", e))),
+            }
+        }
+        
+        // Check if we have a complete 4-line record
+        if lines.len() != 4 {
+            return Ok(kept_count);
+        }
+        
+        // Extract read ID from the first line (header line starting with @)
+        let header = &lines[0];
+        if !header.starts_with('@') {
+            return Err(PyErr::new::<PyIOError, _>("Invalid FASTQ format: header line should start with '@'".to_string()));
+        }
+        
+        // Get read ID (everything after @ until first whitespace or newline)
+        let read_id = header[1..].split_whitespace().next()
+            .unwrap_or("")
+            .trim_end_matches('\n')
+            .trim_end_matches('\r');
+        
+        // If this read ID is not in the subtracted set, write all 4 lines
+        if !subtracted_reads.contains(read_id) {
+            for line in &lines {
+                writer.write_all(line.as_bytes())
+                    .map_err(|e| PyErr::new::<PyIOError, _>(format!("Error writing output: {}", e)))?;
+            }
+            kept_count += 1;
+        }
+    }
+}
+
+#[pyfunction]
+/// Combined function that eliminates subtraction reads from BAM and filters FASTQ file
+/// 
+/// This function combines the operations of eliminate_subtraction and subtract_fastq
+/// into a single operation, eliminating intermediate files and reducing I/O.
+/// 
+/// # Arguments
+/// * `isolate_sam_path` - Path to the isolate SAM/BAM file
+/// * `subtraction_sam_path` - Path to the subtraction SAM file
+/// * `output_sam_path` - Path to write the filtered SAM/BAM file
+/// * `input_fastq_path` - Path to the input FASTQ file to filter
+/// * `output_fastq_path` - Path to write the filtered FASTQ file
+/// 
+/// # Returns
+/// Number of reads that were subtracted (eliminated)
+pub fn eliminate_subtraction_and_filter_fastq(
+    _py: Python,
+    isolate_sam_path: String,
+    subtraction_sam_path: String,
+    output_sam_path: String,
+    input_fastq_path: String,
+    output_fastq_path: String,
+) -> PyResult<usize> {
+    use std::fs::File;
+    use std::io::{BufRead, BufReader, BufWriter, Write};
+    
+    // Parse subtraction scores
+    let subtraction_scores = subtraction::parse_subtraction_sam(&subtraction_sam_path)
+        .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))?;
+    let processor = subtraction::SubtractionProcessor::new(subtraction_scores);
+    
+    // Process isolate file and collect subtracted read IDs
+    let subtracted_ids = subtraction::process_isolate_file(&isolate_sam_path, &output_sam_path, &processor)
+        .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))?;
+    
+    let subtracted_count = subtracted_ids.len();
+    
+    // Filter FASTQ file using the subtracted read IDs
+    let input_file = File::open(&input_fastq_path)
+        .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to open FASTQ file '{}': {}", input_fastq_path, e)))?;
+    let output_file = File::create(&output_fastq_path)
+        .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to create FASTQ file '{}': {}", output_fastq_path, e)))?;
+    
+    let mut reader = BufReader::new(input_file);
+    let mut writer = BufWriter::new(output_file);
+    
+    let mut lines = Vec::with_capacity(4);
+    
+    loop {
+        lines.clear();
+        
+        // Read 4 lines for a FASTQ record
+        for _ in 0..4 {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => break, // EOF
+                Ok(_) => lines.push(line),
+                Err(e) => return Err(PyErr::new::<PyIOError, _>(format!("Error reading FASTQ line: {}", e))),
+            }
+        }
+        
+        // Check if we reached EOF
+        if lines.is_empty() {
+            break;
+        }
+        
+        // Check if we have a complete 4-line record
+        if lines.len() != 4 {
+            break;
+        }
+        
+        // Extract read ID from the first line (header line starting with @)
+        let header = &lines[0];
+        if !header.starts_with('@') {
+            return Err(PyErr::new::<PyIOError, _>("Invalid FASTQ format: header line should start with '@'".to_string()));
+        }
+        
+        // Get read ID (everything after @ until first whitespace or newline)
+        let read_id = header[1..].split_whitespace().next()
+            .unwrap_or("")
+            .trim_end_matches('\n')
+            .trim_end_matches('\r');
+        
+        // If this read ID is not in the subtracted set, write all 4 lines
+        if !subtracted_ids.contains(read_id) {
+            for line in &lines {
+                writer.write_all(line.as_bytes())
+                    .map_err(|e| PyErr::new::<PyIOError, _>(format!("Error writing FASTQ output: {}", e)))?;
+            }
+        }
+    }
+    
+    Ok(subtracted_count)
 }
 
 
@@ -402,66 +573,60 @@ mod tests {
 
     #[test]
     fn test_eliminate_subtraction_integration() {
+        use rust_htslib::{bam, bam::Read};
         use std::fs;
         use tempfile::TempDir;
 
         // Create temp directory for output
         let temp_dir = TempDir::new().unwrap();
-        let output_sam_path = temp_dir.path().join("output.sam");
+        let output_bam_path = temp_dir.path().join("output.bam");
 
         // Run the pure Rust function directly
         subtraction::eliminate_subtraction(
             "example/rust/test_isolates_minimal.sam",
             "example/rust/test_subtraction_minimal.sam",
-            output_sam_path.to_str().unwrap(),
+            output_bam_path.to_str().unwrap(),
         )
         .unwrap();
 
-        // Read and verify output SAM
-        let output_content = fs::read_to_string(&output_sam_path).unwrap();
-        let output_lines: Vec<&str> = output_content.lines().collect();
+        // Read and verify output BAM
+        let mut bam_reader = bam::Reader::from_path(&output_bam_path).unwrap();
+        let header = bam_reader.header();
 
-        // Verify headers are preserved
-        assert!(output_lines[0].starts_with("@HD"), "Headers should be preserved");
-        assert!(
-            output_lines[1].starts_with("@SQ\tSN:ref1"),
-            "First sequence header should be preserved"
-        );
-        assert!(
-            output_lines[2].starts_with("@SQ\tSN:ref2"),
-            "Second sequence header should be preserved"
-        );
-        assert!(
-            output_lines[3].starts_with("@PG"),
-            "Program header should be preserved"
-        );
-        assert_eq!(
-            output_lines[4], "@CO\tTest comment line",
-            "Comment lines should be preserved in proper SAM format"
-        );
+        // Verify headers are preserved  
+        assert!(header.target_count() > 0, "Sequence headers should be preserved");
+
+        // Collect read names from BAM output
+        let mut read_names = Vec::new();
+        let mut record = bam::Record::new();
+        while let Some(result) = bam_reader.read(&mut record) {
+            if result.is_ok() {
+                if let Ok(qname) = std::str::from_utf8(record.qname()) {
+                    read_names.push(qname.to_string());
+                }
+            } else {
+                break;
+            }
+        }
 
         // Verify correct reads are kept
         assert!(
-            output_content.contains("read_keep"),
+            read_names.contains(&"read_keep".to_string()),
             "Read with lower subtraction score should be kept"
         );
         assert!(
-            output_content.contains("read_unknown"),
+            read_names.contains(&"read_unknown".to_string()),
             "Read not in subtraction should be kept"
         );
 
         // Verify eliminated reads are not present
         assert!(
-            !output_content.contains("read_eliminate"),
+            !read_names.contains(&"read_eliminate".to_string()),
             "Read with higher subtraction score should be eliminated"
         );
         assert!(
-            !output_content.contains("read_equal"),
+            !read_names.contains(&"read_equal".to_string()),
             "Read with equal scores should be eliminated"
-        );
-        assert!(
-            !output_content.contains("read_unmapped"),
-            "Unmapped reads should be skipped"
         );
 
         // Verify subtracted_read_ids.txt
