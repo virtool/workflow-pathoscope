@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12.3, <3.13"
 
 [[package]]
@@ -1061,7 +1061,7 @@ wheels = [
 
 [[package]]
 name = "virtool-workflow"
-version = "7.2.2"
+version = "7.2.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -1075,9 +1075,9 @@ dependencies = [
     { name = "structlog-sentry" },
     { name = "virtool" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a2/c3/d56c49e621818c821465831a546e139178846c2f5aae20b029f928d6bdbe/virtool_workflow-7.2.2.tar.gz", hash = "sha256:1bd8a8e528da2c6b8b9c050626d8e1828201bdbd7fec7ee632b6ee43657c98f5", size = 30353, upload-time = "2025-06-27T22:59:40.844Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f7/f4/651ed0cb4db25ad082ba636fd419caf422f2459b5fe8ecfb716ef76060e7/virtool_workflow-7.2.3.tar.gz", hash = "sha256:a324ca16e0d640d11edb6d6a55a929d1510f2c91a87584d0d0e4db3ffcf44f85", size = 30381, upload-time = "2025-08-20T18:43:44.962Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0e/ce/bac255abf1409ed90eddbc6a7d14cd6f8ec8a643b1857f77647da0ee7a3d/virtool_workflow-7.2.2-py3-none-any.whl", hash = "sha256:f40ee81fd460f353680ae045fc85145f8a8af2a040ed0d0405a17c79798a6e00", size = 44960, upload-time = "2025-06-27T22:59:39.578Z" },
+    { url = "https://files.pythonhosted.org/packages/1e/eb/584396df662d9976665d075fd93341bf1d2482055cd1d9188594da0f7779/virtool_workflow-7.2.3-py3-none-any.whl", hash = "sha256:932a5bae30c6c35b4f46da509e1ba5c36578295a46920b83bbdee78883a63d4a", size = 44992, upload-time = "2025-08-20T18:43:43.719Z" },
 ]
 
 [[package]]
@@ -1112,7 +1112,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "virtool-workflow", specifier = "==7.2.2" }]
+requires-dist = [{ name = "virtool-workflow", specifier = "==7.2.3" }]
 
 [package.metadata.requires-dev]
 dev = [
