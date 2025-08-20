@@ -1,6 +1,5 @@
 """Test the combined eliminate_subtraction_and_filter_fastq function."""
 
-from pathlib import Path
 from workflow_pathoscope.rust import eliminate_subtraction_and_filter_fastq
 
 # Test SAM data for isolates - using correct format
@@ -71,9 +70,7 @@ def test_combined_function(tmp_path):
     # read3 should NOT be eliminated (subtraction score 20+40=60 < isolate score 30+40=70)
     # read2 has no subtraction alignment, so kept
     # Only read1 should be eliminated
-    assert eliminated_count == 1, (
-        f"Expected 1 eliminated read, got {eliminated_count}"
-    )
+    assert eliminated_count == 1, f"Expected 1 eliminated read, got {eliminated_count}"
 
     # Verify output FASTQ file
     with open(output_fastq_path, "r") as f:
@@ -124,9 +121,7 @@ read1	0	plant_ref	100	255	50M	*	0	0	AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
     )
 
     # No reads should be eliminated
-    assert eliminated_count == 0, (
-        f"Expected 0 eliminated reads, got {eliminated_count}"
-    )
+    assert eliminated_count == 0, f"Expected 0 eliminated reads, got {eliminated_count}"
 
     # All reads should be in output FASTQ
     with open(output_fastq_path, "r") as f:

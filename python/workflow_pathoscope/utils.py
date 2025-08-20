@@ -222,7 +222,7 @@ def run_pathoscope(
     p_score_cutoff: float,
     ref_lengths: dict[str, int],
 ):
-    """Run Pathoscope on the alignment file at ``alignment_path`` with the given ``p_score_cutoff``.
+    """Run Pathoscope on an alignment file.
 
     Returns PathoscopeResults containing EM results and coverage data.
 

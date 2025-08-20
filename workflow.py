@@ -19,10 +19,8 @@ from workflow_pathoscope.utils import (
     write_report,
 )
 from workflow_pathoscope.rust import (
-    run_eliminate_subtraction,
     parse_isolate_scores,
     find_candidate_otus_from_bytes,
-    subtract_fastq,
     eliminate_subtraction_and_filter_fastq,
 )
 
@@ -185,91 +183,78 @@ async def eliminate_subtraction(
     :param work_path: path to the workflow working directory
     """
     # Parse isolate scores from the BAM file
-    logger.info("Parsing isolate scores from BAM file")
+    logger.info("parsing isolate scores from bam file")
     intermediate.isolate_high_scores = await asyncio.to_thread(
         parse_isolate_scores,
         str(isolate_bam_path),
         p_score_cutoff,
     )
-    logger.info("Found isolate scores", count=len(intermediate.isolate_high_scores))
+    logger.info("found isolate scores", count=len(intermediate.isolate_high_scores))
 
     if len(subtractions) == 0:
         logger.info("No subtractions to eliminate reads against. Skipping step.")
-        # Convert BAM to SAM since downstream expects SAM
-        await run_subprocess(
-            [
-                "samtools",
-                "view",
-                "-h",
-                "-o",
-                str(subtracted_bam_path),
-                str(isolate_bam_path),
-            ]
-        )
+        # Rename BAM file as no subtraction is needed (saves disk space)
+        await aiofiles.os.rename(isolate_bam_path, subtracted_bam_path)
         results["subtracted_count"] = 0
         return
 
     current_fastq_path = work_path / "current_fastq.fq"
-    to_subtraction_sam_path = work_path / "to_subtraction.sam"
+    to_subtraction_bam_path = work_path / "to_subtraction.bam"
 
     # copy the original fastq file into a working fastq file
     # as to not disrupt possible uses elsewhere
     await asyncio.to_thread(shutil.copyfile, isolate_fastq_path, current_fastq_path)
 
     # The file that reads should be subtracted from if they map better to a
-    # subtraction. Start with BAM, then use working SAM for subsequent iterations.
-    current_sam_input_path = isolate_bam_path
+    # subtraction. Start with BAM, then use working BAM for subsequent iterations.
+    current_bam_input_path = isolate_bam_path
 
     subtracted_count = 0
 
     for subtraction in subtractions:
-        # Map reads to the subtraction.
+        bowtie_cmd = (
+            f"bowtie2 --local --no-unal -N 0 -p {proc} "
+            f"-x {shlex.quote(str(subtraction.bowtie2_index_path))} "
+            f"-U {current_fastq_path}"
+        )
+
+        samtools_cmd = f"samtools view -bS - -o {to_subtraction_bam_path}"
+
         await run_subprocess(
             [
-                "bowtie2",
-                "--local",
-                "--no-unal",
-                "-N",
-                "0",
-                "-p",
-                str(proc),
-                "-x",
-                shlex.quote(str(subtraction.bowtie2_index_path)),
-                "-U",
-                str(current_fastq_path),
-                "-S",
-                str(to_subtraction_sam_path),
+                "bash",
+                "-c",
+                f"{bowtie_cmd} | {samtools_cmd}",
             ],
         )
 
         # Combined operation: eliminate subtraction reads from BAM and filter FASTQ
         eliminated_count = await asyncio.to_thread(
             eliminate_subtraction_and_filter_fastq,
-            str(current_sam_input_path),
-            str(to_subtraction_sam_path),
+            str(current_bam_input_path),
+            str(to_subtraction_bam_path),
             str(subtracted_bam_path),
             str(current_fastq_path),
             str(current_fastq_path),  # Write directly back to current_fastq_path
         )
 
-        await aiofiles.os.remove(to_subtraction_sam_path)
+        await aiofiles.os.remove(to_subtraction_bam_path)
 
-        current_sam_input_path = work_path / "working_isolate.sam"
+        current_bam_input_path = work_path / "working_isolate.bam"
 
-        await asyncio.to_thread(
-            shutil.copyfile,
-            subtracted_bam_path,
-            current_sam_input_path,
-        )
+        await aiofiles.os.rename(subtracted_bam_path, current_bam_input_path)
 
         subtracted_count += eliminated_count
 
         logger.info(
-            "Some reads mapped better to a subtraction and were removed",
+            "some reads mapped better to a subtraction and were removed",
             id=subtraction.id,
             name=subtraction.name,
             count=subtracted_count,
         )
+
+    # Rename final working file back to expected output path
+    await aiofiles.os.rename(current_bam_input_path, subtracted_bam_path)
 
     results["subtracted_count"] = subtracted_count
 

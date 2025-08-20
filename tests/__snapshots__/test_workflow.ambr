@@ -305951,12 +305951,6 @@
         'PP': 'bowtie2',
         'VN': '1.16.1',
       }),
-      dict({
-        'ID': 'samtools.1',
-        'PN': 'samtools',
-        'PP': 'samtools',
-        'VN': '1.22.1',
-      }),
     ]),
     'SQ': list([
       dict({
