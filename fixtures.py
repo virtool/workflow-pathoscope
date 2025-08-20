@@ -47,6 +47,6 @@ def p_score_cutoff():
 
 
 @fixture
-def subtracted_sam_path(work_path: Path) -> Path:
-    """The path to the SAM file after subtraction reads have been eliminated."""
-    return work_path / "subtracted.sam"
+def subtracted_bam_path(work_path: Path) -> Path:
+    """The path to the BAM file after subtraction reads have been eliminated."""
+    return work_path / "subtracted.bam"

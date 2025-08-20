@@ -4,6 +4,35 @@ use std::{
     path::Path,
 };
 
+/// Supported alignment file formats
+#[derive(Debug, Clone, PartialEq)]
+pub enum AlignmentFormat {
+    Sam,
+    Bam,
+}
+
+/// Detect the format of an alignment file based on its extension
+/// 
+/// This function provides format detection for alignment files to ensure
+/// proper handling by downstream consumers.
+/// 
+/// # Arguments
+/// * `path` - Path to the alignment file
+/// 
+/// # Returns
+/// The detected format (SAM or BAM)
+pub fn detect_alignment_format<P: AsRef<Path>>(path: P) -> AlignmentFormat {
+    match path.as_ref().extension().and_then(|ext| ext.to_str()) {
+        Some("bam") => AlignmentFormat::Bam,
+        Some("sam") => AlignmentFormat::Sam,
+        _ => {
+            // Default to SAM for unknown extensions or no extension
+            // rust-htslib will handle format detection at the binary level
+            AlignmentFormat::Sam
+        }
+    }
+}
+
 /// Minimal alignment data for memory-efficient storage
 #[derive(Debug, Clone)]
 pub struct MinimalAlignment {
@@ -13,31 +42,42 @@ pub struct MinimalAlignment {
     pub read_length: u16,   // Read length
 }
 
-/// Stores the desired fields of a .SAM record and the line itself as a String
+/// Stores the desired fields of a .SAM record
 #[derive(Debug, Clone)]
 pub struct SamLine {
     pub read_id: String,
     pub read_length: usize,
     pub position: u32,
     pub score: Option<f64>,
-    pub btws_flg: u32,
-    pub unmapped: bool,
     pub ref_id: String,
-    pub sam_fields: Vec<String>,
-    pub line: String,
 }
 
 
 
-/// Parse a SAM file from a file path and return all valid SamLine objects
-pub fn parse_sam<P: AsRef<Path>>(
-    sam_path: P,
+/// Parse an alignment file (SAM or BAM) from a file path and return all valid SamLine objects
+/// 
+/// This function uses rust-htslib which automatically detects and handles both SAM and BAM formats.
+/// The format is detected at the binary level by rust-htslib, but we also provide extension-based
+/// detection for clarity and debugging purposes.
+/// 
+/// # Arguments
+/// * `alignment_path` - Path to the SAM or BAM file
+/// * `p_score_cutoff` - Optional minimum score threshold for alignments
+/// 
+/// # Returns
+/// Vector of SamLine objects that meet the score cutoff
+pub fn parse_alignment<P: AsRef<Path>>(
+    alignment_path: P,
     p_score_cutoff: Option<f64>,
 ) -> Result<Vec<SamLine>, String> {
     let p_score_cutoff = p_score_cutoff.unwrap_or(0.01);
     
-    let mut reader = bam::Reader::from_path(&sam_path)
-        .map_err(|e| format!("Failed to open SAM file '{}': {}", sam_path.as_ref().display(), e))?;
+    // Detect format for debugging/logging purposes
+    let detected_format = detect_alignment_format(&alignment_path);
+    
+    let mut reader = bam::Reader::from_path(&alignment_path)
+        .map_err(|e| format!("Failed to open alignment file '{}' (detected format: {:?}): {}", 
+                            alignment_path.as_ref().display(), detected_format, e))?;
 
     let header = reader.header().clone();
     let mut sam_lines = Vec::new();
@@ -89,11 +129,7 @@ pub fn parse_sam<P: AsRef<Path>>(
                 read_length,
                 position,
                 score: Some(total_score),
-                btws_flg: record.flags() as u32,
-                unmapped: record.is_unmapped(),
                 ref_id,
-                sam_fields: Vec::default(), // Not needed for htslib version
-                line: String::default(),    // Not needed for htslib version
             };
 
             sam_lines.push(sam_line);
@@ -103,9 +139,33 @@ pub fn parse_sam<P: AsRef<Path>>(
     Ok(sam_lines)
 }
 
+/// Legacy alias for parse_alignment to maintain backward compatibility
+/// 
+/// # Deprecated
+/// Use `parse_alignment` instead as this function now supports both SAM and BAM formats
+pub fn parse_sam<P: AsRef<Path>>(
+    sam_path: P,
+    p_score_cutoff: Option<f64>,
+) -> Result<Vec<SamLine>, String> {
+    parse_alignment(sam_path, p_score_cutoff)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_detect_alignment_format() {
+        assert_eq!(detect_alignment_format("test.sam"), AlignmentFormat::Sam);
+        assert_eq!(detect_alignment_format("test.bam"), AlignmentFormat::Bam);
+        assert_eq!(detect_alignment_format("test.txt"), AlignmentFormat::Sam); // defaults to SAM
+        assert_eq!(detect_alignment_format("test"), AlignmentFormat::Sam); // no extension defaults to SAM
+        
+        // Test with Path objects
+        use std::path::Path;
+        assert_eq!(detect_alignment_format(Path::new("data/alignments.bam")), AlignmentFormat::Bam);
+        assert_eq!(detect_alignment_format(Path::new("data/alignments.sam")), AlignmentFormat::Sam);
+    }
 
     #[test]
     fn test_parse_sam_basic() {
@@ -148,11 +208,39 @@ mod tests {
         assert_eq!(sam_lines[1].read_id, "read2");
     }
 
+    #[test]
+    fn test_parse_alignment_sam_format() {
+        // Test that parse_alignment works with SAM files (same as parse_sam)
+        let sam_lines: Vec<SamLine> = parse_alignment("example/rust/test_basic.sam", None)
+            .unwrap();
+
+        assert_eq!(sam_lines.len(), 3);
+        assert_eq!(sam_lines[0].read_id, "read1");
+        assert_eq!(sam_lines[0].ref_id, "ref1");
+        assert_eq!(sam_lines[0].score, Some(95.0)); // AS:i:45 + read_length:50
+    }
+
+    #[test]
+    fn test_parse_alignment_backward_compatibility() {
+        // Ensure parse_sam and parse_alignment return identical results for SAM files
+        let sam_results = parse_sam("example/rust/test_basic.sam", None).unwrap();
+        let alignment_results = parse_alignment("example/rust/test_basic.sam", None).unwrap();
+        
+        assert_eq!(sam_results.len(), alignment_results.len());
+        for (sam_line, align_line) in sam_results.iter().zip(alignment_results.iter()) {
+            assert_eq!(sam_line.read_id, align_line.read_id);
+            assert_eq!(sam_line.ref_id, align_line.ref_id);
+            assert_eq!(sam_line.score, align_line.score);
+            assert_eq!(sam_line.position, align_line.position);
+        }
+    }
+
 
     #[test]
     fn test_parse_sam_file_not_found() {
         let result = parse_sam("/nonexistent/file.sam", None);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Failed to open SAM file"));
+        // Updated to match new error message format (includes "alignment file")
+        assert!(result.unwrap_err().contains("Failed to open alignment file"));
     }
 }

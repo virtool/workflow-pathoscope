@@ -218,20 +218,32 @@ def write_report(
 
 
 def run_pathoscope(
-    sam_path: Path,
+    alignment_path: Path,
     p_score_cutoff: float,
     ref_lengths: dict[str, int],
 ):
-    """Run Pathoscope on the SAM file at ``sam_path`` with the given ``p_score_cutoff``.
+    """Run Pathoscope on an alignment file.
 
     Returns PathoscopeResults containing EM results and coverage data.
 
-    :param sam_path: The path to the SAM file.
+    :param alignment_path: The path to the SAM or BAM file.
     :param p_score_cutoff: The minimum allowed ``p_score`` for an alignment.
     :param ref_lengths: Dictionary mapping reference IDs to their lengths.
     """
     return run_expectation_maximization(
-        str(sam_path),
+        str(alignment_path),
         p_score_cutoff,
         ref_lengths,
     )
+
+
+# Backward compatibility alias - DEPRECATED
+def run_pathoscope_sam(
+    sam_path: Path, p_score_cutoff: float, ref_lengths: dict[str, int]
+):
+    """
+    Deprecated: Use run_pathoscope instead.
+
+    This function is kept for backward compatibility.
+    """
+    return run_pathoscope(sam_path, p_score_cutoff, ref_lengths)

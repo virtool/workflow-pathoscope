@@ -8,10 +8,7 @@ use std::path::Path;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum SubtractionError {
-    #[error("Failed to open SAM file '{path}': {source}")]
-    FileOpen { path: String, source: std::io::Error },
-    
+pub enum BamProcessingError {
     #[error("Failed to create output file '{path}': {source}")]
     FileCreate { path: String, source: std::io::Error },
     
@@ -29,9 +26,6 @@ pub enum SubtractionError {
     
     #[error("Failed to parse alignment score from field '{field}': {source}")]
     AlignmentScoreParse { field: String, source: std::num::ParseFloatError },
-    
-    #[error("Failed to read line from file: {source}")]
-    LineRead { source: std::io::Error },
     
     #[error("Failed to write to output file: {source}")]
     WriteOutput { source: std::io::Error },
@@ -66,7 +60,7 @@ impl SubtractionProcessor {
 
     /// Process a SAM line and determine what action to take
     /// Returns None for lines that should be skipped (empty, unmapped, malformed)
-    pub fn process_sam_line(&self, line: &str) -> Result<Option<ProcessResult>, SubtractionError> {
+    pub fn process_sam_line(&self, line: &str) -> Result<Option<ProcessResult>, BamProcessingError> {
         // Skip empty lines
         if line.trim().is_empty() {
             return Ok(None);
@@ -107,9 +101,9 @@ impl SubtractionProcessor {
 
     /// Find the Pathoscope alignment score for a SAM line
     /// Returns AS score + read length
-    fn find_sam_align_score(&self, fields: &[&str]) -> Result<f32, SubtractionError> {
+    fn find_sam_align_score(&self, fields: &[&str]) -> Result<f32, BamProcessingError> {
         if fields.len() < 10 {
-            return Err(SubtractionError::InsufficientFields);
+            return Err(BamProcessingError::InsufficientFields);
         }
 
         let read_length = fields[9].chars().count() as f32;
@@ -119,7 +113,7 @@ impl SubtractionProcessor {
         for field in fields.iter().skip(11) {
             if let Some(stripped) = field.strip_prefix("AS:i:") {
                 a_score = stripped.parse().map_err(|e| {
-                    SubtractionError::AlignmentScoreParse {
+                    BamProcessingError::AlignmentScoreParse {
                         field: field.to_string(),
                         source: e,
                     }
@@ -133,9 +127,9 @@ impl SubtractionProcessor {
 }
 
 /// Parse subtraction SAM file using parse_sam module and return scores for each read
-pub fn parse_subtraction_sam(path: &str) -> Result<HashMap<String, f32>, SubtractionError> {
+pub fn parse_subtraction_sam(path: &str) -> Result<HashMap<String, f32>, BamProcessingError> {
     let sam_lines = parse_sam(path, None)
-        .map_err(SubtractionError::SamParse)?;
+        .map_err(BamProcessingError::SamParse)?;
 
     let mut high_scores: HashMap<String, f32> = HashMap::new();
     
@@ -156,7 +150,7 @@ pub fn eliminate_subtraction(
     isolate_sam_path: &str,
     subtraction_sam_path: &str,
     output_sam_path: &str,
-) -> Result<(), SubtractionError> {
+) -> Result<(), BamProcessingError> {
     // Parse subtraction scores
     let subtraction_scores = parse_subtraction_sam(subtraction_sam_path)?;
     let processor = SubtractionProcessor::new(subtraction_scores);
@@ -171,14 +165,14 @@ pub fn eliminate_subtraction(
 }
 
 /// Process the isolate SAM file and write filtered output using rust-htslib
-fn process_isolate_file(
+pub fn process_isolate_file(
     input_path: &str,
     output_path: &str,
     processor: &SubtractionProcessor,
-) -> Result<HashSet<String>, SubtractionError> {
+) -> Result<HashSet<String>, BamProcessingError> {
     // Open input file with rust-htslib reader
     let mut reader = bam::Reader::from_path(input_path)
-        .map_err(|e| SubtractionError::BamRead { source: e })?;
+        .map_err(|e| BamProcessingError::BamRead { source: e })?;
     
     // Get the header from input to preserve SQ lines and other headers
     let header_view = reader.header().clone();
@@ -187,14 +181,14 @@ fn process_isolate_file(
     let header = bam::Header::from_template(&header_view);
     
     // Create output writer with the same header
-    let mut writer = bam::Writer::from_path(output_path, &header, Format::Sam)
-        .map_err(|e| SubtractionError::BamWrite { source: e })?;
+    let mut writer = bam::Writer::from_path(output_path, &header, Format::Bam)
+        .map_err(|e| BamProcessingError::BamWrite { source: e })?;
 
     let mut subtracted_read_ids = HashSet::new();
 
     // Process each record
     for result in reader.records() {
-        let record = result.map_err(|e| SubtractionError::BamRead { source: e })?;
+        let record = result.map_err(|e| BamProcessingError::BamRead { source: e })?;
         
         // Skip unmapped reads
         if record.is_unmapped() {
@@ -203,7 +197,7 @@ fn process_isolate_file(
         
         // Get read ID
         let read_id = std::str::from_utf8(record.qname())
-            .map_err(|_| SubtractionError::InsufficientFields)?
+            .map_err(|_| BamProcessingError::InsufficientFields)?
             .to_string();
         
         // Get reference name
@@ -241,7 +235,7 @@ fn process_isolate_file(
         } else {
             // Write the record to output
             writer.write(&record)
-                .map_err(|e| SubtractionError::BamWrite { source: e })?;
+                .map_err(|e| BamProcessingError::BamWrite { source: e })?;
         }
     }
 
@@ -252,7 +246,7 @@ fn process_isolate_file(
 fn write_subtracted_ids_file(
     output_sam_path: &str,
     subtracted_ids: &HashSet<String>,
-) -> Result<(), SubtractionError> {
+) -> Result<(), BamProcessingError> {
     // Create subtracted_read_ids.txt in the same directory as the output SAM file
     let output_path = Path::new(output_sam_path);
     let subtracted_ids_path = output_path
@@ -261,14 +255,14 @@ fn write_subtracted_ids_file(
         .join("subtracted_read_ids.txt");
 
     let mut subtracted_read_ids_file = File::create(&subtracted_ids_path)
-        .map_err(|e| SubtractionError::FileCreate {
+        .map_err(|e| BamProcessingError::FileCreate {
             path: subtracted_ids_path.to_string_lossy().to_string(),
             source: e,
         })?;
 
     for read_id in subtracted_ids {
         writeln!(&mut subtracted_read_ids_file, "{}", read_id)
-            .map_err(|e| SubtractionError::WriteOutput { source: e })?;
+            .map_err(|e| BamProcessingError::WriteOutput { source: e })?;
     }
 
     Ok(())
