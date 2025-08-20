@@ -50,7 +50,7 @@ pub fn extract_candidate_otus_from_sam_file<P: AsRef<Path>>(
     let mut reader = bam::Reader::from_path(&sam_path)
         .map_err(|e| StreamProcessorError::FileOpen {
             path: path_str,
-            source: io::Error::new(io::ErrorKind::Other, e),
+            source: io::Error::other(e),
         })?;
 
     extract_candidate_otus_from_reader(&mut reader, p_score_cutoff)
@@ -193,8 +193,8 @@ pub fn extract_candidate_otus_from_bytes(
         // Find AS:i score in the optional fields (starting from field 11)
         let mut as_score: Option<f64> = None;
         for field in &fields[11..] {
-            if field.starts_with("AS:i:") {
-                if let Ok(score) = field[5..].parse::<i32>() {
+            if let Some(stripped) = field.strip_prefix("AS:i:") {
+                if let Ok(score) = stripped.parse::<i32>() {
                     as_score = Some(score as f64);
                     break;
                 }

@@ -42,18 +42,14 @@ pub struct MinimalAlignment {
     pub read_length: u16,   // Read length
 }
 
-/// Stores the desired fields of a .SAM record and the line itself as a String
+/// Stores the desired fields of a .SAM record
 #[derive(Debug, Clone)]
 pub struct SamLine {
     pub read_id: String,
     pub read_length: usize,
     pub position: u32,
     pub score: Option<f64>,
-    pub btws_flg: u32,
-    pub unmapped: bool,
     pub ref_id: String,
-    pub sam_fields: Vec<String>,
-    pub line: String,
 }
 
 
@@ -133,11 +129,7 @@ pub fn parse_alignment<P: AsRef<Path>>(
                 read_length,
                 position,
                 score: Some(total_score),
-                btws_flg: record.flags() as u32,
-                unmapped: record.is_unmapped(),
                 ref_id,
-                sam_fields: Vec::default(), // Not needed for htslib version
-                line: String::default(),    // Not needed for htslib version
             };
 
             sam_lines.push(sam_line);

@@ -1,20 +1,11 @@
 use crate::parse_sam::*;
-use crate::{UniqueReads, MultiMappingReads};
+use crate::{UniqueReads, MultiMappingReads, MatrixResult};
 use std::collections::HashMap;
 
 pub fn build_matrix(
     alignment_path: &str,
     p_score_cutoff: Option<f64>,
-) -> Result<
-    (
-        UniqueReads,
-        MultiMappingReads,
-        Vec<String>,
-        Vec<String>,
-        Vec<MinimalAlignment>,
-    ),
-    String,
-> {
+) -> Result<MatrixResult, String> {
     let mut h_read_id: HashMap<String, i32> = HashMap::new();
     let mut h_ref_id: HashMap<String, i32> = HashMap::new();
 

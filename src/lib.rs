@@ -15,6 +15,13 @@ use std::collections::{HashMap, HashSet};
 // Type aliases for complex HashMap types used throughout the codebase
 pub type UniqueReads = HashMap<i32, (i32, f64)>;
 pub type MultiMappingReads = HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>;
+pub type MatrixResult = (
+    UniqueReads,
+    MultiMappingReads,
+    Vec<String>,
+    Vec<String>,
+    Vec<parse_sam::MinimalAlignment>,
+);
 
 #[pyclass]
 #[derive(Clone)]
@@ -292,7 +299,7 @@ pub fn subtract_fastq(
         
         // Read 4 lines for a FASTQ record
         for _ in 0..4 {
-            let mut line = String::new();
+            let mut line = String::default();
             match reader.read_line(&mut line) {
                 Ok(0) => return Ok(kept_count), // EOF
                 Ok(_) => lines.push(line),
@@ -381,7 +388,7 @@ pub fn eliminate_subtraction_and_filter_fastq(
         
         // Read 4 lines for a FASTQ record
         for _ in 0..4 {
-            let mut line = String::new();
+            let mut line = String::default();
             match reader.read_line(&mut line) {
                 Ok(0) => break, // EOF
                 Ok(_) => lines.push(line),
