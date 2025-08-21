@@ -1,80 +1,165 @@
 use crate::parse_sam::*;
 use crate::{UniqueReads, MultiMappingReads, MatrixResult};
 use std::collections::HashMap;
+use rust_htslib::{bam, bam::Read};
 
 pub fn build_matrix(
     alignment_path: &str,
     p_score_cutoff: Option<f64>,
 ) -> Result<MatrixResult, String> {
+    build_matrix_streaming(alignment_path, p_score_cutoff, 10000)
+}
+
+/// Build matrix with streaming processing to reduce memory usage
+/// 
+/// This function processes alignments in chunks to avoid loading all data into memory at once.
+/// For very large alignment files, this provides significant memory savings.
+/// 
+/// # Arguments
+/// * `alignment_path` - Path to the SAM/BAM file
+/// * `p_score_cutoff` - Optional score cutoff for alignments
+/// * `chunk_size` - Number of records to process in each chunk
+pub fn build_matrix_streaming(
+    alignment_path: &str,
+    p_score_cutoff: Option<f64>,
+    chunk_size: usize,
+) -> Result<MatrixResult, String> {
+    let p_score_cutoff = p_score_cutoff.unwrap_or(0.01);
+    
     let mut h_read_id: HashMap<String, i32> = HashMap::new();
     let mut h_ref_id: HashMap<String, i32> = HashMap::new();
 
     let mut refs: Vec<String> = Vec::new();
     let mut reads: Vec<String> = Vec::new();
-    let mut minimal_alignments: Vec<MinimalAlignment> = Vec::new();
-
+    
     let mut ref_count: i32 = 0;
     let mut read_count: i32 = 0;
 
     let mut max_score: f64 = 0.0;
     let mut min_score: f64 = 0.0;
 
-    // First pass: collect all alignments per read
+    // Instead of storing all alignments, we'll collect them per read directly
     let mut read_alignments: HashMap<i32, Vec<(i32, f64)>> = HashMap::new();
-
-    // Parse all valid alignment lines from the file (SAM or BAM)
-    let sam_lines = parse_alignment(alignment_path, p_score_cutoff)?;
-
-    for new_line in sam_lines {
-
-        // Store minimal alignment data for later use in coverage calculation
-        let minimal_alignment = MinimalAlignment {
-            read_idx: -1,  // Will be updated after read index is determined
-            ref_idx: -1,   // Will be updated after ref index is determined
-            position: new_line.position,
-            read_length: new_line.read_length as u16,
-        };
-        minimal_alignments.push(minimal_alignment);
-
-        let score = new_line.score.ok_or("Missing score in SAM line")?;
-        min_score = score.min(min_score);
-        max_score = score.max(max_score);
-
-        // Get or create reference index
-        let ref_index = *h_ref_id.get(&new_line.ref_id).unwrap_or(&-1);
-        let ref_index = if ref_index == -1 {
-            let new_ref_index = ref_count;
-            h_ref_id.insert(new_line.ref_id.clone(), new_ref_index);
-            refs.push(new_line.ref_id.clone());
-            ref_count += 1;
-            new_ref_index
-        } else {
-            ref_index
-        };
-
-        // Get or create read index
-        let read_index = *h_read_id.get(&new_line.read_id).unwrap_or(&-1);
-        let read_index = if read_index == -1 {
-            let new_read_index = read_count;
-            h_read_id.insert(new_line.read_id.clone(), new_read_index);
-            reads.push(new_line.read_id.clone());
-            read_count += 1;
-            new_read_index
-        } else {
-            read_index
-        };
-
-        // Update the minimal alignment with the correct indices
-        if let Some(last_alignment) = minimal_alignments.last_mut() {
-            last_alignment.read_idx = read_index;
-            last_alignment.ref_idx = ref_index;
+    
+    // Open reader once for streaming
+    let mut reader = bam::Reader::from_path(alignment_path)
+        .map_err(|e| format!("Failed to open alignment file '{}': {}", alignment_path, e))?;
+    
+    let header = reader.header().clone();
+    
+    // Process records in chunks
+    let mut _chunk_count = 0;
+    let mut _total_processed = 0;
+    
+    // We'll collect minimal alignments only for records that pass filters
+    let mut minimal_alignments = Vec::new();
+    
+    loop {
+        let mut chunk_records = Vec::with_capacity(chunk_size);
+        
+        // Read a chunk of records
+        for _ in 0..chunk_size {
+            let mut record = bam::Record::new();
+            match reader.read(&mut record) {
+                Some(Ok(_)) => chunk_records.push(record),
+                Some(Err(_)) | None => break, // EOF or error
+            }
         }
-
-        // Add alignment to read's collection (skip duplicates)
-        let alignments = read_alignments.entry(read_index).or_default();
-        if !alignments.iter().any(|(ref_idx, _)| *ref_idx == ref_index) {
-            alignments.push((ref_index, score));
+        
+        if chunk_records.is_empty() {
+            break;
         }
+        
+        // Process this chunk
+        for record in chunk_records {
+            // Skip unmapped reads
+            if record.is_unmapped() {
+                continue;
+            }
+
+            // Get read ID (qname)
+            let read_id = std::str::from_utf8(record.qname())
+                .map_err(|e| format!("Invalid UTF-8 in read ID: {}", e))?
+                .to_string();
+
+            // Get reference name
+            let name_bytes = header.tid2name(record.tid() as u32);
+            let ref_id = std::str::from_utf8(name_bytes).unwrap_or("*").to_string();
+
+            // Get position (1-based in SAM format)
+            let position = record.pos() as u32 + 1;
+
+            // Get read length
+            let read_length = record.seq_len();
+
+            // Get alignment score from AS:i: auxiliary field
+            let as_score = match record.aux(b"AS") {
+                Ok(aux) => match aux {
+                    rust_htslib::bam::record::Aux::I32(score) => score as f64,
+                    rust_htslib::bam::record::Aux::I8(score) => score as f64,
+                    rust_htslib::bam::record::Aux::I16(score) => score as f64,
+                    rust_htslib::bam::record::Aux::U8(score) => score as f64,
+                    rust_htslib::bam::record::Aux::U16(score) => score as f64,
+                    rust_htslib::bam::record::Aux::U32(score) => score as f64,
+                    _ => continue, // Skip records with unexpected AS type
+                },
+                Err(_) => continue, // Skip records without AS field
+            };
+
+            // Calculate total score (AS score + read length, matching original logic)
+            let total_score = as_score + read_length as f64;
+
+            // Apply score cutoff
+            if total_score <= p_score_cutoff {
+                continue;
+            }
+            
+            // Track score range
+            min_score = total_score.min(min_score);
+            max_score = total_score.max(max_score);
+
+            // Get or create reference index
+            let ref_index = *h_ref_id.get(&ref_id).unwrap_or(&-1);
+            let ref_index = if ref_index == -1 {
+                let new_ref_index = ref_count;
+                h_ref_id.insert(ref_id.clone(), new_ref_index);
+                refs.push(ref_id.clone());
+                ref_count += 1;
+                new_ref_index
+            } else {
+                ref_index
+            };
+
+            // Get or create read index
+            let read_index = *h_read_id.get(&read_id).unwrap_or(&-1);
+            let read_index = if read_index == -1 {
+                let new_read_index = read_count;
+                h_read_id.insert(read_id.clone(), new_read_index);
+                reads.push(read_id.clone());
+                read_count += 1;
+                new_read_index
+            } else {
+                read_index
+            };
+
+            // Store minimal alignment data for coverage calculation
+            minimal_alignments.push(MinimalAlignment {
+                read_idx: read_index,
+                ref_idx: ref_index,
+                position,
+                read_length: read_length as u16,
+            });
+
+            // Add alignment to read's collection (skip duplicates)
+            let alignments = read_alignments.entry(read_index).or_default();
+            if !alignments.iter().any(|(ref_idx, _)| *ref_idx == ref_index) {
+                alignments.push((ref_index, total_score));
+            }
+            
+            _total_processed += 1;
+        }
+        
+        _chunk_count += 1;
     }
 
     // Second pass: classify reads as unique or non-unique and build final data structures
