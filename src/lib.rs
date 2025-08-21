@@ -54,12 +54,58 @@ pub struct PathoscopeResults {
     pub coverage: HashMap<String, Vec<usize>>,
 }
 
+/// Lightweight EM results structure that avoids storing full read/ref vectors
+/// until absolutely necessary for the final Python interface
+#[derive(Clone)]
+pub struct CompactEMResults {
+    pub best_hit_initial_reads: Vec<f64>,
+    pub best_hit_initial: Vec<f64>,
+    pub level_1_initial: Vec<f64>,
+    pub level_2_initial: Vec<f64>,
+    pub best_hit_final_reads: Vec<f64>,
+    pub best_hit_final: Vec<f64>,
+    pub level_1_final: Vec<f64>,
+    pub level_2_final: Vec<f64>,
+    pub init_pi: Vec<f64>,
+    pub pi: Vec<f64>,
+    // Store only reference count and read count to save memory
+    pub ref_count: usize,
+    pub read_count: usize,
+}
+
+impl CompactEMResults {
+    /// Convert to full PathoscopeResults when needed
+    pub fn to_pathoscope_results(
+        self,
+        refs: Vec<String>,
+        reads: Vec<String>,
+        coverage: HashMap<String, Vec<usize>>,
+    ) -> PathoscopeResults {
+        PathoscopeResults {
+            best_hit_initial_reads: self.best_hit_initial_reads,
+            best_hit_initial: self.best_hit_initial,
+            level_1_initial: self.level_1_initial,
+            level_2_initial: self.level_2_initial,
+            best_hit_final_reads: self.best_hit_final_reads,
+            best_hit_final: self.best_hit_final,
+            level_1_final: self.level_1_final,
+            level_2_final: self.level_2_final,
+            init_pi: self.init_pi,
+            pi: self.pi,
+            refs,
+            reads,
+            coverage,
+        }
+    }
+}
+
 #[pymodule]
 /// pyo3 interface
 fn rust(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PathoscopeResults>()?;
     m.add_function(wrap_pyfunction!(parse_isolate_scores, m)?)?;
     m.add_function(wrap_pyfunction!(run_expectation_maximization, m)?)?;
+    m.add_function(wrap_pyfunction!(run_expectation_maximization_streaming, m)?)?;
     m.add_function(wrap_pyfunction!(run_eliminate_subtraction, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_coverage_from_em_results, m)?)?;
     m.add_function(wrap_pyfunction!(find_candidate_otus, m)?)?;
@@ -139,25 +185,14 @@ pub fn parse_isolate_scores(
             .map_err(|e| PyErr::new::<PyIOError, _>(format!("Invalid UTF-8 in read ID: {}", e)))?
             .to_string();
 
-        // Get read length
-        let read_length = record.seq_len();
+        // Get read length (unused but kept for potential future use)
+        let _read_length = record.seq_len();
 
-        // Get alignment score from AS:i: auxiliary field
-        let as_score = match record.aux(b"AS") {
-            Ok(aux) => match aux {
-                rust_htslib::bam::record::Aux::I32(score) => score as f64,
-                rust_htslib::bam::record::Aux::I8(score) => score as f64,
-                rust_htslib::bam::record::Aux::I16(score) => score as f64,
-                rust_htslib::bam::record::Aux::U8(score) => score as f64,
-                rust_htslib::bam::record::Aux::U16(score) => score as f64,
-                rust_htslib::bam::record::Aux::U32(score) => score as f64,
-                _ => continue, // Skip records with unexpected AS type
-            },
-            Err(_) => continue, // Skip records without AS field
+        // Get alignment score using shared function
+        let total_score = match parse_sam::extract_alignment_score(&record) {
+            Some(score) => score,
+            None => continue, // Skip records without valid AS field
         };
-
-        // Calculate total score (AS score + read length, matching original logic)
-        let total_score = as_score + read_length as f64;
 
         // Apply score cutoff
         if total_score >= p_score_cutoff {
@@ -179,8 +214,30 @@ pub fn run_expectation_maximization(
     p_score_cutoff: f64,
     ref_lengths: HashMap<String, usize>,
 ) -> PyResult<PathoscopeResults> {
+    run_expectation_maximization_streaming(_py, alignment_path, p_score_cutoff, ref_lengths, 10000)
+}
+
+#[pyfunction]
+/// Memory-optimized expectation maximization with streaming processing
+/// 
+/// This function uses chunked processing and compact data structures to reduce
+/// memory usage during EM algorithm execution.
+/// 
+/// # Arguments
+/// * `alignment_path` - Path to the SAM/BAM file
+/// * `p_score_cutoff` - Minimum score threshold for alignments
+/// * `ref_lengths` - Dictionary mapping reference IDs to their lengths
+/// * `chunk_size` - Number of records to process in each chunk
+pub fn run_expectation_maximization_streaming(
+    _py: Python,
+    alignment_path: String,
+    p_score_cutoff: f64,
+    ref_lengths: HashMap<String, usize>,
+    chunk_size: usize,
+) -> PyResult<PathoscopeResults> {
+    // Use streaming matrix building to reduce memory footprint
     let (u, nu, refs, reads, minimal_alignments) =
-        build_matrix(alignment_path.as_str(), None)
+        matrix::build_matrix_with_chunk_size(alignment_path.as_str(), Some(p_score_cutoff), chunk_size)
             .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to build matrix: {}", e)))?;
 
     let (best_hit_initial_reads, best_hit_initial, level_1_initial, level_2_initial) =

@@ -105,22 +105,11 @@ pub fn parse_alignment<P: AsRef<Path>>(
         // Get read length
         let read_length = record.seq_len();
 
-        // Get alignment score from AS:i: auxiliary field
-        let as_score = match record.aux(b"AS") {
-            Ok(aux) => match aux {
-                rust_htslib::bam::record::Aux::I32(score) => score as f64,
-                rust_htslib::bam::record::Aux::I8(score) => score as f64,
-                rust_htslib::bam::record::Aux::I16(score) => score as f64,
-                rust_htslib::bam::record::Aux::U8(score) => score as f64,
-                rust_htslib::bam::record::Aux::U16(score) => score as f64,
-                rust_htslib::bam::record::Aux::U32(score) => score as f64,
-                _ => continue, // Skip records with unexpected AS type
-            },
-            Err(_) => continue, // Skip records without AS field
+        // Get alignment score using shared function
+        let total_score = match extract_alignment_score(&record) {
+            Some(score) => score,
+            None => continue, // Skip records without valid AS field
         };
-
-        // Calculate total score (AS score + read length, matching original logic)
-        let total_score = as_score + read_length as f64;
 
         // Apply score cutoff
         if total_score > p_score_cutoff {
@@ -137,6 +126,35 @@ pub fn parse_alignment<P: AsRef<Path>>(
     }
 
     Ok(sam_lines)
+}
+
+/// Extract alignment score from a BAM record
+/// 
+/// This function extracts the AS:i auxiliary field value and calculates the total score
+/// by adding it to the read length, following the original PathOScope logic.
+/// 
+/// # Arguments
+/// * `record` - BAM record to extract score from
+/// 
+/// # Returns
+/// Some(total_score) if AS field is found and valid, None otherwise
+pub fn extract_alignment_score(record: &bam::Record) -> Option<f64> {
+    let read_length = record.seq_len() as f64;
+    
+    let as_score = match record.aux(b"AS") {
+        Ok(aux) => match aux {
+            rust_htslib::bam::record::Aux::I32(score) => score as f64,
+            rust_htslib::bam::record::Aux::I8(score) => score as f64,
+            rust_htslib::bam::record::Aux::I16(score) => score as f64,
+            rust_htslib::bam::record::Aux::U8(score) => score as f64,
+            rust_htslib::bam::record::Aux::U16(score) => score as f64,
+            rust_htslib::bam::record::Aux::U32(score) => score as f64,
+            _ => return None, // Skip records with unexpected AS type
+        },
+        Err(_) => return None, // Skip records without AS field
+    };
+    
+    Some(as_score + read_length)
 }
 
 /// Legacy alias for parse_alignment to maintain backward compatibility
