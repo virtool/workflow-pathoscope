@@ -35,13 +35,15 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
+          target: base
           push: false
-          tags: virtool/pathoscope:test
+          tags: virtool/pathoscope:base
           cache-from: type=gha
           cache-to: type=gha,mode=max
   test-rust:
     name: Test / Rust
     runs-on: ubuntu-24.04
+    needs: [build]
     permissions:
       contents: read
     steps:
@@ -56,6 +58,7 @@ jobs:
   test-python:
     name: Test / Python
     runs-on: ubuntu-24.04
+    needs: [build]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
