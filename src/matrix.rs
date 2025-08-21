@@ -1,59 +1,254 @@
 use crate::parse_sam::*;
 use crate::{UniqueReads, MultiMappingReads, MatrixResult};
 use std::collections::HashMap;
-use rust_htslib::{bam, bam::Read};
+use rust_htslib::{bam, bam::Read, bam::HeaderView};
 
-pub fn build_matrix(
-    alignment_path: &str,
-    p_score_cutoff: Option<f64>,
-) -> Result<MatrixResult, String> {
-    build_matrix_streaming(alignment_path, p_score_cutoff, 10000)
+/// A matrix containing alignment data and metadata.
+/// 
+/// This struct encapsulates all the data produced by matrix building,
+/// providing a clean interface and methods for processing alignment data.
+#[derive(Debug, Clone)]
+pub struct PathoscopeMatrix {
+    pub unique_reads: UniqueReads,
+    pub multi_mapping_reads: MultiMappingReads,
+    pub refs: Vec<String>,
+    pub reads: Vec<String>,
+    pub alignments: Vec<MinimalAlignment>,
+    pub max_score: f64,
+    pub min_score: f64,
 }
 
-/// Build matrix with streaming processing to reduce memory usage
-/// 
-/// This function processes alignments in chunks to avoid loading all data into memory at once.
-/// For very large alignment files, this provides significant memory savings.
+impl PathoscopeMatrix {
+    /// Create PathoscopeMatrix from raw alignment data
+    /// 
+    /// # Arguments
+    /// * `read_alignments` - Map of read indices to their alignment data
+    /// * `refs` - Reference sequence names
+    /// * `reads` - Read sequence names  
+    /// * `alignments` - Minimal alignment data for coverage calculation
+    /// * `max_score` - Maximum alignment score found
+    /// * `min_score` - Minimum alignment score found
+    pub fn from_alignments(
+        read_alignments: HashMap<i32, Vec<(i32, f64)>>,
+        refs: Vec<String>,
+        reads: Vec<String>,
+        alignments: Vec<MinimalAlignment>,
+        max_score: f64,
+        min_score: f64,
+    ) -> Self {
+        // Classify reads as unique or multi-mapping
+        let mut u_temp: MultiMappingReads = HashMap::new();
+        let mut nu: MultiMappingReads = HashMap::new();
+
+        for (read_index, read_alignments) in read_alignments {
+            if read_alignments.len() == 1 {
+                // Unique read: maps to exactly one reference
+                let (ref_index, score) = read_alignments[0];
+                u_temp.insert(
+                    read_index,
+                    (vec![ref_index], vec![score], vec![score], score),
+                );
+            } else {
+                // Non-unique read: maps to multiple references
+                let ref_indices: Vec<i32> = read_alignments.iter().map(|(ref_idx, _)| *ref_idx).collect();
+                let scores: Vec<f64> = read_alignments.iter().map(|(_, score)| *score).collect();
+                let max_score = scores.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                
+                nu.insert(
+                    read_index,
+                    (ref_indices, scores, vec![], max_score),
+                );
+            }
+        }
+
+        let mut matrix = PathoscopeMatrix {
+            unique_reads: HashMap::new(),
+            multi_mapping_reads: nu,
+            refs,
+            reads,
+            alignments,
+            max_score,
+            min_score,
+        };
+
+        // Rescale scores and build final data structures
+        matrix.rescale_scores(u_temp);
+        matrix.build_unique_map();
+        matrix.normalize_multi_mapping();
+
+        matrix
+    }
+
+    /// Rescale alignment scores using the existing rescale_samscore function
+    fn rescale_scores(&mut self, u_temp: MultiMappingReads) {
+        let (u, nu) = rescale_samscore(u_temp, self.multi_mapping_reads.clone(), self.max_score, self.min_score);
+        self.multi_mapping_reads = nu;
+        
+        // Convert u to unique_reads format and store for build_unique_map
+        self.unique_reads = HashMap::new();
+        for (read_idx, (ref_indices, scores, _, _)) in u {
+            if let (Some(first_ref), Some(first_score)) = (ref_indices.first(), scores.first()) {
+                self.unique_reads.insert(read_idx, (*first_ref, *first_score));
+            }
+        }
+    }
+
+    /// Build the final unique reads map (placeholder as rescale_scores now handles this)
+    fn build_unique_map(&mut self) {
+        // This is now handled in rescale_scores method
+    }
+
+    /// Normalize multi-mapping read scores so they sum to 1.0
+    fn normalize_multi_mapping(&mut self) {
+        let nu_keys: Vec<i32> = self.multi_mapping_reads.keys().cloned().collect();
+        for k in nu_keys {
+            if let Some(nu_entry) = self.multi_mapping_reads.get(&k) {
+                let p_score_sum = nu_entry.1.iter().sum::<f64>();
+                if let Some(nu_entry_mut) = self.multi_mapping_reads.get_mut(&k) {
+                    nu_entry_mut.2 = nu_entry_mut
+                        .1
+                        .iter()
+                        .map(|data| data / p_score_sum)
+                        .collect();
+                }
+            }
+        }
+    }
+
+    /// Convert to the legacy MatrixResult tuple format for backward compatibility
+    pub fn to_matrix_result(self) -> MatrixResult {
+        (
+            self.unique_reads,
+            self.multi_mapping_reads,
+            self.refs,
+            self.reads,
+            self.alignments,
+        )
+    }
+}
+
+/// Process a single BAM record and extract alignment data
 /// 
 /// # Arguments
-/// * `alignment_path` - Path to the SAM/BAM file
-/// * `p_score_cutoff` - Optional score cutoff for alignments
-/// * `chunk_size` - Number of records to process in each chunk
-pub fn build_matrix_streaming(
-    alignment_path: &str,
-    p_score_cutoff: Option<f64>,
+/// * `record` - BAM record to process
+/// * `header` - BAM file header for reference name lookup
+/// * `p_score_cutoff` - Minimum score threshold
+/// * `h_read_id` - Mutable reference to read ID to index mapping
+/// * `h_ref_id` - Mutable reference to reference ID to index mapping
+/// * `refs` - Mutable reference to reference names vector
+/// * `reads` - Mutable reference to read names vector
+/// * `ref_count` - Mutable reference to reference counter
+/// * `read_count` - Mutable reference to read counter
+/// * `max_score` - Mutable reference to maximum score tracker
+/// * `min_score` - Mutable reference to minimum score tracker
+/// 
+/// # Returns
+/// Option containing (read_index, ref_index, minimal_alignment, score) if record is valid
+fn process_bam_record(
+    record: &bam::Record,
+    header: &HeaderView,
+    p_score_cutoff: f64,
+    h_read_id: &mut HashMap<String, i32>,
+    h_ref_id: &mut HashMap<String, i32>,
+    refs: &mut Vec<String>,
+    reads: &mut Vec<String>,
+    ref_count: &mut i32,
+    read_count: &mut i32,
+    max_score: &mut f64,
+    min_score: &mut f64,
+) -> Option<(i32, i32, MinimalAlignment, f64)> {
+    // Skip unmapped reads
+    if record.is_unmapped() {
+        return None;
+    }
+
+    // Get read ID (qname)
+    let read_id = std::str::from_utf8(record.qname()).ok()?.to_string();
+
+    // Get reference name
+    let name_bytes = header.tid2name(record.tid() as u32);
+    let ref_id = std::str::from_utf8(name_bytes).unwrap_or("*").to_string();
+
+    // Get position (1-based in SAM format)
+    let position = record.pos() as u32 + 1;
+
+    // Get read length
+    let read_length = record.seq_len();
+
+    // Get alignment score using shared function
+    let total_score = extract_alignment_score(record)?;
+
+    // Apply score cutoff
+    if total_score <= p_score_cutoff {
+        return None;
+    }
+
+    // Track score range
+    *min_score = total_score.min(*min_score);
+    *max_score = total_score.max(*max_score);
+
+    // Get or create reference index
+    let ref_index = *h_ref_id.get(&ref_id).unwrap_or(&-1);
+    let ref_index = if ref_index == -1 {
+        let new_ref_index = *ref_count;
+        h_ref_id.insert(ref_id.clone(), new_ref_index);
+        refs.push(ref_id);
+        *ref_count += 1;
+        new_ref_index
+    } else {
+        ref_index
+    };
+
+    // Get or create read index
+    let read_index = *h_read_id.get(&read_id).unwrap_or(&-1);
+    let read_index = if read_index == -1 {
+        let new_read_index = *read_count;
+        h_read_id.insert(read_id.clone(), new_read_index);
+        reads.push(read_id);
+        *read_count += 1;
+        new_read_index
+    } else {
+        read_index
+    };
+
+    // Create minimal alignment data
+    let minimal_alignment = MinimalAlignment {
+        read_idx: read_index,
+        ref_idx: ref_index,
+        position,
+        read_length: read_length as u16,
+    };
+
+    Some((read_index, ref_index, minimal_alignment, total_score))
+}
+
+/// Build read alignments map by processing BAM file in chunks
+/// 
+/// # Arguments
+/// * `reader` - BAM file reader
+/// * `header` - BAM file header  
+/// * `chunk_size` - Number of records to process per chunk
+/// * `p_score_cutoff` - Minimum score threshold
+/// 
+/// # Returns
+/// Tuple containing (read_alignments, refs, reads, minimal_alignments, max_score, min_score)
+fn create_read_alignments_map(
+    mut reader: bam::Reader,
+    header: &HeaderView,
     chunk_size: usize,
-) -> Result<MatrixResult, String> {
-    let p_score_cutoff = p_score_cutoff.unwrap_or(0.01);
-    
+    p_score_cutoff: f64,
+) -> Result<(HashMap<i32, Vec<(i32, f64)>>, Vec<String>, Vec<String>, Vec<MinimalAlignment>, f64, f64), String> {
     let mut h_read_id: HashMap<String, i32> = HashMap::new();
     let mut h_ref_id: HashMap<String, i32> = HashMap::new();
-
     let mut refs: Vec<String> = Vec::new();
     let mut reads: Vec<String> = Vec::new();
-    
     let mut ref_count: i32 = 0;
     let mut read_count: i32 = 0;
-
     let mut max_score: f64 = 0.0;
     let mut min_score: f64 = 0.0;
-
-    // Instead of storing all alignments, we'll collect them per read directly
-    let mut read_alignments: HashMap<i32, Vec<(i32, f64)>> = HashMap::new();
-    
-    // Open reader once for streaming
-    let mut reader = bam::Reader::from_path(alignment_path)
-        .map_err(|e| format!("Failed to open alignment file '{}': {}", alignment_path, e))?;
-    
-    let header = reader.header().clone();
-    
-    // Process records in chunks
-    let mut _chunk_count = 0;
-    let mut _total_processed = 0;
-    
-    // We'll collect minimal alignments only for records that pass filters
     let mut minimal_alignments = Vec::new();
-    
+    let mut read_alignments: HashMap<i32, Vec<(i32, f64)>> = HashMap::new();
+
     loop {
         let mut chunk_records = Vec::with_capacity(chunk_size);
         
@@ -72,148 +267,89 @@ pub fn build_matrix_streaming(
         
         // Process this chunk
         for record in chunk_records {
-            // Skip unmapped reads
-            if record.is_unmapped() {
-                continue;
-            }
+            if let Some((read_index, ref_index, minimal_alignment, total_score)) = process_bam_record(
+                &record,
+                header,
+                p_score_cutoff,
+                &mut h_read_id,
+                &mut h_ref_id,
+                &mut refs,
+                &mut reads,
+                &mut ref_count,
+                &mut read_count,
+                &mut max_score,
+                &mut min_score,
+            ) {
+                minimal_alignments.push(minimal_alignment);
 
-            // Get read ID (qname)
-            let read_id = std::str::from_utf8(record.qname())
-                .map_err(|e| format!("Invalid UTF-8 in read ID: {}", e))?
-                .to_string();
-
-            // Get reference name
-            let name_bytes = header.tid2name(record.tid() as u32);
-            let ref_id = std::str::from_utf8(name_bytes).unwrap_or("*").to_string();
-
-            // Get position (1-based in SAM format)
-            let position = record.pos() as u32 + 1;
-
-            // Get read length
-            let read_length = record.seq_len();
-
-            // Get alignment score from AS:i: auxiliary field
-            let as_score = match record.aux(b"AS") {
-                Ok(aux) => match aux {
-                    rust_htslib::bam::record::Aux::I32(score) => score as f64,
-                    rust_htslib::bam::record::Aux::I8(score) => score as f64,
-                    rust_htslib::bam::record::Aux::I16(score) => score as f64,
-                    rust_htslib::bam::record::Aux::U8(score) => score as f64,
-                    rust_htslib::bam::record::Aux::U16(score) => score as f64,
-                    rust_htslib::bam::record::Aux::U32(score) => score as f64,
-                    _ => continue, // Skip records with unexpected AS type
-                },
-                Err(_) => continue, // Skip records without AS field
-            };
-
-            // Calculate total score (AS score + read length, matching original logic)
-            let total_score = as_score + read_length as f64;
-
-            // Apply score cutoff
-            if total_score <= p_score_cutoff {
-                continue;
-            }
-            
-            // Track score range
-            min_score = total_score.min(min_score);
-            max_score = total_score.max(max_score);
-
-            // Get or create reference index
-            let ref_index = *h_ref_id.get(&ref_id).unwrap_or(&-1);
-            let ref_index = if ref_index == -1 {
-                let new_ref_index = ref_count;
-                h_ref_id.insert(ref_id.clone(), new_ref_index);
-                refs.push(ref_id.clone());
-                ref_count += 1;
-                new_ref_index
-            } else {
-                ref_index
-            };
-
-            // Get or create read index
-            let read_index = *h_read_id.get(&read_id).unwrap_or(&-1);
-            let read_index = if read_index == -1 {
-                let new_read_index = read_count;
-                h_read_id.insert(read_id.clone(), new_read_index);
-                reads.push(read_id.clone());
-                read_count += 1;
-                new_read_index
-            } else {
-                read_index
-            };
-
-            // Store minimal alignment data for coverage calculation
-            minimal_alignments.push(MinimalAlignment {
-                read_idx: read_index,
-                ref_idx: ref_index,
-                position,
-                read_length: read_length as u16,
-            });
-
-            // Add alignment to read's collection (skip duplicates)
-            let alignments = read_alignments.entry(read_index).or_default();
-            if !alignments.iter().any(|(ref_idx, _)| *ref_idx == ref_index) {
-                alignments.push((ref_index, total_score));
-            }
-            
-            _total_processed += 1;
-        }
-        
-        _chunk_count += 1;
-    }
-
-    // Second pass: classify reads as unique or non-unique and build final data structures
-    let mut u_temp: MultiMappingReads = std::collections::HashMap::new();
-    let mut nu: MultiMappingReads = std::collections::HashMap::new();
-
-    for (read_index, alignments) in read_alignments {
-        if alignments.len() == 1 {
-            // Unique read: maps to exactly one reference
-            let (ref_index, score) = alignments[0];
-            u_temp.insert(
-                read_index,
-                (vec![ref_index], vec![score], vec![score], score),
-            );
-        } else {
-            // Non-unique read: maps to multiple references
-            let ref_indices: Vec<i32> = alignments.iter().map(|(ref_idx, _)| *ref_idx).collect();
-            let scores: Vec<f64> = alignments.iter().map(|(_, score)| *score).collect();
-            let max_score = scores.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            
-            nu.insert(
-                read_index,
-                (ref_indices, scores, vec![], max_score),
-            );
-        }
-    }
-
-    let (u, mut nu) = rescale_samscore(u_temp, nu, max_score, min_score);
-
-    let mut u_return: UniqueReads = std::collections::HashMap::new();
-
-    for k in u.keys() {
-        if let Some(u_entry) = u.get(k) {
-            if let (Some(first_ref), Some(first_score)) = (u_entry.0.first(), u_entry.1.first()) {
-                u_return.insert(*k, (*first_ref, *first_score));
+                // Add alignment to read's collection (skip duplicates)
+                let alignments = read_alignments.entry(read_index).or_default();
+                if !alignments.iter().any(|(ref_idx, _)| *ref_idx == ref_index) {
+                    alignments.push((ref_index, total_score));
+                }
             }
         }
     }
 
-    let nu_keys: Vec<i32> = nu.keys().cloned().collect();
-    for k in nu_keys {
-        if let Some(nu_entry) = nu.get(&k) {
-            let p_score_sum = nu_entry.1.iter().sum::<f64>();
-            if let Some(nu_entry_mut) = nu.get_mut(&k) {
-                nu_entry_mut.2 = nu_entry_mut
-                    .1
-                    .iter()
-                    .map(|data| data / p_score_sum)
-                    .collect();
-            }
-        }
-    }
+    Ok((read_alignments, refs, reads, minimal_alignments, max_score, min_score))
+}
 
-    Ok((u_return, nu, refs, reads, minimal_alignments))
+pub fn build_matrix(
+    alignment_path: &str,
+    p_score_cutoff: Option<f64>,
+) -> Result<MatrixResult, String> {
+    build_matrix_with_chunk_size(alignment_path, p_score_cutoff, 10000)
+}
+
+/// Build matrix with streaming processing to reduce memory usage
+/// 
+/// This function processes alignments in chunks to avoid loading all data into memory at once.
+/// For very large alignment files, this provides significant memory savings.
+/// 
+/// # Arguments
+/// * `alignment_path` - Path to the SAM/BAM file
+/// * `p_score_cutoff` - Optional score cutoff for alignments
+/// * `chunk_size` - Number of records to process in each chunk
+pub fn build_matrix_with_chunk_size(
+    alignment_path: &str,
+    p_score_cutoff: Option<f64>,
+    chunk_size: usize,
+) -> Result<MatrixResult, String> {
+    let p_score_cutoff = p_score_cutoff.unwrap_or(0.01);
+    
+    // Open reader for streaming
+    let reader = bam::Reader::from_path(alignment_path)
+        .map_err(|e| format!("Failed to open alignment file '{}': {}", alignment_path, e))?;
+    
+    let header = reader.header().clone();
+    
+    // Build read alignments map using helper function
+    let (read_alignments, refs, reads, minimal_alignments, max_score, min_score) = 
+        create_read_alignments_map(reader, &header, chunk_size, p_score_cutoff)?;
+
+    // Create PathoscopeMatrix and convert to legacy format
+    let matrix = PathoscopeMatrix::from_alignments(
+        read_alignments,
+        refs,
+        reads,
+        minimal_alignments,
+        max_score,
+        min_score,
+    );
+
+    Ok(matrix.to_matrix_result())
+}
+
+/// Legacy alias for build_matrix_with_chunk_size
+/// 
+/// # Deprecated
+/// Use `build_matrix_with_chunk_size` instead for explicit chunk size control
+pub fn build_matrix_streaming(
+    alignment_path: &str,
+    p_score_cutoff: Option<f64>,
+    chunk_size: usize,
+) -> Result<MatrixResult, String> {
+    build_matrix_with_chunk_size(alignment_path, p_score_cutoff, chunk_size)
 }
 
 /// modifies the scores of u and nu with respect to max_score and min_score

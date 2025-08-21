@@ -1,3 +1,4 @@
+use crate::parse_sam;
 use rust_htslib::{bam, bam::Read};
 use std::collections::HashSet;
 use std::io;
@@ -119,23 +120,8 @@ pub fn extract_candidate_otus_from_reader(
 /// # Returns
 /// Total score (AS alignment score + read length)
 fn calculate_total_score(record: &bam::Record) -> Result<f64, StreamProcessorError> {
-    let read_length = record.seq_len() as f64;
-
-    // Get alignment score from AS:i: auxiliary field
-    let as_score = match record.aux(b"AS") {
-        Ok(aux) => match aux {
-            rust_htslib::bam::record::Aux::I32(score) => score as f64,
-            rust_htslib::bam::record::Aux::I8(score) => score as f64,
-            rust_htslib::bam::record::Aux::I16(score) => score as f64,
-            rust_htslib::bam::record::Aux::U8(score) => score as f64,
-            rust_htslib::bam::record::Aux::U16(score) => score as f64,
-            rust_htslib::bam::record::Aux::U32(score) => score as f64,
-            _ => return Err(StreamProcessorError::AlignmentScoreParse),
-        },
-        Err(_) => return Err(StreamProcessorError::AlignmentScoreParse),
-    };
-
-    Ok(as_score + read_length)
+    parse_sam::extract_alignment_score(record)
+        .ok_or(StreamProcessorError::AlignmentScoreParse)
 }
 
 /// Extract candidate OTU reference IDs from SAM text data

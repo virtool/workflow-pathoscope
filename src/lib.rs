@@ -185,25 +185,14 @@ pub fn parse_isolate_scores(
             .map_err(|e| PyErr::new::<PyIOError, _>(format!("Invalid UTF-8 in read ID: {}", e)))?
             .to_string();
 
-        // Get read length
-        let read_length = record.seq_len();
+        // Get read length (unused but kept for potential future use)
+        let _read_length = record.seq_len();
 
-        // Get alignment score from AS:i: auxiliary field
-        let as_score = match record.aux(b"AS") {
-            Ok(aux) => match aux {
-                rust_htslib::bam::record::Aux::I32(score) => score as f64,
-                rust_htslib::bam::record::Aux::I8(score) => score as f64,
-                rust_htslib::bam::record::Aux::I16(score) => score as f64,
-                rust_htslib::bam::record::Aux::U8(score) => score as f64,
-                rust_htslib::bam::record::Aux::U16(score) => score as f64,
-                rust_htslib::bam::record::Aux::U32(score) => score as f64,
-                _ => continue, // Skip records with unexpected AS type
-            },
-            Err(_) => continue, // Skip records without AS field
+        // Get alignment score using shared function
+        let total_score = match parse_sam::extract_alignment_score(&record) {
+            Some(score) => score,
+            None => continue, // Skip records without valid AS field
         };
-
-        // Calculate total score (AS score + read length, matching original logic)
-        let total_score = as_score + read_length as f64;
 
         // Apply score cutoff
         if total_score >= p_score_cutoff {
@@ -248,7 +237,7 @@ pub fn run_expectation_maximization_streaming(
 ) -> PyResult<PathoscopeResults> {
     // Use streaming matrix building to reduce memory footprint
     let (u, nu, refs, reads, minimal_alignments) =
-        matrix::build_matrix_streaming(alignment_path.as_str(), Some(p_score_cutoff), chunk_size)
+        matrix::build_matrix_with_chunk_size(alignment_path.as_str(), Some(p_score_cutoff), chunk_size)
             .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to build matrix: {}", e)))?;
 
     let (best_hit_initial_reads, best_hit_initial, level_1_initial, level_2_initial) =
