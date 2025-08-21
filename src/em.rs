@@ -1,4 +1,5 @@
 use crate::{UniqueReads, MultiMappingReads};
+use log::{info, warn};
 
 pub fn compute_best_hit(
     u: &UniqueReads,
@@ -305,17 +306,17 @@ fn check_convergence(
 ) -> bool {
     // Log convergence progress
     if iteration == 0 || iteration % 10 == 9 || cutoff <= epsilon {
-        println!("EM iteration {}: convergence delta = {:.2e}", iteration + 1, cutoff);
+        info!("EM iteration {}: convergence delta = {:.2e}", iteration + 1, cutoff);
     }
 
     if cutoff <= epsilon || nu_length == 1 {
-        println!("EM converged after {} iterations (delta: {:.2e})", iteration + 1, cutoff);
+        info!("EM converged after {} iterations (delta: {:.2e})", iteration + 1, cutoff);
         return true;
     }
 
     // Detect potential divergence
     if iteration > 10 && cutoff > 1e-2 {
-        println!("Warning: EM may be diverging at iteration {} (delta: {:.2e})", iteration + 1, cutoff);
+        warn!("EM may be diverging at iteration {} (delta: {:.2e})", iteration + 1, cutoff);
     }
 
     false

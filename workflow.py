@@ -22,7 +22,12 @@ from workflow_pathoscope.rust import (
     parse_isolate_scores,
     find_candidate_otus_from_bytes,
     eliminate_subtraction_and_filter_fastq,
+    init_logging,
 )
+
+# Initialize Rust logging to forward to Python logging system
+# This enables unified logging across Python and Rust components
+init_logging("info")
 
 
 @hooks.on_failure
@@ -212,6 +217,12 @@ async def eliminate_subtraction(
     subtracted_count = 0
 
     for subtraction in subtractions:
+        logger.info(
+            "Processing subtraction",
+            id=subtraction.id,
+            name=subtraction.name,
+        )
+        
         bowtie_cmd = (
             f"bowtie2 --local --no-unal -N 0 -p {proc} "
             f"-x {shlex.quote(str(subtraction.bowtie2_index_path))} "
@@ -247,10 +258,11 @@ async def eliminate_subtraction(
         subtracted_count += eliminated_count
 
         logger.info(
-            "some reads mapped better to a subtraction and were removed",
+            "Completed subtraction - reads eliminated",
             id=subtraction.id,
             name=subtraction.name,
-            count=subtracted_count,
+            eliminated_this_subtraction=eliminated_count,
+            total_eliminated=subtracted_count,
         )
 
     # Rename final working file back to expected output path

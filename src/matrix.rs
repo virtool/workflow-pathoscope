@@ -2,6 +2,7 @@ use crate::parse_sam::*;
 use crate::{UniqueReads, MultiMappingReads, MatrixResult};
 use std::collections::HashMap;
 use rust_htslib::{bam, bam::Read, bam::HeaderView};
+use log::info;
 
 /// A matrix containing alignment data and metadata.
 /// 
@@ -75,6 +76,11 @@ impl PathoscopeMatrix {
         matrix.rescale_scores(u_temp);
         matrix.build_unique_map();
         matrix.normalize_multi_mapping();
+
+        let unique_count = matrix.unique_reads.len();
+        let multi_count = matrix.multi_mapping_reads.len();
+        info!("Matrix created: {} unique reads, {} multi-mapping reads, score range [{:.2}, {:.2}]", 
+              unique_count, multi_count, min_score, max_score);
 
         matrix
     }
@@ -265,6 +271,7 @@ fn create_read_alignments_map(
             break;
         }
         
+        
         // Process this chunk
         for record in chunk_records {
             if let Some((read_index, ref_index, minimal_alignment, total_score)) = process_bam_record(
@@ -316,6 +323,9 @@ pub fn build_matrix_with_chunk_size(
     chunk_size: usize,
 ) -> Result<MatrixResult, String> {
     let p_score_cutoff = p_score_cutoff.unwrap_or(0.01);
+    
+    info!("Building matrix from '{}' with score cutoff {} and chunk size {}", 
+          alignment_path, p_score_cutoff, chunk_size);
     
     // Open reader for streaming
     let reader = bam::Reader::from_path(alignment_path)

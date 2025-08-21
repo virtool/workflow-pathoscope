@@ -4,13 +4,16 @@ mod matrix;
 mod em;
 mod parse_sam;
 mod stream_processor;
+mod logging;
 
 use subtraction::eliminate_subtraction;
 use matrix::build_matrix;
 use em::{em, compute_best_hit};
+use logging::{init_logging, init_logging_with_logger};
 use pyo3::exceptions::PyIOError;
 use pyo3::prelude::*;
 use std::collections::{HashMap, HashSet};
+use log::{info};
 
 // Type aliases for complex HashMap types used throughout the codebase
 pub type UniqueReads = HashMap<i32, (i32, f64)>;
@@ -101,8 +104,10 @@ impl CompactEMResults {
 
 #[pymodule]
 /// pyo3 interface
-fn rust(_py: Python, m: &PyModule) -> PyResult<()> {
+fn rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PathoscopeResults>()?;
+    m.add_function(wrap_pyfunction!(init_logging, m)?)?;
+    m.add_function(wrap_pyfunction!(init_logging_with_logger, m)?)?;
     m.add_function(wrap_pyfunction!(parse_isolate_scores, m)?)?;
     m.add_function(wrap_pyfunction!(run_expectation_maximization, m)?)?;
     m.add_function(wrap_pyfunction!(run_expectation_maximization_streaming, m)?)?;
@@ -114,6 +119,7 @@ fn rust(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(eliminate_subtraction_and_filter_fastq, m)?)?;
     Ok(())
 }
+
 
 #[pyfunction]
 /// Calculate coverage directly from EM results and alignment data
@@ -152,9 +158,15 @@ pub fn run_eliminate_subtraction(
     subtraction_sam_path: String,
     output_sam_path: String,
 ) -> PyResult<()> {
+    info!("Starting subtraction elimination from Python: isolate={}, subtraction={}", 
+          isolate_sam_path, subtraction_sam_path);
+    
     // Call the pure Rust function and map errors to PyResult
-    eliminate_subtraction(&isolate_sam_path, &subtraction_sam_path, &output_sam_path)
-        .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))
+    let result = eliminate_subtraction(&isolate_sam_path, &subtraction_sam_path, &output_sam_path)
+        .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))?;
+    
+    info!("Subtraction elimination completed successfully");
+    Ok(result)
 }
 
 
@@ -166,6 +178,8 @@ pub fn parse_isolate_scores(
     p_score_cutoff: f64,
 ) -> PyResult<HashMap<String, f64>> {
     use rust_htslib::{bam, bam::Read};
+    
+    info!("Parsing isolate scores from {} with cutoff {}", alignment_path, p_score_cutoff);
     
     let mut reader = bam::Reader::from_path(&alignment_path)
         .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to open alignment file '{}': {}", alignment_path, e)))?;
@@ -203,6 +217,7 @@ pub fn parse_isolate_scores(
         }
     }
 
+    info!("Parsed {} isolate scores", isolate_high_scores.len());
     Ok(isolate_high_scores)
 }
 
@@ -214,6 +229,7 @@ pub fn run_expectation_maximization(
     p_score_cutoff: f64,
     ref_lengths: HashMap<String, usize>,
 ) -> PyResult<PathoscopeResults> {
+    info!("Starting EM algorithm: file={}, cutoff={}", alignment_path, p_score_cutoff);
     run_expectation_maximization_streaming(_py, alignment_path, p_score_cutoff, ref_lengths, 10000)
 }
 
