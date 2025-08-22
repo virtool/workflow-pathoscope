@@ -222,7 +222,7 @@ async def eliminate_subtraction(
             id=subtraction.id,
             name=subtraction.name,
         )
-        
+
         bowtie_cmd = (
             f"bowtie2 --local --no-unal -N 0 -p {proc} "
             f"-x {shlex.quote(str(subtraction.bowtie2_index_path))} "
