@@ -13,7 +13,7 @@ use logging::init_logging;
 use pyo3::exceptions::PyIOError;
 use pyo3::prelude::*;
 use std::collections::{HashMap, HashSet};
-use log::{info};
+use log::info;
 
 // Type aliases for complex HashMap types used throughout the codebase
 pub type UniqueReads = HashMap<i32, (i32, f64)>;

@@ -9,6 +9,9 @@ use pyo3::types::{PyTuple, PyDict};
 use log::{Level, LevelFilter, Log, Metadata, Record};
 use std::sync::Once;
 
+/// Environment variable name for Rust log level configuration
+static RUST_LOG: &str = "RUST_LOG";
+
 /// Custom logger that forwards Rust logs to Python
 #[derive(Debug)]
 struct PythonLogger {
@@ -167,7 +170,7 @@ pub fn init_logging(_py: Python, log_level: Option<String>) -> PyResult<()> {
             }
         } else {
             // Use RUST_LOG environment variable or default to info
-            if let Ok(rust_log) = std::env::var("RUST_LOG") {
+            if let Ok(rust_log) = std::env::var(RUST_LOG) {
                 // Simple parsing for common cases
                 match rust_log.to_lowercase().as_str() {
                     "trace" => LevelFilter::Trace,
@@ -185,7 +188,7 @@ pub fn init_logging(_py: Python, log_level: Option<String>) -> PyResult<()> {
         // Create and install our custom logger
         let logger = PythonLogger::new(level_filter);
         
-        if let Err(_) = log::set_boxed_logger(Box::new(logger)) {
+        if log::set_boxed_logger(Box::new(logger)).is_err() {
             // Logger already installed, ignore
             eprintln!("Warning: Logger already installed, ignoring init_logging call");
         }
