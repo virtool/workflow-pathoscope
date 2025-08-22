@@ -1,11 +1,13 @@
 """Test Rust logging integration with Python logging systems."""
 
 import logging
+import os
 import sys
 from io import StringIO
 from unittest.mock import patch
 
 import pytest
+import structlog
 
 from workflow_pathoscope.rust import init_logging, init_logging_with_logger
 
@@ -53,7 +55,6 @@ def test_multiple_init_calls():
 
 def test_env_var_parsing():
     """Test RUST_LOG environment variable support."""
-    import os
 
     # Save original value
     original_rust_log = os.environ.get("RUST_LOG")
@@ -78,12 +79,6 @@ def test_env_var_parsing():
 
 def test_logging_output_capture():
     """Test that Rust logs can be captured by Python logging."""
-    try:
-        import structlog
-
-        structlog_available = True
-    except ImportError:
-        structlog_available = False
 
     # Set up a string buffer to capture log output
     log_capture = StringIO()
@@ -101,21 +96,20 @@ def test_logging_output_capture():
     root_logger.addHandler(handler)
     root_logger.setLevel(logging.INFO)
 
-    if structlog_available:
-        # Configure structlog to use our logging handler
-        structlog.configure(
-            processors=[
-                structlog.stdlib.add_log_level,
-                structlog.stdlib.PositionalArgumentsFormatter(),
-                structlog.processors.StackInfoRenderer(),
-                structlog.processors.format_exc_info,
-                structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-            ],
-            context_class=dict,
-            logger_factory=structlog.stdlib.LoggerFactory(),
-            wrapper_class=structlog.stdlib.BoundLogger,
-            cache_logger_on_first_use=True,
-        )
+    # Configure structlog to use our logging handler
+    structlog.configure(
+        processors=[
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.PositionalArgumentsFormatter(),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=True,
+    )
 
     try:
         # Initialize Rust logging
@@ -140,12 +134,6 @@ def test_logging_output_capture():
 
 def test_rust_log_levels_mapping():
     """Test that different log levels work as expected with proper output capture."""
-    try:
-        import structlog
-
-        structlog_available = True
-    except ImportError:
-        structlog_available = False
 
     # Set up capture for all levels
     log_capture = StringIO()
@@ -162,21 +150,20 @@ def test_rust_log_levels_mapping():
     root_logger.addHandler(handler)
     root_logger.setLevel(logging.DEBUG)  # Capture all levels
 
-    if structlog_available:
-        # Configure structlog to use our logging handler
-        structlog.configure(
-            processors=[
-                structlog.stdlib.add_log_level,
-                structlog.stdlib.PositionalArgumentsFormatter(),
-                structlog.processors.StackInfoRenderer(),
-                structlog.processors.format_exc_info,
-                structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-            ],
-            context_class=dict,
-            logger_factory=structlog.stdlib.LoggerFactory(),
-            wrapper_class=structlog.stdlib.BoundLogger,
-            cache_logger_on_first_use=True,
-        )
+    # Configure structlog to use our logging handler
+    structlog.configure(
+        processors=[
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.PositionalArgumentsFormatter(),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=True,
+    )
 
     try:
         # Initialize Rust logging with debug level
@@ -200,14 +187,6 @@ def test_rust_log_levels_mapping():
 
 def test_structlog_integration():
     """Test that Rust logging integrates properly with structlog."""
-    try:
-        import structlog
-    except ImportError:
-        pytest.skip("structlog not available")
-
-    from io import StringIO
-    import logging
-
     # Capture output using a logging handler
     output_buffer = StringIO()
     handler = logging.StreamHandler(output_buffer)
@@ -308,18 +287,13 @@ def test_rust_logs_appear_in_python(capsys):
     """Test that Rust logs appear in Python output via structlog."""
 
     # Configure structlog to output to stdout for this test
-    try:
-        import structlog
-
-        structlog.configure(
-            processors=[structlog.dev.ConsoleRenderer(colors=False)],
-            wrapper_class=structlog.stdlib.BoundLogger,
-            logger_factory=structlog.WriteLoggerFactory(),
-            context_class=dict,
-            cache_logger_on_first_use=True,
-        )
-    except ImportError:
-        pass
+    structlog.configure(
+        processors=[structlog.dev.ConsoleRenderer(colors=False)],
+        wrapper_class=structlog.stdlib.BoundLogger,
+        logger_factory=structlog.WriteLoggerFactory(),
+        context_class=dict,
+        cache_logger_on_first_use=True,
+    )
 
     init_logging("info")
 
@@ -332,15 +306,6 @@ def test_rust_logs_appear_in_python(capsys):
 
 def test_structlog_detection():
     """Test that structlog is properly detected when available."""
-    try:
-        import structlog
-
-        structlog_available = True
-    except ImportError:
-        structlog_available = False
-
-    if not structlog_available:
-        pytest.skip("structlog not available")
 
     # Mock to verify structlog methods are called
     with patch("structlog.get_logger") as mock_get_logger:
@@ -359,18 +324,13 @@ def test_log_levels_mapping(capsys):
     """Test that Rust log levels map correctly to Python levels."""
 
     # Configure structlog to output to stdout for this test
-    try:
-        import structlog
-
-        structlog.configure(
-            processors=[structlog.dev.ConsoleRenderer(colors=False)],
-            wrapper_class=structlog.stdlib.BoundLogger,
-            logger_factory=structlog.WriteLoggerFactory(),
-            context_class=dict,
-            cache_logger_on_first_use=True,
-        )
-    except ImportError:
-        pass
+    structlog.configure(
+        processors=[structlog.dev.ConsoleRenderer(colors=False)],
+        wrapper_class=structlog.stdlib.BoundLogger,
+        logger_factory=structlog.WriteLoggerFactory(),
+        context_class=dict,
+        cache_logger_on_first_use=True,
+    )
 
     init_logging("debug")
     captured = capsys.readouterr()
