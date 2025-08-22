@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::io;
 use std::path::Path;
 use thiserror::Error;
+use log::info;
 
 
 #[derive(Error, Debug)]
@@ -48,13 +49,17 @@ pub fn extract_candidate_otus_from_sam_file<P: AsRef<Path>>(
 ) -> Result<HashSet<String>, StreamProcessorError> {
     let path_str = sam_path.as_ref().to_string_lossy().to_string();
     
+    info!("Extracting candidate OTUs from {} with score cutoff {}", path_str, p_score_cutoff);
+    
     let mut reader = bam::Reader::from_path(&sam_path)
         .map_err(|e| StreamProcessorError::FileOpen {
             path: path_str,
             source: io::Error::other(e),
         })?;
 
-    extract_candidate_otus_from_reader(&mut reader, p_score_cutoff)
+    let result = extract_candidate_otus_from_reader(&mut reader, p_score_cutoff)?;
+    info!("Found {} candidate OTUs", result.len());
+    Ok(result)
 }
 
 /// Extract candidate OTU reference IDs from a BAM/SAM reader
@@ -73,6 +78,7 @@ pub fn extract_candidate_otus_from_reader(
 ) -> Result<HashSet<String>, StreamProcessorError> {
     let mut candidate_otus = HashSet::new();
     let header = reader.header().clone();
+    let mut processed_count = 0;
 
     for result in reader.records() {
         let record = result.map_err(|e| StreamProcessorError::BamRead { source: e })?;
@@ -104,8 +110,9 @@ pub fn extract_candidate_otus_from_reader(
         if total_score >= p_score_cutoff {
             candidate_otus.insert(ref_id);
         }
+        
+        processed_count += 1;
     }
-
     Ok(candidate_otus)
 }
 

@@ -6,6 +6,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use thiserror::Error;
+use log::info;
 
 #[derive(Error, Debug)]
 pub enum BamProcessingError {
@@ -128,6 +129,8 @@ impl SubtractionProcessor {
 
 /// Parse subtraction SAM file using parse_sam module and return scores for each read
 pub fn parse_subtraction_sam(path: &str) -> Result<HashMap<String, f32>, BamProcessingError> {
+    info!("Parsing subtraction SAM file: {}", path);
+    
     let sam_lines = parse_sam(path, None)
         .map_err(BamProcessingError::SamParse)?;
 
@@ -139,6 +142,7 @@ pub fn parse_subtraction_sam(path: &str) -> Result<HashMap<String, f32>, BamProc
         }
     }
 
+    info!("Parsed {} subtraction scores from {}", high_scores.len(), path);
     Ok(high_scores)
 }
 
@@ -151,12 +155,17 @@ pub fn eliminate_subtraction(
     subtraction_sam_path: &str,
     output_sam_path: &str,
 ) -> Result<(), BamProcessingError> {
+    info!("Starting subtraction elimination: isolate={}, subtraction={}, output={}", 
+          isolate_sam_path, subtraction_sam_path, output_sam_path);
+    
     // Parse subtraction scores
     let subtraction_scores = parse_subtraction_sam(subtraction_sam_path)?;
     let processor = SubtractionProcessor::new(subtraction_scores);
     
     // Process isolate file
     let subtracted_ids = process_isolate_file(isolate_sam_path, output_sam_path, &processor)?;
+    
+    info!("Subtraction complete: {} reads eliminated", subtracted_ids.len());
     
     // Write subtracted IDs file
     write_subtracted_ids_file(output_sam_path, &subtracted_ids)?;
@@ -170,6 +179,7 @@ pub fn process_isolate_file(
     output_path: &str,
     processor: &SubtractionProcessor,
 ) -> Result<HashSet<String>, BamProcessingError> {
+    
     // Open input file with rust-htslib reader
     let mut reader = bam::Reader::from_path(input_path)
         .map_err(|e| BamProcessingError::BamRead { source: e })?;
