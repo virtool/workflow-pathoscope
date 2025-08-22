@@ -70,8 +70,6 @@ def test_logging_output_capture(log):
     assert log.has("Rust logging initialized with custom Python bridge")
 
 
-
-
 def test_structlog_detection(log):
     """Test that structlog is properly detected when available."""
     init_logging("info")
