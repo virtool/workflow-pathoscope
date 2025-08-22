@@ -810,6 +810,19 @@ wheels = [
 ]
 
 [[package]]
+name = "pytest-structlog"
+version = "1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest" },
+    { name = "structlog" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/96/7c/3fb89ed643578c60f5d7192614f7feaf0dbc4a1cb4c786885b12672fed1f/pytest_structlog-1.1.tar.gz", hash = "sha256:440123b0a7f93482383995b3fb796ed8c1b9a37edf405683a34774993ef09543", size = 12642, upload-time = "2024-07-25T02:55:32.001Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/de/13/6d0e43e1f322f7b965a0e094754b66b76a137a86ab9bb1f2c1498efdc4e3/pytest_structlog-1.1-py3-none-any.whl", hash = "sha256:928475948f886bc027f1550dccb892fb46bfb8bb1ddb0c44ab4fa3c5b3f3079a", size = 8520, upload-time = "2024-07-25T02:55:30.481Z" },
+]
+
+[[package]]
 name = "python-dateutil"
 version = "2.9.0.post0"
 source = { registry = "https://pypi.org/simple" }
@@ -1107,6 +1120,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-mock" },
+    { name = "pytest-structlog" },
     { name = "ruff" },
     { name = "syrupy" },
 ]
@@ -1121,6 +1135,7 @@ dev = [
     { name = "pytest", specifier = ">=7.4.2,<8.0.0" },
     { name = "pytest-asyncio", specifier = "<=0.23.8,<1.0.0" },
     { name = "pytest-mock", specifier = "<=3.14,<4.0.0" },
+    { name = "pytest-structlog", specifier = ">=1.1" },
     { name = "ruff", specifier = ">=0.12.7" },
     { name = "syrupy", specifier = ">=4.9.1" },
 ]

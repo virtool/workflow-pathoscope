@@ -9,7 +9,7 @@ mod logging;
 use subtraction::eliminate_subtraction;
 use matrix::build_matrix;
 use em::{em, compute_best_hit};
-use logging::{init_logging, init_logging_with_logger};
+use logging::init_logging;
 use pyo3::exceptions::PyIOError;
 use pyo3::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -107,7 +107,6 @@ impl CompactEMResults {
 fn rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PathoscopeResults>()?;
     m.add_function(wrap_pyfunction!(init_logging, m)?)?;
-    m.add_function(wrap_pyfunction!(init_logging_with_logger, m)?)?;
     m.add_function(wrap_pyfunction!(parse_isolate_scores, m)?)?;
     m.add_function(wrap_pyfunction!(run_expectation_maximization, m)?)?;
     m.add_function(wrap_pyfunction!(run_expectation_maximization_streaming, m)?)?;

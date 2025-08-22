@@ -199,27 +199,6 @@ pub fn init_logging(_py: Python, log_level: Option<String>) -> PyResult<()> {
     Ok(())
 }
 
-/// Initialize Rust logging with enhanced structlog integration
-/// 
-/// This is a future enhancement placeholder that could provide direct
-/// integration with structlog for structured logging support.
-/// 
-/// # Arguments
-/// * `logger` - A Python logger object (currently unused)
-/// * `log_level` - Optional log level string
-/// 
-/// Currently delegates to the standard init_logging function.
-#[pyfunction]
-#[pyo3(signature = (_logger, log_level=None))]
-pub fn init_logging_with_logger(
-    _py: Python,
-    _logger: PyObject,
-    log_level: Option<String>,
-) -> PyResult<()> {
-    // For now, delegate to the standard init_logging
-    // Future enhancement: use the specific logger for structured logging
-    init_logging(_py, log_level)
-}
 
 #[cfg(test)]
 mod tests {
