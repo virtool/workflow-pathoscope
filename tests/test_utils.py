@@ -34,7 +34,7 @@ def test_write_report(
         level_2_initial=data["level_2_initial"],
         level_1_final=data["level_1_final"],
         level_2_final=data["level_2_final"],
-        coverage={}  # Not used in write_report
+        coverage={},  # Not used in write_report
     )
 
     write_report(report_path, pathoscope_results)
