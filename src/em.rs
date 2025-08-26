@@ -316,7 +316,7 @@ fn check_convergence(
 
     // Detect potential divergence
     if iteration > 10 && cutoff > 1e-2 {
-        warn!("EM may be diverging at iteration {} (delta: {:.2e})", iteration + 1, cutoff);
+        info!("EM may be diverging at iteration {} (delta: {:.2e})", iteration + 1, cutoff);
     }
 
     false
