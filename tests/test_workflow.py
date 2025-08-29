@@ -7,12 +7,12 @@ from types import SimpleNamespace
 import pytest
 from structlog import get_logger
 from syrupy import SnapshotAssertion
-from virtool_workflow import RunSubprocess
-from virtool_workflow.data.analyses import WFAnalysis
-from virtool_workflow.data.indexes import WFIndex
-from virtool_workflow.data.samples import WFSample
-from virtool_workflow.data.subtractions import WFSubtraction
-from virtool_workflow.pytest_plugin import Data
+from virtool.workflow import RunSubprocess
+from virtool.workflow.data.analyses import WFAnalysis
+from virtool.workflow.data.indexes import WFIndex
+from virtool.workflow.data.samples import WFSample
+from virtool.workflow.data.subtractions import WFSubtraction
+from virtool.workflow.pytest_plugin import WorkflowData
 
 from workflow import (
     eliminate_subtraction,
@@ -31,30 +31,30 @@ def work_path(tmpdir):
 
 
 @pytest.fixture()
-def analysis(data: Data, mocker):
+def analysis(workflow_data: WorkflowData, mocker):
     analysis_ = mocker.Mock(WFAnalysis)
 
-    analysis_.id = data.analysis.id
+    analysis_.id = workflow_data.analysis.id
     analysis_.workflow = "pathoscope_bowtie"
     analysis_.ready = False
-    analysis_.sample = data.analysis.sample
+    analysis_.sample = workflow_data.analysis.sample
 
     return analysis_
 
 
 @pytest.fixture()
-def index(data: Data, example_path: Path, work_path: Path):
-    data.index.manifest = {"foobar": 10, "reo": 5, "baz": 6}
+def index(workflow_data: WorkflowData, example_path: Path, work_path: Path):
+    workflow_data.index.manifest = {"foobar": 10, "reo": 5, "baz": 6}
 
-    index_path = work_path / "indexes" / data.index.id
+    index_path = work_path / "indexes" / workflow_data.index.id
 
     shutil.copytree(example_path / "index", index_path)
 
     return WFIndex(
-        id=data.index.id,
+        id=workflow_data.index.id,
         path=index_path,
-        manifest=data.index.manifest,
-        reference=data.index.reference,
+        manifest=workflow_data.index.manifest,
+        reference=workflow_data.index.reference,
         sequence_lengths={},
         sequence_otu_map={
             "NC_016509": "foobar",
@@ -87,38 +87,40 @@ def index(data: Data, example_path: Path, work_path: Path):
 
 
 @pytest.fixture()
-def sample(data: Data, example_path: Path, work_path: Path):
-    data.sample.library_type = "normal"
+def sample(workflow_data: WorkflowData, example_path: Path, work_path: Path):
+    workflow_data.sample.library_type = "normal"
 
-    path = work_path / "samples" / data.sample.id
+    path = work_path / "samples" / workflow_data.sample.id
     path.mkdir(parents=True)
 
     shutil.copyfile(example_path / "sample" / "reads_1.fq.gz", path / "reads_1.fq.gz")
 
     return WFSample(
-        id=data.sample.id,
-        library_type=data.sample.library_type,
-        name=data.sample.name,
+        id=workflow_data.sample.id,
+        library_type=workflow_data.sample.library_type,
+        name=workflow_data.sample.name,
         paired=False,
-        quality=data.sample.quality,
+        quality=workflow_data.sample.quality,
         read_paths=(path / "reads_1.fq.gz",),
     )
 
 
 @pytest.fixture()
-def subtractions(data: Data, example_path: Path, work_path: Path):
+def subtractions(workflow_data: WorkflowData, example_path: Path, work_path: Path):
     subtraction_path = work_path / "subtractions" / "subtraction"
     subtraction_path.parent.mkdir(parents=True)
 
-    shutil.copytree(example_path / "subtraction", subtraction_path)
+    shutil.copytree(
+        example_path / "subtractions" / "arabidopsis_thaliana", subtraction_path
+    )
 
     return [
         WFSubtraction(
-            id=data.subtraction.id,
+            id=workflow_data.subtraction.id,
             files=[],
-            gc=data.subtraction.gc,
-            name=data.subtraction.name,
-            nickname=data.subtraction.nickname,
+            gc=workflow_data.subtraction.gc,
+            name=workflow_data.subtraction.name,
+            nickname=workflow_data.subtraction.nickname,
             path=subtraction_path,
         ),
     ]

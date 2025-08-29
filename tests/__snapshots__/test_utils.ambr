@@ -41,13 +41,13 @@
 # name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:19425:88082]
   229.0
 # ---
-# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:19516:984680]
+# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:19516:98468_0]
   235.0
 # ---
-# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:19516:984681]
+# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:19516:98468_1]
   231.0
 # ---
-# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:19516:984682]
+# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:19516:98468_2]
   222.0
 # ---
 # name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:20331:41705]
@@ -56,19 +56,19 @@
 # name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:21363:75274]
   245.0
 # ---
-# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:3018:417180]
+# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:3018:41718_0]
   236.0
 # ---
-# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:3018:417181]
+# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:3018:41718_1]
   232.0
 # ---
-# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:3018:417182]
+# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:3018:41718_2]
   228.0
 # ---
-# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:3018:417183]
+# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:3018:41718_3]
   227.0
 # ---
-# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:3018:417184]
+# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:3018:41718_4]
   223.0
 # ---
 # name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:3175:8662]
@@ -95,13 +95,13 @@
 # name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:7271:53173]
   303.0
 # ---
-# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:7588:362230]
+# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:7588:36223_0]
   229.0
 # ---
-# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:7588:362231]
+# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:7588:36223_1]
   226.0
 # ---
-# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:7588:362232]
+# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:7588:36223_2]
   226.0
 # ---
 # name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1101:7721:78689]
@@ -128,10 +128,10 @@
 # name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1102:1516:15599]
   224.0
 # ---
-# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1102:16444:83210]
+# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1102:16444:8321_0]
   226.0
 # ---
-# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1102:16444:83211]
+# name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1102:16444:8321_1]
   223.0
 # ---
 # name: test_find_sam_align_score[HWI-ST1410:82:C2VAGACXX:7:1102:18431:21742]

@@ -1,4 +1,4 @@
-FROM python:3.12.3-bookworm AS deps
+FROM python:3.13-bookworm AS deps
 WORKDIR /app
 COPY --from=ghcr.io/virtool/tools:1.1.0 /tools/bowtie2/2.5.4/bowtie* /usr/local/bin/
 COPY --from=ghcr.io/virtool/tools:1.1.0 /tools/hmmer/3.2.1 /opt/hmmer
@@ -10,7 +10,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/* && \
     apt-get clean
 
-FROM python:3.12.3-bookworm AS uv
+FROM python:3.13-bookworm AS uv
 WORKDIR /app
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh

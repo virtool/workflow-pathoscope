@@ -8,11 +8,6 @@ def example_path():
     return Path(__file__).parent.parent / "example"
 
 
-@pytest.fixture()
-def virtool_workflow_example_path(example_path: Path):
-    return example_path
-
-
 def get_sam_lines():
     with open(Path(__file__).parent.parent / "example/fifty_lines.sam") as handle:
         return handle.read().split("\n")[0:-1]

@@ -1,18 +1,17 @@
 import asyncio
+import os
 import shlex
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import aiofiles
-import aiofiles.os
-from virtool_workflow import hooks, step
-from virtool_workflow.data.analyses import WFAnalysis
-from virtool_workflow.data.indexes import WFIndex
-from virtool_workflow.data.samples import WFSample
-from virtool_workflow.data.subtractions import WFSubtraction
-from virtool_workflow.runtime.run_subprocess import RunSubprocess
+from virtool.workflow import hooks, step
+from virtool.workflow.data.analyses import WFAnalysis
+from virtool.workflow.data.indexes import WFIndex
+from virtool.workflow.data.samples import WFSample
+from virtool.workflow.data.subtractions import WFSubtraction
+from virtool.workflow.runtime.run_subprocess import RunSubprocess
 
 from workflow_pathoscope.utils import (
     run_pathoscope,
@@ -199,7 +198,7 @@ async def eliminate_subtraction(
     if len(subtractions) == 0:
         logger.info("No subtractions to eliminate reads against. Skipping step.")
         # Rename BAM file as no subtraction is needed (saves disk space)
-        await aiofiles.os.rename(isolate_bam_path, subtracted_bam_path)
+        await asyncio.to_thread(os.rename, isolate_bam_path, subtracted_bam_path)
         results["subtracted_count"] = 0
         return
 
@@ -249,11 +248,11 @@ async def eliminate_subtraction(
             str(current_fastq_path),  # Write directly back to current_fastq_path
         )
 
-        await aiofiles.os.remove(to_subtraction_bam_path)
+        await asyncio.to_thread(to_subtraction_bam_path.unlink)
 
-        current_bam_input_path = work_path / "working_isolate.bam"
-
-        await aiofiles.os.rename(subtracted_bam_path, current_bam_input_path)
+        current_bam_input_path = await asyncio.to_thread(
+            subtracted_bam_path.rename, work_path / "working_isolate.bam"
+        )
 
         subtracted_count += eliminated_count
 
@@ -265,8 +264,7 @@ async def eliminate_subtraction(
             total_eliminated=subtracted_count,
         )
 
-    # Rename final working file back to expected output path
-    await aiofiles.os.rename(current_bam_input_path, subtracted_bam_path)
+    await asyncio.to_thread(current_bam_input_path.rename, subtracted_bam_path)
 
     results["subtracted_count"] = subtracted_count
 
