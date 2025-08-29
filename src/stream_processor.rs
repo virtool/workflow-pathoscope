@@ -49,7 +49,7 @@ pub fn extract_candidate_otus_from_sam_file<P: AsRef<Path>>(
 ) -> Result<HashSet<String>, StreamProcessorError> {
     let path_str = sam_path.as_ref().to_string_lossy().to_string();
     
-    info!("Extracting candidate OTUs from {} with score cutoff {}", path_str, p_score_cutoff);
+    info!("extracting candidate otus from {} with score cutoff {}", path_str, p_score_cutoff);
     
     let mut reader = bam::Reader::from_path(&sam_path)
         .map_err(|e| StreamProcessorError::FileOpen {
@@ -58,7 +58,7 @@ pub fn extract_candidate_otus_from_sam_file<P: AsRef<Path>>(
         })?;
 
     let result = extract_candidate_otus_from_reader(&mut reader, p_score_cutoff)?;
-    info!("Found {} candidate OTUs", result.len());
+    info!("found {} candidate otus", result.len());
     Ok(result)
 }
 

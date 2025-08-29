@@ -1107,7 +1107,7 @@ wheels = [
 [[package]]
 name = "virtool"
 version = "0.0.0"
-source = { git = "https://github.com/virtool/virtool?tag=31.11.2#aae0fc603865c444dd67e0389f9528a8da071783" }
+source = { git = "https://github.com/virtool/virtool?tag=31.11.3#67cbcf09cdc824cdbb3ddfb3497bbeee404236ea" }
 dependencies = [
     { name = "aiofiles" },
     { name = "aiohttp", extra = ["speedups"] },
@@ -1173,7 +1173,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "virtool", git = "https://github.com/virtool/virtool?tag=31.11.2" }]
+requires-dist = [{ name = "virtool", git = "https://github.com/virtool/virtool?tag=31.11.3" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1181,7 +1181,7 @@ dev = [
     { name = "pysam", specifier = ">=0.22.0" },
     { name = "pytest", specifier = ">=8.4.1,<9.0.0" },
     { name = "pytest-asyncio", specifier = "<=0.23.8,<1.0.0" },
-    { name = "pytest-mock", specifier = "<=3.14,<4.0.0" },
+    { name = "pytest-mock", specifier = "<=3.14.1,<4.0.0" },
     { name = "pytest-structlog", specifier = ">=1.1" },
     { name = "ruff", specifier = ">=0.12.7" },
     { name = "syrupy", specifier = ">=4.9.1" },

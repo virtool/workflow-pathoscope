@@ -198,7 +198,7 @@ pub fn init_logging(_py: Python, log_level: Option<String>) -> PyResult<()> {
     });
     
     // Test that logging works
-    log::info!("Rust logging initialized with custom Python bridge");
+    log::info!("rust logging initialized");
     Ok(())
 }
 

@@ -16,6 +16,7 @@ from virtool.workflow.runtime.run_subprocess import RunSubprocess
 from workflow_pathoscope.utils import (
     run_pathoscope,
     write_report,
+    write_isolate_fasta,
 )
 from workflow_pathoscope.rust import (
     parse_isolate_scores,
@@ -108,8 +109,11 @@ async def build_isolate_index(
     proc: int,
 ):
     """Build a mapping index containing all isolates of candidate OTUs."""
-    intermediate.lengths = await index.write_isolate_fasta(
-        [index.get_otu_id_by_sequence_id(id_) for id_ in intermediate.to_otus],
+
+    intermediate.lengths = await asyncio.to_thread(
+        write_isolate_fasta,
+        {index.get_otu_id_by_sequence_id(id_) for id_ in intermediate.to_otus},
+        index.json_path,
         isolate_fasta_path,
     )
 
@@ -196,7 +200,7 @@ async def eliminate_subtraction(
     logger.info("found isolate scores", count=len(intermediate.isolate_high_scores))
 
     if len(subtractions) == 0:
-        logger.info("No subtractions to eliminate reads against. Skipping step.")
+        logger.info("no subtractions to eliminate reads against")
         # Rename BAM file as no subtraction is needed (saves disk space)
         await asyncio.to_thread(os.rename, isolate_bam_path, subtracted_bam_path)
         results["subtracted_count"] = 0
@@ -217,7 +221,7 @@ async def eliminate_subtraction(
 
     for subtraction in subtractions:
         logger.info(
-            "Processing subtraction",
+            "processing subtraction",
             id=subtraction.id,
             name=subtraction.name,
         )
@@ -245,7 +249,7 @@ async def eliminate_subtraction(
             str(to_subtraction_bam_path),
             str(subtracted_bam_path),
             str(current_fastq_path),
-            str(current_fastq_path),  # Write directly back to current_fastq_path
+            str(current_fastq_path),
         )
 
         await asyncio.to_thread(to_subtraction_bam_path.unlink)
@@ -257,7 +261,7 @@ async def eliminate_subtraction(
         subtracted_count += eliminated_count
 
         logger.info(
-            "Completed subtraction - reads eliminated",
+            "subtraction complete",
             id=subtraction.id,
             name=subtraction.name,
             eliminated_this_subtraction=eliminated_count,
