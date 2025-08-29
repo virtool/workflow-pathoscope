@@ -1,7 +1,7 @@
 import csv
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 
 from workflow_pathoscope.rust import run_expectation_maximization, PathoscopeResults
 
@@ -80,33 +80,6 @@ def find_sam_align_score(fields: list[Any]) -> float:
             return a_score + read_length
 
     raise ValueError("Could not find alignment score")
-
-
-def parse_sam(
-    path: Path,
-    p_score_cutoff: float = 0.01,
-) -> Generator[SamLine, None, None]:
-    """Parse a SAM file and yield :class:`SamLine` objects.
-
-    :param path: The path to the SAM file.
-    :param p_score_cutoff: The minimum allowed ``p_score`` for an alignment.
-    :return: A generator of sam lines.
-
-    """
-    with open(path) as f:
-        for line in f:
-            if line[0] == "#" or line[0] == "@":
-                continue
-
-            sam_line = SamLine(line)
-
-            if sam_line.unmapped:
-                continue
-
-            if sam_line.score < p_score_cutoff:
-                continue
-
-            yield SamLine(line)
 
 
 def write_report(
