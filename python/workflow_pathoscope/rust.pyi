@@ -3,7 +3,6 @@ def run_eliminate_subtraction(
 ) -> None:
     """Eliminate subtraction reads from isolate reads using Rust."""
 
-
 class PathoscopeResults:
     best_hit_initial_reads: list[float]
     best_hit_initial: list[float]
