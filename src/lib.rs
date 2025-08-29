@@ -157,14 +157,14 @@ pub fn run_eliminate_subtraction(
     subtraction_sam_path: String,
     output_sam_path: String,
 ) -> PyResult<()> {
-    info!("Starting subtraction elimination from Python: isolate={}, subtraction={}", 
+    info!("starting subtraction elimination from Python: isolate={}, subtraction={}",
           isolate_sam_path, subtraction_sam_path);
     
     // Call the pure Rust function and map errors to PyResult
     let result = eliminate_subtraction(&isolate_sam_path, &subtraction_sam_path, &output_sam_path)
         .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))?;
     
-    info!("Subtraction elimination completed successfully");
+    info!("subtraction elimination completed successfully");
     Ok(result)
 }
 
@@ -178,7 +178,7 @@ pub fn parse_isolate_scores(
 ) -> PyResult<HashMap<String, f64>> {
     use rust_htslib::{bam, bam::Read};
     
-    info!("Parsing isolate scores from {} with cutoff {}", alignment_path, p_score_cutoff);
+    info!("parsing isolate scores from {} with cutoff {}", alignment_path, p_score_cutoff);
     
     let mut reader = bam::Reader::from_path(&alignment_path)
         .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to open alignment file '{}': {}", alignment_path, e)))?;
@@ -216,7 +216,7 @@ pub fn parse_isolate_scores(
         }
     }
 
-    info!("Parsed {} isolate scores", isolate_high_scores.len());
+    info!("parsed {} isolate scores", isolate_high_scores.len());
     Ok(isolate_high_scores)
 }
 
@@ -228,7 +228,7 @@ pub fn run_expectation_maximization(
     p_score_cutoff: f64,
     ref_lengths: HashMap<String, usize>,
 ) -> PyResult<PathoscopeResults> {
-    info!("Starting EM algorithm: file={}, cutoff={}", alignment_path, p_score_cutoff);
+    info!("starting em algorithm: file={}, cutoff={}", alignment_path, p_score_cutoff);
     run_expectation_maximization_streaming(_py, alignment_path, p_score_cutoff, ref_lengths, 10000)
 }
 

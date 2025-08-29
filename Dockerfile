@@ -22,7 +22,8 @@ RUN uv run maturin develop --release
 
 FROM deps AS base
 WORKDIR /app
-ENV VIRTUAL_ENV=/app/.venv
+ENV VIRTUAL_ENV=/app/.venv \
+    PATH="/app/.venv/bin:${PATH}"
 COPY --from=uv /app/.venv /app/.venv
 COPY --from=uv /app/python /app/python
 COPY fixtures.py workflow.py VERSION* ./

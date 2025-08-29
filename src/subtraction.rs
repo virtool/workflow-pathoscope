@@ -129,7 +129,7 @@ impl SubtractionProcessor {
 
 /// Parse subtraction SAM file using parse_sam module and return scores for each read
 pub fn parse_subtraction_sam(path: &str) -> Result<HashMap<String, f32>, BamProcessingError> {
-    info!("Parsing subtraction SAM file: {}", path);
+    info!("parsing subtraction SAM file: {}", path);
     
     let sam_lines = parse_sam(path, None)
         .map_err(BamProcessingError::SamParse)?;
@@ -142,7 +142,7 @@ pub fn parse_subtraction_sam(path: &str) -> Result<HashMap<String, f32>, BamProc
         }
     }
 
-    info!("Parsed {} subtraction scores from {}", high_scores.len(), path);
+    info!("parsed {} subtraction scores from {}", high_scores.len(), path);
     Ok(high_scores)
 }
 
@@ -155,7 +155,7 @@ pub fn eliminate_subtraction(
     subtraction_sam_path: &str,
     output_sam_path: &str,
 ) -> Result<(), BamProcessingError> {
-    info!("Starting subtraction elimination: isolate={}, subtraction={}, output={}", 
+    info!("starting subtraction elimination: isolate={}, subtraction={}, output={}",
           isolate_sam_path, subtraction_sam_path, output_sam_path);
     
     // Parse subtraction scores
@@ -165,7 +165,7 @@ pub fn eliminate_subtraction(
     // Process isolate file
     let subtracted_ids = process_isolate_file(isolate_sam_path, output_sam_path, &processor)?;
     
-    info!("Subtraction complete: {} reads eliminated", subtracted_ids.len());
+    info!("subtraction complete: {} reads eliminated", subtracted_ids.len());
     
     // Write subtracted IDs file
     write_subtracted_ids_file(output_sam_path, &subtracted_ids)?;

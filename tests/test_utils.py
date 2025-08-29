@@ -5,7 +5,6 @@ from types import SimpleNamespace
 from syrupy import SnapshotAssertion
 
 from workflow_pathoscope.utils import (
-    find_sam_align_score,
     write_report,
 )
 
@@ -40,7 +39,3 @@ def test_write_report(
     write_report(report_path, pathoscope_results)
 
     assert open(report_path).read() == snapshot
-
-
-def test_find_sam_align_score(sam_line, snapshot: SnapshotAssertion):
-    assert find_sam_align_score(sam_line) == snapshot

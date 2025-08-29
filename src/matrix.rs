@@ -79,7 +79,7 @@ impl PathoscopeMatrix {
 
         let unique_count = matrix.unique_reads.len();
         let multi_count = matrix.multi_mapping_reads.len();
-        info!("Matrix created: {} unique reads, {} multi-mapping reads, score range [{:.2}, {:.2}]", 
+        info!("matrix created: {} unique reads, {} multi-mapping reads, score range [{:.2}, {:.2}]",
               unique_count, multi_count, min_score, max_score);
 
         matrix
@@ -324,7 +324,7 @@ pub fn build_matrix_with_chunk_size(
 ) -> Result<MatrixResult, String> {
     let p_score_cutoff = p_score_cutoff.unwrap_or(0.01);
     
-    info!("Building matrix from '{}' with score cutoff {} and chunk size {}", 
+    info!("building matrix from '{}' with score cutoff {} and chunk size {}",
           alignment_path, p_score_cutoff, chunk_size);
     
     // Open reader for streaming

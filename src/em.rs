@@ -306,17 +306,17 @@ fn check_convergence(
 ) -> bool {
     // Log convergence progress
     if iteration == 0 || iteration % 10 == 9 || cutoff <= epsilon {
-        info!("EM iteration {}: convergence delta = {:.2e}", iteration + 1, cutoff);
+        info!("em iteration {}: convergence delta = {:.2e}", iteration + 1, cutoff);
     }
 
     if cutoff <= epsilon || nu_length == 1 {
-        info!("EM converged after {} iterations (delta: {:.2e})", iteration + 1, cutoff);
+        info!("em converged after {} iterations (delta: {:.2e})", iteration + 1, cutoff);
         return true;
     }
 
     // Detect potential divergence
     if iteration > 10 && cutoff > 1e-2 {
-        info!("EM may be diverging at iteration {} (delta: {:.2e})", iteration + 1, cutoff);
+        info!("em may be diverging at iteration {} (delta: {:.2e})", iteration + 1, cutoff);
     }
 
     false

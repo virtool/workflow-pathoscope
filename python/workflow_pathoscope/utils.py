@@ -1,85 +1,34 @@
 import csv
-from functools import cached_property
+import json
 from pathlib import Path
-from typing import Any
 
 from workflow_pathoscope.rust import run_expectation_maximization, PathoscopeResults
 
 
-class SamLine:
-    def __init__(self, line: str):
-        self._line = line
+def write_isolate_fasta(
+    otu_ids: set[str],
+    json_path: Path,
+    target_path: Path,
+) -> dict[str, int]:
+    """Generate a FASTA file for all the isolates of the OTUs specified by ``otu_ids``.
 
-    def __str__(self) -> str:
-        return self.line
-
-    @property
-    def line(self) -> str:
-        """The SAM line used to create the object."""
-        return self._line
-
-    @property
-    def read_id(self) -> str:
-        """The ID of the mapped read."""
-        return self.fields[0]
-
-    @cached_property
-    def read_length(self) -> int:
-        """The length of the mapped read."""
-        return len(self.fields[9])
-
-    @cached_property
-    def fields(self) -> list[Any]:
-        """The SAM fields"""
-        return self.line.split("\t")
-
-    @cached_property
-    def position(self) -> int:
-        """The position of the read on the reference."""
-        return int(self.fields[3])
-
-    @cached_property
-    def score(self) -> float:
-        """The Pathoscope score for the alignment."""
-        return find_sam_align_score(self.fields)
-
-    @cached_property
-    def bitwise_flag(self) -> int:
-        """The SAM bitwise flag."""
-        return int(self.fields[1])
-
-    @cached_property
-    def unmapped(self) -> bool:
-        """The read is unmapped.
-
-        This value is derived from the bitwise flag (0x4: segment unmapped).
-        """
-        return self.bitwise_flag & 4 == 4
-
-    @cached_property
-    def ref_id(self) -> str:
-        """The ID of the mapped reference sequence."""
-        return self.fields[2]
-
-
-def find_sam_align_score(fields: list[Any]) -> float:
-    """Find the Bowtie2 alignment score for the given split line (``fields``).
-
-    Searches the SAM fields for the ``AS:i`` substring and extracts the Bowtie2-specific
-    alignment score. This will not work for other aligners.
-
-    :param fields: a SAM line that has been split on "\t"
-    :return: the alignment score
+    :param otu_ids: the list of OTU IDs for which to generate and index
+    :param json_path: the path to the reference index json file
+    :param target_path: the path to write the fasta file to
+    :return: a dictionary of the lengths of all sequences keyed by their IDS
 
     """
-    read_length = float(len(fields[9]))
+    lengths = {}
 
-    for field in fields:
-        if field.startswith("AS:i:"):
-            a_score = int(field[5:])
-            return a_score + read_length
+    with open(json_path) as f_json, open(target_path, "w") as f_target:
+        for otu in json.load(f_json):
+            if otu["_id"] in otu_ids:
+                for isolate in otu["isolates"]:
+                    for sequence in isolate["sequences"]:
+                        f_target.write(f">{sequence['_id']}\n{sequence['sequence']}\n")
+                        lengths[sequence["_id"]] = len(sequence["sequence"])
 
-    raise ValueError("Could not find alignment score")
+    return lengths
 
 
 def write_report(
@@ -208,15 +157,3 @@ def run_pathoscope(
         p_score_cutoff,
         ref_lengths,
     )
-
-
-# Backward compatibility alias - DEPRECATED
-def run_pathoscope_sam(
-    sam_path: Path, p_score_cutoff: float, ref_lengths: dict[str, int]
-):
-    """
-    Deprecated: Use run_pathoscope instead.
-
-    This function is kept for backward compatibility.
-    """
-    return run_pathoscope(sam_path, p_score_cutoff, ref_lengths)
