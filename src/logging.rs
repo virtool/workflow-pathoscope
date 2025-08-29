@@ -79,7 +79,7 @@ fn forward_to_python(py: Python, record: &Record) -> PyResult<()> {
     }
     
     // Fallback to standard Python logging if structlog is not available
-    fallback_to_standard_logging(py, record, &target, &message)
+    fallback_to_standard_logging(py, record, target, &message)
 }
 
 /// Fallback function for standard Python logging when structlog is not available

@@ -167,11 +167,11 @@ pub fn run_eliminate_subtraction(
     // Release the GIL during the CPU-intensive subtraction elimination
     py.allow_threads(|| {
         // Call the pure Rust function and map errors to PyResult
-        let result = eliminate_subtraction(&isolate_sam_path, &subtraction_sam_path, &output_sam_path)
+        eliminate_subtraction(&isolate_sam_path, &subtraction_sam_path, &output_sam_path)
             .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))?;
         
         info!("subtraction elimination completed successfully");
-        Ok(result)
+        Ok(())
     })
 }
 
@@ -736,7 +736,7 @@ mod tests {
         assert!(header.target_count() > 0, "Sequence headers should be preserved");
 
         // Collect read names from BAM output
-        let mut read_names = Vec::new();
+        let mut read_names = Vec::with_capacity(10);
         let mut record = bam::Record::new();
         while let Some(result) = bam_reader.read(&mut record) {
             if result.is_ok() {

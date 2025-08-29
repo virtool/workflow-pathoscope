@@ -1,5 +1,5 @@
 use crate::{UniqueReads, MultiMappingReads};
-use log::{info, warn};
+use log::info;
 
 pub fn compute_best_hit(
     u: &UniqueReads,
@@ -340,7 +340,7 @@ pub fn em(
     let params = initialize_em_parameters(u, &nu, genome_count);
     let mut pi = params.pi.clone();
     let mut theta = params.theta.clone();
-    let mut init_pi = Vec::new();
+    let mut init_pi = Vec::with_capacity(genome_count);
 
     //EM iterations
     for i in 0..max_iter {

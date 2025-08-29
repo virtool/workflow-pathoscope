@@ -122,7 +122,7 @@ impl PathoscopeMatrix {
     }
 
     /// Convert to the legacy MatrixResult tuple format for backward compatibility
-    pub fn to_matrix_result(self) -> MatrixResult {
+    pub fn into_matrix_result(self) -> MatrixResult {
         (
             self.unique_reads,
             self.multi_mapping_reads,
@@ -347,7 +347,7 @@ pub fn build_matrix_with_chunk_size(
         min_score,
     );
 
-    Ok(matrix.to_matrix_result())
+    Ok(matrix.into_matrix_result())
 }
 
 /// Legacy alias for build_matrix_with_chunk_size
