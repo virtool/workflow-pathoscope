@@ -1,6 +1,6 @@
 use crate::parse_sam::*;
 use crate::{UniqueReads, MultiMappingReads, MatrixResult};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use rust_htslib::{bam, bam::Read, bam::HeaderView};
 use log::info;
 
@@ -30,7 +30,7 @@ impl PathoscopeMatrix {
     /// * `max_score` - Maximum alignment score found
     /// * `min_score` - Minimum alignment score found
     pub fn from_alignments(
-        read_alignments: HashMap<i32, Vec<(i32, f64)>>,
+        read_alignments: FxHashMap<i32, Vec<(i32, f64)>>,
         refs: Vec<String>,
         reads: Vec<String>,
         alignments: Vec<MinimalAlignment>,
@@ -38,8 +38,8 @@ impl PathoscopeMatrix {
         min_score: f64,
     ) -> Self {
         // Classify reads as unique or multi-mapping
-        let mut u_temp: MultiMappingReads = HashMap::new();
-        let mut nu: MultiMappingReads = HashMap::new();
+        let mut u_temp: MultiMappingReads = FxHashMap::default();
+        let mut nu: MultiMappingReads = FxHashMap::default();
 
         for (read_index, read_alignments) in read_alignments {
             if read_alignments.len() == 1 {
@@ -63,7 +63,7 @@ impl PathoscopeMatrix {
         }
 
         let mut matrix = PathoscopeMatrix {
-            unique_reads: HashMap::new(),
+            unique_reads: FxHashMap::default(),
             multi_mapping_reads: nu,
             refs,
             reads,
@@ -91,7 +91,7 @@ impl PathoscopeMatrix {
         self.multi_mapping_reads = nu;
         
         // Convert u to unique_reads format and store for build_unique_map
-        self.unique_reads = HashMap::new();
+        self.unique_reads = FxHashMap::default();
         for (read_idx, (ref_indices, scores, _, _)) in u {
             if let (Some(first_ref), Some(first_score)) = (ref_indices.first(), scores.first()) {
                 self.unique_reads.insert(read_idx, (*first_ref, *first_score));
@@ -154,8 +154,8 @@ fn process_bam_record(
     record: &bam::Record,
     header: &HeaderView,
     p_score_cutoff: f64,
-    h_read_id: &mut HashMap<String, i32>,
-    h_ref_id: &mut HashMap<String, i32>,
+    h_read_id: &mut FxHashMap<String, i32>,
+    h_ref_id: &mut FxHashMap<String, i32>,
     refs: &mut Vec<String>,
     reads: &mut Vec<String>,
     ref_count: &mut i32,
@@ -243,9 +243,9 @@ fn create_read_alignments_map(
     header: &HeaderView,
     chunk_size: usize,
     p_score_cutoff: f64,
-) -> Result<(HashMap<i32, Vec<(i32, f64)>>, Vec<String>, Vec<String>, Vec<MinimalAlignment>, f64, f64), String> {
-    let mut h_read_id: HashMap<String, i32> = HashMap::new();
-    let mut h_ref_id: HashMap<String, i32> = HashMap::new();
+) -> Result<(FxHashMap<i32, Vec<(i32, f64)>>, Vec<String>, Vec<String>, Vec<MinimalAlignment>, f64, f64), String> {
+    let mut h_read_id: FxHashMap<String, i32> = FxHashMap::default();
+    let mut h_ref_id: FxHashMap<String, i32> = FxHashMap::default();
     let mut refs: Vec<String> = Vec::new();
     let mut reads: Vec<String> = Vec::new();
     let mut ref_count: i32 = 0;
@@ -253,7 +253,7 @@ fn create_read_alignments_map(
     let mut max_score: f64 = 0.0;
     let mut min_score: f64 = 0.0;
     let mut minimal_alignments = Vec::new();
-    let mut read_alignments: HashMap<i32, Vec<(i32, f64)>> = HashMap::new();
+    let mut read_alignments: FxHashMap<i32, Vec<(i32, f64)>> = FxHashMap::default();
 
     loop {
         let mut chunk_records = Vec::with_capacity(chunk_size);

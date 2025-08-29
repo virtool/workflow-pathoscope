@@ -1,7 +1,7 @@
 use crate::parse_sam::MinimalAlignment;
 use crate::em::find_updated_score;
 use crate::{UniqueReads, MultiMappingReads};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 // TODO: Fix the updated score calculation logic
 // The current implementation includes any alignment where posterior probability >= p_score_cutoff,
@@ -21,9 +21,9 @@ pub fn calculate_coverage_from_em(
     minimal_alignments: &[MinimalAlignment],
     refs: &[String],
     p_score_cutoff: f64,
-    ref_lengths: &HashMap<String, usize>,
-) -> HashMap<String, Vec<usize>> {
-    let mut coverage_dict: HashMap<String, Vec<usize>> = std::collections::HashMap::new();
+    ref_lengths: &FxHashMap<String, usize>,
+) -> FxHashMap<String, Vec<usize>> {
+    let mut coverage_dict: FxHashMap<String, Vec<usize>> = FxHashMap::default();
 
     // Initialize coverage arrays for all references
     for (ref_id, &length) in ref_lengths {

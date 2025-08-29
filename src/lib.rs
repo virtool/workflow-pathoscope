@@ -12,12 +12,13 @@ use em::{em, compute_best_hit};
 use logging::init_logging;
 use pyo3::exceptions::PyIOError;
 use pyo3::prelude::*;
-use std::collections::{HashMap, HashSet};
+use rustc_hash::FxHashMap;
+use std::collections::HashSet;
 use log::info;
 
 // Type aliases for complex HashMap types used throughout the codebase
-pub type UniqueReads = HashMap<i32, (i32, f64)>;
-pub type MultiMappingReads = HashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>;
+pub type UniqueReads = FxHashMap<i32, (i32, f64)>;
+pub type MultiMappingReads = FxHashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>;
 pub type MatrixResult = (
     UniqueReads,
     MultiMappingReads,
@@ -54,7 +55,7 @@ pub struct PathoscopeResults {
     #[pyo3(get)]
     pub reads: Vec<String>,
     #[pyo3(get)]
-    pub coverage: HashMap<String, Vec<usize>>,
+    pub coverage: FxHashMap<String, Vec<usize>>,
 }
 
 /// Lightweight EM results structure that avoids storing full read/ref vectors
@@ -82,7 +83,7 @@ impl CompactEMResults {
         self,
         refs: Vec<String>,
         reads: Vec<String>,
-        coverage: HashMap<String, Vec<usize>>,
+        coverage: FxHashMap<String, Vec<usize>>,
     ) -> PathoscopeResults {
         PathoscopeResults {
             best_hit_initial_reads: self.best_hit_initial_reads,
@@ -126,8 +127,8 @@ pub fn calculate_coverage_from_em_results(
     py: Python,
     alignment_path: String,
     p_score_cutoff: f64,
-    ref_lengths: HashMap<String, usize>,
-) -> PyResult<HashMap<String, Vec<usize>>> {
+    ref_lengths: FxHashMap<String, usize>,
+) -> PyResult<FxHashMap<String, Vec<usize>>> {
     // Release the GIL during the CPU-intensive matrix operations and EM algorithm
     py.allow_threads(|| {
         // Build matrix to get EM input data and minimal alignments
@@ -181,7 +182,7 @@ pub fn parse_isolate_scores(
     py: Python,
     alignment_path: String,
     p_score_cutoff: f64,
-) -> PyResult<HashMap<String, f64>> {
+) -> PyResult<FxHashMap<String, f64>> {
     use rust_htslib::{bam, bam::Read};
     use std::time::Instant;
     
@@ -197,7 +198,7 @@ pub fn parse_isolate_scores(
         // Pre-allocate HashMap capacity based on typical BAM files
         // For 11M records, assuming ~30% pass cutoff = ~3.3M unique reads
         let estimated_capacity = 3_500_000;
-        let mut isolate_high_scores: HashMap<String, f64> = HashMap::with_capacity(estimated_capacity);
+        let mut isolate_high_scores: FxHashMap<String, f64> = FxHashMap::with_capacity_and_hasher(estimated_capacity, Default::default());
         
         info!("initialized hashmap with capacity {}", estimated_capacity);
         
@@ -270,7 +271,7 @@ pub fn run_expectation_maximization(
     py: Python,
     alignment_path: String,
     p_score_cutoff: f64,
-    ref_lengths: HashMap<String, usize>,
+    ref_lengths: FxHashMap<String, usize>,
 ) -> PyResult<PathoscopeResults> {
     info!("starting em algorithm: file={}, cutoff={}", alignment_path, p_score_cutoff);
     run_expectation_maximization_streaming(py, alignment_path, p_score_cutoff, ref_lengths, 10000)
@@ -291,7 +292,7 @@ pub fn run_expectation_maximization_streaming(
     py: Python,
     alignment_path: String,
     p_score_cutoff: f64,
-    ref_lengths: HashMap<String, usize>,
+    ref_lengths: FxHashMap<String, usize>,
     chunk_size: usize,
 ) -> PyResult<PathoscopeResults> {
     // Release the GIL during the CPU-intensive matrix operations and EM algorithm
@@ -581,8 +582,8 @@ mod tests {
 
     #[test]
     fn test_compute_best_hit() {
-        let mut unique_reads: UniqueReads = std::collections::HashMap::new();
-        let mut multi_reads: MultiMappingReads = std::collections::HashMap::new();
+        let mut unique_reads: UniqueReads = FxHashMap::default();
+        let mut multi_reads: MultiMappingReads = FxHashMap::default();
         
         // Unique reads: each maps to exactly one reference
         let read0_maps_to_ref0 = (0, 100.0);
@@ -686,8 +687,8 @@ mod tests {
     #[test]
     fn test_compute_best_hit_edge_cases() {
         // Test empty inputs
-        let u: UniqueReads = std::collections::HashMap::new();
-        let nu: MultiMappingReads = std::collections::HashMap::new();
+        let u: UniqueReads = FxHashMap::default();
+        let nu: MultiMappingReads = FxHashMap::default();
         let refs = vec!["ref0".to_string()];
         let reads = vec!["read0".to_string()];
         
@@ -699,7 +700,7 @@ mod tests {
         assert_eq!(level2[0], 0.0, "Empty input should result in zero level2");
         
         // Test with nu entry that has no valid scores
-        let mut nu_invalid: MultiMappingReads = std::collections::HashMap::new();
+        let mut nu_invalid: MultiMappingReads = FxHashMap::default();
         nu_invalid.insert(0, (vec![0], vec![10.0], vec![0.0], 10.0)); // normalized score is 0.0
         
         let reads_single = vec!["read0".to_string()];
