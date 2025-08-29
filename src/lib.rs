@@ -123,36 +123,39 @@ fn rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[pyfunction]
 /// Calculate coverage directly from EM results and alignment data
 pub fn calculate_coverage_from_em_results(
-    _py: Python,
+    py: Python,
     alignment_path: String,
     p_score_cutoff: f64,
     ref_lengths: HashMap<String, usize>,
 ) -> PyResult<HashMap<String, Vec<usize>>> {
-    // Build matrix to get EM input data and minimal alignments
-    let (u, nu, _refs, _reads, minimal_alignments) =
-        build_matrix(alignment_path.as_str(), None)
-            .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to build matrix: {}", e)))?;
+    // Release the GIL during the CPU-intensive matrix operations and EM algorithm
+    py.allow_threads(|| {
+        // Build matrix to get EM input data and minimal alignments
+        let (u, nu, _refs, _reads, minimal_alignments) =
+            build_matrix(alignment_path.as_str(), None)
+                .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to build matrix: {}", e)))?;
 
-    // Run EM algorithm
-    let (_init_pi, _pi, _theta, nu) = em(&u, nu, &_refs, 50, 1e-7, 0.0, 0.0);
+        // Run EM algorithm
+        let (_init_pi, _pi, _theta, nu) = em(&u, nu, &_refs, 50, 1e-7, 0.0, 0.0);
 
-    // Calculate coverage directly
-    let coverage = coverage::calculate_coverage_from_em(
-        &u,
-        &nu,
-        &minimal_alignments,
-        &_refs,
-        p_score_cutoff,
-        &ref_lengths,
-    );
+        // Calculate coverage directly
+        let coverage = coverage::calculate_coverage_from_em(
+            &u,
+            &nu,
+            &minimal_alignments,
+            &_refs,
+            p_score_cutoff,
+            &ref_lengths,
+        );
 
-    Ok(coverage)
+        Ok(coverage)
+    })
 }
 
 #[pyfunction]
 /// Entry point for eliminate_subtraction - PyO3 wrapper
 pub fn run_eliminate_subtraction(
-    _py: Python,
+    py: Python,
     isolate_sam_path: String,
     subtraction_sam_path: String,
     output_sam_path: String,
@@ -160,19 +163,22 @@ pub fn run_eliminate_subtraction(
     info!("starting subtraction elimination from Python: isolate={}, subtraction={}",
           isolate_sam_path, subtraction_sam_path);
     
-    // Call the pure Rust function and map errors to PyResult
-    let result = eliminate_subtraction(&isolate_sam_path, &subtraction_sam_path, &output_sam_path)
-        .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))?;
-    
-    info!("subtraction elimination completed successfully");
-    Ok(result)
+    // Release the GIL during the CPU-intensive subtraction elimination
+    py.allow_threads(|| {
+        // Call the pure Rust function and map errors to PyResult
+        let result = eliminate_subtraction(&isolate_sam_path, &subtraction_sam_path, &output_sam_path)
+            .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))?;
+        
+        info!("subtraction elimination completed successfully");
+        Ok(result)
+    })
 }
 
 
 #[pyfunction]
 /// Parse isolate alignment file (SAM or BAM) and extract high scores for each read
 pub fn parse_isolate_scores(
-    _py: Python,
+    py: Python,
     alignment_path: String,
     p_score_cutoff: f64,
 ) -> PyResult<HashMap<String, f64>> {
@@ -180,56 +186,59 @@ pub fn parse_isolate_scores(
     
     info!("parsing isolate scores from {} with cutoff {}", alignment_path, p_score_cutoff);
     
-    let mut reader = bam::Reader::from_path(&alignment_path)
-        .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to open alignment file '{}': {}", alignment_path, e)))?;
+    // Release the GIL during the CPU-intensive BAM file processing
+    py.allow_threads(|| {
+        let mut reader = bam::Reader::from_path(&alignment_path)
+            .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to open alignment file '{}': {}", alignment_path, e)))?;
 
-    let mut isolate_high_scores: HashMap<String, f64> = HashMap::new();
+        let mut isolate_high_scores: HashMap<String, f64> = HashMap::new();
 
-    for result in reader.records() {
-        let record = result.map_err(|e| PyErr::new::<PyIOError, _>(format!("Error reading record: {}", e)))?;
+        for result in reader.records() {
+            let record = result.map_err(|e| PyErr::new::<PyIOError, _>(format!("Error reading record: {}", e)))?;
 
-        // Skip unmapped reads
-        if record.is_unmapped() {
-            continue;
-        }
+            // Skip unmapped reads
+            if record.is_unmapped() {
+                continue;
+            }
 
-        // Get read ID (qname)
-        let read_id = std::str::from_utf8(record.qname())
-            .map_err(|e| PyErr::new::<PyIOError, _>(format!("Invalid UTF-8 in read ID: {}", e)))?
-            .to_string();
+            // Get read ID (qname)
+            let read_id = std::str::from_utf8(record.qname())
+                .map_err(|e| PyErr::new::<PyIOError, _>(format!("Invalid UTF-8 in read ID: {}", e)))?
+                .to_string();
 
-        // Get read length (unused but kept for potential future use)
-        let _read_length = record.seq_len();
+            // Get read length (unused but kept for potential future use)
+            let _read_length = record.seq_len();
 
-        // Get alignment score using shared function
-        let total_score = match parse_sam::extract_alignment_score(&record) {
-            Some(score) => score,
-            None => continue, // Skip records without valid AS field
-        };
+            // Get alignment score using shared function
+            let total_score = match parse_sam::extract_alignment_score(&record) {
+                Some(score) => score,
+                None => continue, // Skip records without valid AS field
+            };
 
-        // Apply score cutoff
-        if total_score >= p_score_cutoff {
-            // Track highest score for this read
-            if total_score > *isolate_high_scores.get(&read_id).unwrap_or(&0.0) {
-                isolate_high_scores.insert(read_id, total_score);
+            // Apply score cutoff
+            if total_score >= p_score_cutoff {
+                // Track highest score for this read
+                if total_score > *isolate_high_scores.get(&read_id).unwrap_or(&0.0) {
+                    isolate_high_scores.insert(read_id, total_score);
+                }
             }
         }
-    }
 
-    info!("parsed {} isolate scores", isolate_high_scores.len());
-    Ok(isolate_high_scores)
+        info!("parsed {} isolate scores", isolate_high_scores.len());
+        Ok(isolate_high_scores)
+    })
 }
 
 #[pyfunction]
 /// Entry point for expectation_maximization  
 pub fn run_expectation_maximization(
-    _py: Python,
+    py: Python,
     alignment_path: String,
     p_score_cutoff: f64,
     ref_lengths: HashMap<String, usize>,
 ) -> PyResult<PathoscopeResults> {
     info!("starting em algorithm: file={}, cutoff={}", alignment_path, p_score_cutoff);
-    run_expectation_maximization_streaming(_py, alignment_path, p_score_cutoff, ref_lengths, 10000)
+    run_expectation_maximization_streaming(py, alignment_path, p_score_cutoff, ref_lengths, 10000)
 }
 
 #[pyfunction]
@@ -244,49 +253,52 @@ pub fn run_expectation_maximization(
 /// * `ref_lengths` - Dictionary mapping reference IDs to their lengths
 /// * `chunk_size` - Number of records to process in each chunk
 pub fn run_expectation_maximization_streaming(
-    _py: Python,
+    py: Python,
     alignment_path: String,
     p_score_cutoff: f64,
     ref_lengths: HashMap<String, usize>,
     chunk_size: usize,
 ) -> PyResult<PathoscopeResults> {
-    // Use streaming matrix building to reduce memory footprint
-    let (u, nu, refs, reads, minimal_alignments) =
-        matrix::build_matrix_with_chunk_size(alignment_path.as_str(), Some(p_score_cutoff), chunk_size)
-            .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to build matrix: {}", e)))?;
+    // Release the GIL during the CPU-intensive matrix operations and EM algorithm
+    py.allow_threads(|| {
+        // Use streaming matrix building to reduce memory footprint
+        let (u, nu, refs, reads, minimal_alignments) =
+            matrix::build_matrix_with_chunk_size(alignment_path.as_str(), Some(p_score_cutoff), chunk_size)
+                .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to build matrix: {}", e)))?;
 
-    let (best_hit_initial_reads, best_hit_initial, level_1_initial, level_2_initial) =
-        compute_best_hit(&u, &nu, &refs, &reads);
+        let (best_hit_initial_reads, best_hit_initial, level_1_initial, level_2_initial) =
+            compute_best_hit(&u, &nu, &refs, &reads);
 
-    let (init_pi, pi, _, nu) = em(&u, nu, &refs, 50, 1e-7, 0.0, 0.0);
+        let (init_pi, pi, _, nu) = em(&u, nu, &refs, 50, 1e-7, 0.0, 0.0);
 
-    let (best_hit_final_reads, best_hit_final, level_1_final, level_2_final) =
-        compute_best_hit(&u, &nu, &refs, &reads);
+        let (best_hit_final_reads, best_hit_final, level_1_final, level_2_final) =
+            compute_best_hit(&u, &nu, &refs, &reads);
 
-    // Calculate coverage directly from EM results
-    let coverage = coverage::calculate_coverage_from_em(
-        &u,
-        &nu,
-        &minimal_alignments,
-        &refs,
-        p_score_cutoff,
-        &ref_lengths,
-    );
+        // Calculate coverage directly from EM results
+        let coverage = coverage::calculate_coverage_from_em(
+            &u,
+            &nu,
+            &minimal_alignments,
+            &refs,
+            p_score_cutoff,
+            &ref_lengths,
+        );
 
-    Ok(PathoscopeResults {
-        best_hit_initial_reads,
-        best_hit_initial,
-        level_1_initial,
-        level_2_initial,
-        best_hit_final_reads,
-        best_hit_final,
-        level_1_final,
-        level_2_final,
-        init_pi,
-        pi,
-        refs,
-        reads,
-        coverage,
+        Ok(PathoscopeResults {
+            best_hit_initial_reads,
+            best_hit_initial,
+            level_1_initial,
+            level_2_initial,
+            best_hit_final_reads,
+            best_hit_final,
+            level_1_final,
+            level_2_final,
+            init_pi,
+            pi,
+            refs,
+            reads,
+            coverage,
+        })
     })
 }
 
@@ -304,12 +316,15 @@ pub fn run_expectation_maximization_streaming(
 /// # Returns
 /// Set of reference IDs that have reads meeting the score cutoff
 pub fn find_candidate_otus(
-    _py: Python,
+    py: Python,
     alignment_path: String,
     p_score_cutoff: f64,
 ) -> PyResult<HashSet<String>> {
-    stream_processor::extract_candidate_otus_from_sam_file(&alignment_path, p_score_cutoff)
-        .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))
+    // Release the GIL during the CPU-intensive file processing
+    py.allow_threads(|| {
+        stream_processor::extract_candidate_otus_from_sam_file(&alignment_path, p_score_cutoff)
+            .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))
+    })
 }
 
 #[pyfunction]
@@ -325,12 +340,15 @@ pub fn find_candidate_otus(
 /// # Returns
 /// Set of reference IDs that have reads meeting the score cutoff
 pub fn find_candidate_otus_from_bytes(
-    _py: Python,
+    py: Python,
     sam_bytes: &[u8],
     p_score_cutoff: f64,
 ) -> PyResult<HashSet<String>> {
-    stream_processor::extract_candidate_otus_from_bytes(sam_bytes, p_score_cutoff)
-        .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))
+    // Release the GIL during the CPU-intensive SAM parsing
+    py.allow_threads(|| {
+        stream_processor::extract_candidate_otus_from_bytes(sam_bytes, p_score_cutoff)
+            .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))
+    })
 }
 
 #[pyfunction]
@@ -347,64 +365,67 @@ pub fn find_candidate_otus_from_bytes(
 /// # Returns
 /// Number of reads kept in the output file
 pub fn subtract_fastq(
-    _py: Python,
+    py: Python,
     input_path: String,
     output_path: String,
     subtracted_reads: HashSet<String>,
 ) -> PyResult<usize> {
-    use std::fs::File;
-    use std::io::{BufRead, BufReader, BufWriter, Write};
-    
-    let input_file = File::open(&input_path)
-        .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to open input file '{}': {}", input_path, e)))?;
-    let output_file = File::create(&output_path)
-        .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to create output file '{}': {}", output_path, e)))?;
-    
-    let mut reader = BufReader::new(input_file);
-    let mut writer = BufWriter::new(output_file);
-    
-    let mut kept_count = 0usize;
-    let mut lines = Vec::with_capacity(4);
-    
-    loop {
-        lines.clear();
+    // Release the GIL during the CPU-intensive FASTQ file processing
+    py.allow_threads(|| {
+        use std::fs::File;
+        use std::io::{BufRead, BufReader, BufWriter, Write};
         
-        // Read 4 lines for a FASTQ record
-        for _ in 0..4 {
-            let mut line = String::default();
-            match reader.read_line(&mut line) {
-                Ok(0) => return Ok(kept_count), // EOF
-                Ok(_) => lines.push(line),
-                Err(e) => return Err(PyErr::new::<PyIOError, _>(format!("Error reading line: {}", e))),
+        let input_file = File::open(&input_path)
+            .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to open input file '{}': {}", input_path, e)))?;
+        let output_file = File::create(&output_path)
+            .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to create output file '{}': {}", output_path, e)))?;
+        
+        let mut reader = BufReader::new(input_file);
+        let mut writer = BufWriter::new(output_file);
+        
+        let mut kept_count = 0usize;
+        let mut lines = Vec::with_capacity(4);
+        
+        loop {
+            lines.clear();
+            
+            // Read 4 lines for a FASTQ record
+            for _ in 0..4 {
+                let mut line = String::default();
+                match reader.read_line(&mut line) {
+                    Ok(0) => return Ok(kept_count), // EOF
+                    Ok(_) => lines.push(line),
+                    Err(e) => return Err(PyErr::new::<PyIOError, _>(format!("Error reading line: {}", e))),
+                }
+            }
+            
+            // Check if we have a complete 4-line record
+            if lines.len() != 4 {
+                return Ok(kept_count);
+            }
+            
+            // Extract read ID from the first line (header line starting with @)
+            let header = &lines[0];
+            if !header.starts_with('@') {
+                return Err(PyErr::new::<PyIOError, _>("Invalid FASTQ format: header line should start with '@'".to_string()));
+            }
+            
+            // Get read ID (everything after @ until first whitespace or newline)
+            let read_id = header[1..].split_whitespace().next()
+                .unwrap_or("")
+                .trim_end_matches('\n')
+                .trim_end_matches('\r');
+            
+            // If this read ID is not in the subtracted set, write all 4 lines
+            if !subtracted_reads.contains(read_id) {
+                for line in &lines {
+                    writer.write_all(line.as_bytes())
+                        .map_err(|e| PyErr::new::<PyIOError, _>(format!("Error writing output: {}", e)))?;
+                }
+                kept_count += 1;
             }
         }
-        
-        // Check if we have a complete 4-line record
-        if lines.len() != 4 {
-            return Ok(kept_count);
-        }
-        
-        // Extract read ID from the first line (header line starting with @)
-        let header = &lines[0];
-        if !header.starts_with('@') {
-            return Err(PyErr::new::<PyIOError, _>("Invalid FASTQ format: header line should start with '@'".to_string()));
-        }
-        
-        // Get read ID (everything after @ until first whitespace or newline)
-        let read_id = header[1..].split_whitespace().next()
-            .unwrap_or("")
-            .trim_end_matches('\n')
-            .trim_end_matches('\r');
-        
-        // If this read ID is not in the subtracted set, write all 4 lines
-        if !subtracted_reads.contains(read_id) {
-            for line in &lines {
-                writer.write_all(line.as_bytes())
-                    .map_err(|e| PyErr::new::<PyIOError, _>(format!("Error writing output: {}", e)))?;
-            }
-            kept_count += 1;
-        }
-    }
+    })
 }
 
 #[pyfunction]
@@ -423,83 +444,86 @@ pub fn subtract_fastq(
 /// # Returns
 /// Number of reads that were subtracted (eliminated)
 pub fn eliminate_subtraction_and_filter_fastq(
-    _py: Python,
+    py: Python,
     isolate_sam_path: String,
     subtraction_sam_path: String,
     output_sam_path: String,
     input_fastq_path: String,
     output_fastq_path: String,
 ) -> PyResult<usize> {
-    use std::fs::File;
-    use std::io::{BufRead, BufReader, BufWriter, Write};
-    
-    // Parse subtraction scores
-    let subtraction_scores = subtraction::parse_subtraction_sam(&subtraction_sam_path)
-        .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))?;
-    let processor = subtraction::SubtractionProcessor::new(subtraction_scores);
-    
-    // Process isolate file and collect subtracted read IDs
-    let subtracted_ids = subtraction::process_isolate_file(&isolate_sam_path, &output_sam_path, &processor)
-        .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))?;
-    
-    let subtracted_count = subtracted_ids.len();
-    
-    // Filter FASTQ file using the subtracted read IDs
-    let input_file = File::open(&input_fastq_path)
-        .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to open FASTQ file '{}': {}", input_fastq_path, e)))?;
-    let output_file = File::create(&output_fastq_path)
-        .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to create FASTQ file '{}': {}", output_fastq_path, e)))?;
-    
-    let mut reader = BufReader::new(input_file);
-    let mut writer = BufWriter::new(output_file);
-    
-    let mut lines = Vec::with_capacity(4);
-    
-    loop {
-        lines.clear();
+    // Release the GIL during the CPU-intensive file I/O and processing
+    py.allow_threads(|| {
+        use std::fs::File;
+        use std::io::{BufRead, BufReader, BufWriter, Write};
         
-        // Read 4 lines for a FASTQ record
-        for _ in 0..4 {
-            let mut line = String::default();
-            match reader.read_line(&mut line) {
-                Ok(0) => break, // EOF
-                Ok(_) => lines.push(line),
-                Err(e) => return Err(PyErr::new::<PyIOError, _>(format!("Error reading FASTQ line: {}", e))),
+        // Parse subtraction scores
+        let subtraction_scores = subtraction::parse_subtraction_sam(&subtraction_sam_path)
+            .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))?;
+        let processor = subtraction::SubtractionProcessor::new(subtraction_scores);
+        
+        // Process isolate file and collect subtracted read IDs
+        let subtracted_ids = subtraction::process_isolate_file(&isolate_sam_path, &output_sam_path, &processor)
+            .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))?;
+        
+        let subtracted_count = subtracted_ids.len();
+        
+        // Filter FASTQ file using the subtracted read IDs
+        let input_file = File::open(&input_fastq_path)
+            .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to open FASTQ file '{}': {}", input_fastq_path, e)))?;
+        let output_file = File::create(&output_fastq_path)
+            .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to create FASTQ file '{}': {}", output_fastq_path, e)))?;
+        
+        let mut reader = BufReader::new(input_file);
+        let mut writer = BufWriter::new(output_file);
+        
+        let mut lines = Vec::with_capacity(4);
+        
+        loop {
+            lines.clear();
+            
+            // Read 4 lines for a FASTQ record
+            for _ in 0..4 {
+                let mut line = String::default();
+                match reader.read_line(&mut line) {
+                    Ok(0) => break, // EOF
+                    Ok(_) => lines.push(line),
+                    Err(e) => return Err(PyErr::new::<PyIOError, _>(format!("Error reading FASTQ line: {}", e))),
+                }
+            }
+            
+            // Check if we reached EOF
+            if lines.is_empty() {
+                break;
+            }
+            
+            // Check if we have a complete 4-line record
+            if lines.len() != 4 {
+                break;
+            }
+            
+            // Extract read ID from the first line (header line starting with @)
+            let header = &lines[0];
+            if !header.starts_with('@') {
+                return Err(PyErr::new::<PyIOError, _>("Invalid FASTQ format: header line should start with '@'".to_string()));
+            }
+            
+            // Get read ID (everything after @ until first whitespace or newline)
+            let read_id = header[1..].split_whitespace().next()
+                .unwrap_or("")
+                .trim_end_matches('\n')
+                .trim_end_matches('\r');
+            
+            // If this read ID is not in the subtracted set, write all 4 lines
+            if !subtracted_ids.contains(read_id) {
+                for line in &lines {
+                    writer.write_all(line.as_bytes())
+                        .map_err(|e| PyErr::new::<PyIOError, _>(format!("Error writing FASTQ output: {}", e)))?;
+                }
             }
         }
         
-        // Check if we reached EOF
-        if lines.is_empty() {
-            break;
-        }
-        
-        // Check if we have a complete 4-line record
-        if lines.len() != 4 {
-            break;
-        }
-        
-        // Extract read ID from the first line (header line starting with @)
-        let header = &lines[0];
-        if !header.starts_with('@') {
-            return Err(PyErr::new::<PyIOError, _>("Invalid FASTQ format: header line should start with '@'".to_string()));
-        }
-        
-        // Get read ID (everything after @ until first whitespace or newline)
-        let read_id = header[1..].split_whitespace().next()
-            .unwrap_or("")
-            .trim_end_matches('\n')
-            .trim_end_matches('\r');
-        
-        // If this read ID is not in the subtracted set, write all 4 lines
-        if !subtracted_ids.contains(read_id) {
-            for line in &lines {
-                writer.write_all(line.as_bytes())
-                    .map_err(|e| PyErr::new::<PyIOError, _>(format!("Error writing FASTQ output: {}", e)))?;
-            }
-        }
-    }
-    
-    Ok(subtracted_count)
+        Ok(subtracted_count)
+    })
 }
 
 
