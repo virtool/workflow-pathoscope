@@ -183,48 +183,83 @@ pub fn parse_isolate_scores(
     p_score_cutoff: f64,
 ) -> PyResult<HashMap<String, f64>> {
     use rust_htslib::{bam, bam::Read};
+    use std::time::Instant;
     
     info!("parsing isolate scores from {} with cutoff {}", alignment_path, p_score_cutoff);
     
     // Release the GIL during the CPU-intensive BAM file processing
     py.allow_threads(|| {
+        let start = Instant::now();
+        
         let mut reader = bam::Reader::from_path(&alignment_path)
             .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to open alignment file '{}': {}", alignment_path, e)))?;
 
-        let mut isolate_high_scores: HashMap<String, f64> = HashMap::new();
+        // Pre-allocate HashMap capacity based on typical BAM files
+        // For 11M records, assuming ~30% pass cutoff = ~3.3M unique reads
+        let estimated_capacity = 3_500_000;
+        let mut isolate_high_scores: HashMap<String, f64> = HashMap::with_capacity(estimated_capacity);
+        
+        info!("initialized hashmap with capacity {}", estimated_capacity);
+        
+        let mut total_records = 0u64;
+        let mut mapped_records = 0u64;
+        let mut passed_cutoff = 0u64;
+        let mut last_log = Instant::now();
 
         for result in reader.records() {
-            let record = result.map_err(|e| PyErr::new::<PyIOError, _>(format!("Error reading record: {}", e)))?;
+            total_records += 1;
+            
+            if total_records % 1_000_000 == 0 {
+                let elapsed = last_log.elapsed();
+                let rate = 1_000_000.0 / elapsed.as_secs_f64();
+                info!(
+                    "processed {}m records ({} mapped, {} passed cutoff) - {:.0} records/sec", 
+                    total_records / 1_000_000,
+                    mapped_records,
+                    passed_cutoff,
+                    rate
+                );
+                last_log = Instant::now();
+            }
+            
+            let record = result.map_err(|e| PyErr::new::<PyIOError, _>(format!("error reading record: {}", e)))?;
 
-            // Skip unmapped reads
             if record.is_unmapped() {
                 continue;
             }
+            mapped_records += 1;
 
-            // Get read ID (qname)
             let read_id = std::str::from_utf8(record.qname())
-                .map_err(|e| PyErr::new::<PyIOError, _>(format!("Invalid UTF-8 in read ID: {}", e)))?
+                .map_err(|e| PyErr::new::<PyIOError, _>(format!("invalid utf-8 in read id: {}", e)))?
                 .to_string();
 
-            // Get read length (unused but kept for potential future use)
-            let _read_length = record.seq_len();
-
-            // Get alignment score using shared function
             let total_score = match parse_sam::extract_alignment_score(&record) {
                 Some(score) => score,
-                None => continue, // Skip records without valid AS field
+                None => continue,
             };
 
-            // Apply score cutoff
             if total_score >= p_score_cutoff {
-                // Track highest score for this read
-                if total_score > *isolate_high_scores.get(&read_id).unwrap_or(&0.0) {
-                    isolate_high_scores.insert(read_id, total_score);
-                }
+                passed_cutoff += 1;
+                
+                isolate_high_scores
+                    .entry(read_id)
+                    .and_modify(|existing_score| {
+                        if total_score > *existing_score {
+                            *existing_score = total_score;
+                        }
+                    })
+                    .or_insert(total_score);
             }
         }
 
-        info!("parsed {} isolate scores", isolate_high_scores.len());
+        let elapsed = start.elapsed();
+        info!(
+            "parsed {} isolate scores from {} total records in {:.2}s ({:.0} records/sec)",
+            isolate_high_scores.len(),
+            total_records,
+            elapsed.as_secs_f64(),
+            total_records as f64 / elapsed.as_secs_f64()
+        );
         Ok(isolate_high_scores)
     })
 }
