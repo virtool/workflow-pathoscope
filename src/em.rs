@@ -1,5 +1,5 @@
 use crate::{UniqueReads, MultiMappingReads};
-use log::{info, warn};
+use log::info;
 
 pub fn compute_best_hit(
     u: &UniqueReads,
@@ -340,7 +340,7 @@ pub fn em(
     let params = initialize_em_parameters(u, &nu, genome_count);
     let mut pi = params.pi.clone();
     let mut theta = params.theta.clone();
-    let mut init_pi = Vec::new();
+    let mut init_pi = Vec::with_capacity(genome_count);
 
     //EM iterations
     for i in 0..max_iter {
@@ -401,7 +401,7 @@ mod tests {
 
     #[test]
     fn test_find_updated_score() {
-        let mut nu: MultiMappingReads = std::collections::HashMap::new();
+        let mut nu: MultiMappingReads = rustc_hash::FxHashMap::default();
         
         // Read 0 maps to refs [0, 1] with normalized scores [0.7, 0.3]
         nu.insert(0, (
@@ -435,7 +435,7 @@ mod tests {
 
     #[test]
     fn test_find_updated_score_empty_data() {
-        let nu: MultiMappingReads = std::collections::HashMap::new();
+        let nu: MultiMappingReads = rustc_hash::FxHashMap::default();
         
         // Test with empty HashMap
         assert_eq!(find_updated_score(&nu, 0, 0), 0.0, "Empty nu should return 0.0");
@@ -443,7 +443,7 @@ mod tests {
 
     #[test]
     fn test_find_updated_score_edge_cases() {
-        let mut nu: MultiMappingReads = std::collections::HashMap::new();
+        let mut nu: MultiMappingReads = rustc_hash::FxHashMap::default();
         
         // Read with empty ref vectors
         nu.insert(0, (vec![], vec![], vec![], 0.0));
@@ -461,7 +461,7 @@ mod tests {
 
     #[test]
     fn test_find_updated_score_ref_not_found() {
-        let mut nu: MultiMappingReads = std::collections::HashMap::new();
+        let mut nu: MultiMappingReads = rustc_hash::FxHashMap::default();
         
         // Read 0 maps to refs [1, 2] with scores [0.8, 0.2]
         nu.insert(0, (
@@ -478,8 +478,8 @@ mod tests {
     #[test]
     fn test_em_basic_convergence() {
         // Simple test case: 2 references, 2 reads
-        let mut u: UniqueReads = std::collections::HashMap::new();
-        let mut nu: MultiMappingReads = std::collections::HashMap::new();
+        let mut u: UniqueReads = rustc_hash::FxHashMap::default();
+        let mut nu: MultiMappingReads = rustc_hash::FxHashMap::default();
         
         // Read 0 uniquely maps to ref 0 with score 100.0
         u.insert(0, (0, 100.0));
@@ -538,8 +538,8 @@ mod tests {
     #[test]
     fn test_em_empty_input() {
         // Test with completely empty input
-        let u: UniqueReads = std::collections::HashMap::new();
-        let nu: MultiMappingReads = std::collections::HashMap::new();
+        let u: UniqueReads = rustc_hash::FxHashMap::default();
+        let nu: MultiMappingReads = rustc_hash::FxHashMap::default();
         let genomes = vec!["ref0".to_string(), "ref1".to_string()];
         
         let (init_pi, final_pi, theta, updated_nu) = em(
@@ -568,8 +568,8 @@ mod tests {
     #[test]
     fn test_em_only_unique_reads() {
         // Test with only unique reads (no multi-mapping)
-        let mut u: UniqueReads = std::collections::HashMap::new();
-        let nu: MultiMappingReads = std::collections::HashMap::new();
+        let mut u: UniqueReads = rustc_hash::FxHashMap::default();
+        let nu: MultiMappingReads = rustc_hash::FxHashMap::default();
         
         // Add unique reads: 2 to ref0, 1 to ref1
         u.insert(0, (0, 100.0));  // read 0 -> ref 0
@@ -599,8 +599,8 @@ mod tests {
     #[test]
     fn test_em_only_multi_mapping_reads() {
         // Test with only multi-mapping reads (no unique reads)
-        let u: UniqueReads = std::collections::HashMap::new();
-        let mut nu: MultiMappingReads = std::collections::HashMap::new();
+        let u: UniqueReads = rustc_hash::FxHashMap::default();
+        let mut nu: MultiMappingReads = rustc_hash::FxHashMap::default();
         
         // Add multi-mapping reads
         nu.insert(0, (vec![0, 1], vec![60.0, 40.0], vec![0.6, 0.4], 100.0));
@@ -724,8 +724,8 @@ mod tests {
     #[test]
     fn test_em_with_zero_score_reads() {
         // Test with multi-mapping reads that have zero scores
-        let u: UniqueReads = std::collections::HashMap::new();
-        let mut nu: MultiMappingReads = std::collections::HashMap::new();
+        let u: UniqueReads = rustc_hash::FxHashMap::default();
+        let mut nu: MultiMappingReads = rustc_hash::FxHashMap::default();
         
         // Add multi-mapping reads with zero scores
         nu.insert(0, (vec![0, 1], vec![0.0, 0.0], vec![0.0, 0.0], 0.0)); // All zero scores

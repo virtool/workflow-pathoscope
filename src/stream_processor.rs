@@ -78,7 +78,7 @@ pub fn extract_candidate_otus_from_reader(
 ) -> Result<HashSet<String>, StreamProcessorError> {
     let mut candidate_otus = HashSet::new();
     let header = reader.header().clone();
-    let mut processed_count = 0;
+    let mut _processed_count = 0;
 
     for result in reader.records() {
         let record = result.map_err(|e| StreamProcessorError::BamRead { source: e })?;
@@ -111,7 +111,7 @@ pub fn extract_candidate_otus_from_reader(
             candidate_otus.insert(ref_id);
         }
         
-        processed_count += 1;
+        _processed_count += 1;
     }
     Ok(candidate_otus)
 }

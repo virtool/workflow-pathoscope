@@ -1,7 +1,8 @@
 use crate::parse_sam::parse_sam;
 use rust_htslib::{bam, bam::Read};
 use rust_htslib::bam::Format;
-use std::collections::{HashMap, HashSet};
+use rustc_hash::FxHashMap;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
@@ -34,7 +35,7 @@ pub enum BamProcessingError {
 
 #[derive(Debug, Clone)]
 pub struct SubtractionProcessor {
-    subtraction_scores: HashMap<String, f32>,
+    subtraction_scores: FxHashMap<String, f32>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -45,7 +46,7 @@ pub enum ProcessResult {
 
 impl SubtractionProcessor {
     /// Creates a new SubtractionProcessor with the given subtraction scores
-    pub fn new(subtraction_scores: HashMap<String, f32>) -> Self {
+    pub fn new(subtraction_scores: FxHashMap<String, f32>) -> Self {
         Self {
             subtraction_scores,
         }
@@ -128,13 +129,13 @@ impl SubtractionProcessor {
 }
 
 /// Parse subtraction SAM file using parse_sam module and return scores for each read
-pub fn parse_subtraction_sam(path: &str) -> Result<HashMap<String, f32>, BamProcessingError> {
+pub fn parse_subtraction_sam(path: &str) -> Result<FxHashMap<String, f32>, BamProcessingError> {
     info!("parsing subtraction SAM file: {}", path);
     
     let sam_lines = parse_sam(path, None)
         .map_err(BamProcessingError::SamParse)?;
 
-    let mut high_scores: HashMap<String, f32> = HashMap::new();
+    let mut high_scores: FxHashMap<String, f32> = FxHashMap::default();
     
     for sam_line in sam_lines {
         if let Some(score) = sam_line.score {
@@ -282,8 +283,8 @@ fn write_subtracted_ids_file(
 mod tests {
     use super::*;
 
-    fn create_test_subtraction_scores() -> HashMap<String, f32> {
-        let mut scores = HashMap::new();
+    fn create_test_subtraction_scores() -> FxHashMap<String, f32> {
+        let mut scores = FxHashMap::default();
         scores.insert("read1".to_string(), 250.0);
         scores.insert("read2".to_string(), 300.0);
         scores.insert("read3".to_string(), 150.0);
@@ -324,7 +325,7 @@ mod tests {
 
     #[test]
     fn test_process_sam_line_header() {
-        let processor = SubtractionProcessor::new(HashMap::new());
+        let processor = SubtractionProcessor::new(FxHashMap::default());
         let line = "@HD\tVN:1.6\tSO:unsorted";
         
         assert_eq!(
@@ -335,7 +336,7 @@ mod tests {
 
     #[test]
     fn test_process_sam_line_comment() {
-        let processor = SubtractionProcessor::new(HashMap::new());
+        let processor = SubtractionProcessor::new(FxHashMap::default());
         let line = "# This is a comment";
         
         assert_eq!(
@@ -346,7 +347,7 @@ mod tests {
 
     #[test]
     fn test_process_sam_line_empty() {
-        let processor = SubtractionProcessor::new(HashMap::new());
+        let processor = SubtractionProcessor::new(FxHashMap::default());
         
         assert_eq!(processor.process_sam_line("").unwrap(), None);
         assert_eq!(processor.process_sam_line("   ").unwrap(), None);
@@ -354,7 +355,7 @@ mod tests {
 
     #[test]
     fn test_process_sam_line_insufficient_fields() {
-        let processor = SubtractionProcessor::new(HashMap::new());
+        let processor = SubtractionProcessor::new(FxHashMap::default());
         let line = "read1\t0\tref1";
         
         assert_eq!(processor.process_sam_line(line).unwrap(), None);
@@ -362,7 +363,7 @@ mod tests {
 
     #[test]
     fn test_process_sam_line_unmapped() {
-        let processor = SubtractionProcessor::new(HashMap::new());
+        let processor = SubtractionProcessor::new(FxHashMap::default());
         let line = "read1\t4\t*\t0\t0\t*\t*\t0\t0\tACGT\tIIII\tAS:i:50";
         
         assert_eq!(processor.process_sam_line(line).unwrap(), None);
@@ -370,7 +371,7 @@ mod tests {
 
     #[test]
     fn test_process_sam_line_keep() {
-        let mut scores = HashMap::new();
+        let mut scores = FxHashMap::default();
         scores.insert("read1".to_string(), 100.0);
         let processor = SubtractionProcessor::new(scores);
         
@@ -385,7 +386,7 @@ mod tests {
 
     #[test]
     fn test_process_sam_line_eliminate() {
-        let mut scores = HashMap::new();
+        let mut scores = FxHashMap::default();
         scores.insert("read1".to_string(), 200.0);
         let processor = SubtractionProcessor::new(scores);
         
@@ -400,7 +401,7 @@ mod tests {
 
     #[test]
     fn test_find_sam_align_score_basic() {
-        let processor = SubtractionProcessor::new(HashMap::new());
+        let processor = SubtractionProcessor::new(FxHashMap::default());
         let fields = vec!["read1", "0", "ref1", "100", "60", "4M", "*", "0", "0", "ACGT", "IIII", "AS:i:150"];
         
         let score = processor.find_sam_align_score(&fields).unwrap();
@@ -409,7 +410,7 @@ mod tests {
 
     #[test]
     fn test_find_sam_align_score_no_as_tag() {
-        let processor = SubtractionProcessor::new(HashMap::new());
+        let processor = SubtractionProcessor::new(FxHashMap::default());
         let fields = vec!["read1", "0", "ref1", "100", "60", "4M", "*", "0", "0", "ACGT", "IIII"];
         
         let score = processor.find_sam_align_score(&fields).unwrap();
@@ -418,7 +419,7 @@ mod tests {
 
     #[test]
     fn test_find_sam_align_score_multiple_tags() {
-        let processor = SubtractionProcessor::new(HashMap::new());
+        let processor = SubtractionProcessor::new(FxHashMap::default());
         let fields = vec!["read1", "0", "ref1", "100", "60", "4M", "*", "0", "0", "ACGT", "IIII", "XM:i:0", "AS:i:150", "NM:i:0"];
         
         let score = processor.find_sam_align_score(&fields).unwrap();
@@ -427,7 +428,7 @@ mod tests {
 
     #[test]
     fn test_find_sam_align_score_insufficient_fields() {
-        let processor = SubtractionProcessor::new(HashMap::new());
+        let processor = SubtractionProcessor::new(FxHashMap::default());
         let fields = vec!["read1", "0", "ref1"];
         
         assert!(processor.find_sam_align_score(&fields).is_err());
@@ -435,7 +436,7 @@ mod tests {
 
     #[test]
     fn test_find_sam_align_score_invalid_as_value() {
-        let processor = SubtractionProcessor::new(HashMap::new());
+        let processor = SubtractionProcessor::new(FxHashMap::default());
         let fields = vec!["read1", "0", "ref1", "100", "60", "4M", "*", "0", "0", "ACGT", "IIII", "AS:i:invalid"];
         
         assert!(processor.find_sam_align_score(&fields).is_err());
@@ -455,7 +456,7 @@ mod tests {
 
     #[test]
     fn test_subtraction_processor_empty_scores() {
-        let processor = SubtractionProcessor::new(HashMap::new());
+        let processor = SubtractionProcessor::new(FxHashMap::default());
         
         // With no subtraction scores, nothing should be eliminated
         assert!(!processor.should_eliminate("any_read", 1000.0));
@@ -464,7 +465,7 @@ mod tests {
 
     #[test]
     fn test_process_sam_line_long_read_sequence() {
-        let mut scores = HashMap::new();
+        let mut scores = FxHashMap::default();
         scores.insert("long_read".to_string(), 200.0);
         let processor = SubtractionProcessor::new(scores);
         
