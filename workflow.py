@@ -20,7 +20,7 @@ from workflow_pathoscope.utils import (
 )
 from workflow_pathoscope.rust import (
     parse_isolate_scores,
-    find_candidate_otus_from_bytes,
+    find_candidate_otus_with_bowtie2,
     eliminate_subtraction_and_filter_fastq,
     init_logging,
 )
@@ -48,48 +48,14 @@ async def map_default_isolates(
 
     This will be used to identify candidate OTUs.
     """
-    # Run bowtie2 and capture output in memory
-    command = [
-        "bowtie2",
-        "-p",
-        str(proc),
-        "--local",
-        "--no-unal",
-        "--score-min",
-        "L,20,1.0",
-        "-N",
-        "0",
-        "-L",
-        "15",
-        "-x",
-        index.bowtie_path,
-        "-U",
-        ",".join(str(path) for path in sample.read_paths),
-    ]
+    logger.info("running bowtie2 directly from rust with streaming")
 
-    logger.info("running bowtie2 and capturing output")
-
-    # Execute bowtie2 and capture stdout
-    process = await asyncio.create_subprocess_exec(
-        *command,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-
-    stdout, stderr = await process.communicate()
-
-    if process.returncode != 0:
-        logger.error(
-            "bowtie2 failed", returncode=process.returncode, stderr=stderr.decode()
-        )
-        raise RuntimeError(f"bowtie2 failed with return code {process.returncode}")
-
-    # Use Rust implementation to process the SAM bytes directly
-    logger.info("extracting candidate otus from memory")
-
+    # Use Rust implementation to run bowtie2 directly and stream process output
     candidate_otus = await asyncio.to_thread(
-        find_candidate_otus_from_bytes,
-        stdout,
+        find_candidate_otus_with_bowtie2,
+        str(index.bowtie_path),
+        [str(path) for path in sample.read_paths],
+        proc,
         p_score_cutoff,
     )
 
