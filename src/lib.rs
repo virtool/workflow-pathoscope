@@ -3,7 +3,7 @@ mod coverage;
 mod matrix;
 mod em;
 mod parse_sam;
-mod stream_processor;
+mod candidates;
 mod logging;
 
 use subtraction::eliminate_subtraction;
@@ -110,11 +110,7 @@ fn rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(init_logging, m)?)?;
     m.add_function(wrap_pyfunction!(parse_isolate_scores, m)?)?;
     m.add_function(wrap_pyfunction!(run_expectation_maximization, m)?)?;
-    m.add_function(wrap_pyfunction!(run_expectation_maximization_streaming, m)?)?;
-    m.add_function(wrap_pyfunction!(run_eliminate_subtraction, m)?)?;
-    m.add_function(wrap_pyfunction!(calculate_coverage_from_em_results, m)?)?;
-    m.add_function(wrap_pyfunction!(find_candidate_otus, m)?)?;
-    m.add_function(wrap_pyfunction!(find_candidate_otus_from_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(find_candidate_otus_with_bowtie2, m)?)?;
     m.add_function(wrap_pyfunction!(subtract_fastq, m)?)?;
     m.add_function(wrap_pyfunction!(eliminate_subtraction_and_filter_fastq, m)?)?;
     Ok(())
@@ -338,53 +334,19 @@ pub fn run_expectation_maximization_streaming(
     })
 }
 
-#[pyfunction]
-/// Extract candidate OTU reference IDs from an alignment file (SAM/BAM)
-/// 
-/// This function replaces the Python line-by-line processing in map_default_isolates
-/// with high-performance Rust processing. It reads a SAM/BAM file and extracts
-/// reference IDs for reads that meet the score cutoff.
-/// 
-/// # Arguments
-/// * `alignment_path` - Path to the SAM/BAM file to process
-/// * `p_score_cutoff` - Minimum score threshold (AS:i score + read length)
-/// 
-/// # Returns
-/// Set of reference IDs that have reads meeting the score cutoff
-pub fn find_candidate_otus(
-    py: Python,
-    alignment_path: String,
-    p_score_cutoff: f64,
-) -> PyResult<HashSet<String>> {
-    // Release the GIL during the CPU-intensive file processing
-    py.allow_threads(|| {
-        stream_processor::extract_candidate_otus_from_sam_file(&alignment_path, p_score_cutoff)
-            .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))
-    })
-}
 
 #[pyfunction]
-/// Extract candidate OTU reference IDs from SAM text data
+/// Extract candidate OTU reference IDs by running bowtie2 directly with streaming
 /// 
-/// This function parses SAM format data directly from bytes without using rust-htslib.
-/// It provides memory-based processing that doesn't require temporary files or unsafe code.
-/// 
-/// # Arguments
-/// * `sam_bytes` - Raw SAM format data as bytes (typically from subprocess stdout)
-/// * `p_score_cutoff` - Minimum score threshold (AS:i score + read length)
-/// 
-/// # Returns
-/// Set of reference IDs that have reads meeting the score cutoff
-pub fn find_candidate_otus_from_bytes(
+/// This is a PyO3 wrapper around the function in the candidates module.
+pub fn find_candidate_otus_with_bowtie2(
     py: Python,
-    sam_bytes: &[u8],
+    bowtie_index_path: &str,
+    read_paths: Vec<String>,
+    proc: i32,
     p_score_cutoff: f64,
 ) -> PyResult<HashSet<String>> {
-    // Release the GIL during the CPU-intensive SAM parsing
-    py.allow_threads(|| {
-        stream_processor::extract_candidate_otus_from_bytes(sam_bytes, p_score_cutoff)
-            .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))
-    })
+    candidates::find_candidate_otus_with_bowtie2(py, bowtie_index_path, read_paths, proc, p_score_cutoff)
 }
 
 #[pyfunction]
