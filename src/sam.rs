@@ -1,5 +1,4 @@
 use rust_htslib::{bam, bam::Read, bam::HeaderView};
-use log::info;
 
 /// Minimal alignment data for memory-efficient storage
 #[derive(Debug, Clone)]

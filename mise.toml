@@ -31,7 +31,7 @@ run = [
 
 [tasks.clippy]
 description = "Run clippy linter in container"
-run = "{{vars.dev_exec}} cargo clippy -- -W clippy::all"
+run = '{{vars.dev_exec}} cargo clippy {{arg(name="clippy_args", var=true, default="-- -W clippy::all")}}'
 
 [tasks.test]
 description = "Run all tests (Rust + Python)"
