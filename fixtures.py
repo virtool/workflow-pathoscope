@@ -8,7 +8,6 @@ from pyfixtures import fixture
 def intermediate():
     """A namespace for storing intermediate values."""
     return SimpleNamespace(
-        isolate_high_scores={},
         to_otus=set(),
     )
 

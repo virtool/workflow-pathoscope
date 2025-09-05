@@ -188,7 +188,6 @@ async def test_map_isolates(
 
         assert sorted(lines) == snapshot
 
-    # Note: isolate_high_scores is now populated during eliminate_subtraction step
     # The test just verifies that the SAM file is written correctly
 
 

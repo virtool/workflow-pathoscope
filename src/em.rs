@@ -632,7 +632,7 @@ mod tests {
 
     #[test]
     fn test_em_integration_with_real_sam_data() {
-        use crate::build_matrix;
+        use crate::matrix::build_matrix;
         
         // Use real SAM data with multi-mapping reads to test the full pipeline
         let sam_path = "example/rust/test_em_with_multimapping.sam";

@@ -12,18 +12,11 @@ from virtool.workflow.data.indexes import WFIndex
 from virtool.workflow.data.samples import WFSample
 from virtool.workflow.data.subtractions import WFSubtraction
 from virtool.workflow.runtime.run_subprocess import RunSubprocess
+from workflow_pathoscope.utils import (run_pathoscope, write_isolate_fasta,
+                                       write_report)
 
-from workflow_pathoscope.utils import (
-    run_pathoscope,
-    write_report,
-    write_isolate_fasta,
-)
-from workflow_pathoscope.rust import (
-    parse_isolate_scores,
-    find_candidate_otus_with_bowtie2,
-    eliminate_subtraction_and_filter_fastq,
-    init_logging,
-)
+from workflow_pathoscope.rust import (find_candidate_otus_with_bowtie2,
+                                      init_logging, run_eliminate_subtraction)
 
 # Initialize Rust logging to forward to Python logging system
 # This enables unified logging across Python and Rust components
@@ -50,7 +43,6 @@ async def map_default_isolates(
     """
     logger.info("running bowtie2 directly from rust with streaming")
 
-    # Use Rust implementation to run bowtie2 directly and stream process output
     candidate_otus = await asyncio.to_thread(
         find_candidate_otus_with_bowtie2,
         str(index.bowtie_path),
@@ -59,7 +51,6 @@ async def map_default_isolates(
         p_score_cutoff,
     )
 
-    # Convert Rust HashSet to Python set
     intermediate.to_otus = set(candidate_otus)
 
     logger.info("found candidate otus", count=len(intermediate.to_otus))
@@ -156,14 +147,6 @@ async def eliminate_subtraction(
     :param subtracted_bam_path: path to the BAM file with subtraction-mapped reads removed
     :param work_path: path to the workflow working directory
     """
-    # Parse isolate scores from the BAM file
-    logger.info("parsing isolate scores from bam file")
-    intermediate.isolate_high_scores = await asyncio.to_thread(
-        parse_isolate_scores,
-        str(isolate_bam_path),
-        p_score_cutoff,
-    )
-    logger.info("found isolate scores", count=len(intermediate.isolate_high_scores))
 
     if len(subtractions) == 0:
         logger.info("no subtractions to eliminate reads against")
@@ -210,12 +193,13 @@ async def eliminate_subtraction(
 
         # Combined operation: eliminate subtraction reads from BAM and filter FASTQ
         eliminated_count = await asyncio.to_thread(
-            eliminate_subtraction_and_filter_fastq,
+            run_eliminate_subtraction,
             str(current_bam_input_path),
             str(to_subtraction_bam_path),
             str(subtracted_bam_path),
             str(current_fastq_path),
             str(current_fastq_path),
+            proc,
         )
 
         await asyncio.to_thread(to_subtraction_bam_path.unlink)
