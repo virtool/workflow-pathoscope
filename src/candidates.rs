@@ -100,7 +100,7 @@ pub fn find_candidate_otus_with_bowtie2(
     use std::process::{Command, Stdio};
     use std::io::{BufRead, BufReader};
     
-    info!("running bowtie2 directly from rust: index={}, reads={:?}, cutoff={}", 
+    info!("running bowtie2: index={}, reads={:?}, cutoff={}", 
           bowtie_index_path, read_paths, p_score_cutoff);
     py.allow_threads(|| {
         let mut cmd = Command::new("bowtie2");

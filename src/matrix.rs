@@ -301,7 +301,6 @@ pub fn build_matrix(
     info!("building matrix from '{}' with score cutoff {}",
           alignment_path, p_score_cutoff);
     
-    // Open reader for streaming
     let reader = SamReader::new(alignment_path)?;
     let header = reader.header().clone();
     
@@ -388,7 +387,6 @@ mod tests {
     fn test_build_matrix() {
         let (u, nu, refs, reads, _) = build_matrix("tests/minimal_test.sam", None).unwrap();
         
-        // With the score parsing fix, we should now process all 4 SAM lines correctly
         assert_eq!(refs.len(), 2, "Should have 2 references");
         assert_eq!(reads.len(), 3, "Should have 3 reads");
         assert_eq!(u.len(), 2, "Should have 2 unique reads (read1, read2)");

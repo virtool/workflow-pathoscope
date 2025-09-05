@@ -1,4 +1,4 @@
-use crate::sam::{SamReader, extract_alignment_score};
+use crate::sam::{SamReader, extract_alignment_score, CHUNK_SIZE};
 use rust_htslib::bam;
 use rust_htslib::bam::Format;
 use rustc_hash::FxHashMap;
@@ -8,6 +8,7 @@ use std::io::Write;
 use std::path::Path;
 use thiserror::Error;
 use log::info;
+use rayon::prelude::*;
 
 #[derive(Error, Debug)]
 pub enum BamProcessingError {
@@ -50,7 +51,7 @@ impl SubtractionProcessor {
 
 /// Parse subtraction BAM file and return a map of read IDs to scores.
 pub fn parse_subtraction_scores_from_bam(path: &str) -> Result<FxHashMap<String, f32>, BamProcessingError> {
-    info!("parsing subtraction SAM file: {}", path);
+    info!("parsing subtraction bam file: {}", path);
     
     let mut reader = SamReader::new(path)
         .map_err(BamProcessingError::SamParse)?;
@@ -98,8 +99,9 @@ pub fn eliminate_subtraction(
     let subtraction_scores = parse_subtraction_scores_from_bam(subtraction_sam_path)?;
     let processor = SubtractionProcessor::new(subtraction_scores);
     
-    // Process isolate file
-    let subtracted_ids = process_isolate_file(isolate_sam_path, output_sam_path, &processor)?;
+    // Process isolate file with default thread count
+    let proc = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let subtracted_ids = process_isolate_file(isolate_sam_path, output_sam_path, &processor, proc)?;
     
     info!("subtraction complete: {} reads eliminated", subtracted_ids.len());
     
@@ -114,6 +116,7 @@ pub fn process_isolate_file(
     input_path: &str,
     output_path: &str,
     processor: &SubtractionProcessor,
+    proc: usize,
 ) -> Result<HashSet<String>, BamProcessingError> {
     
     let mut reader = SamReader::new(input_path)
@@ -125,57 +128,108 @@ pub fn process_isolate_file(
     // Create a new Header from the HeaderView
     let header = bam::Header::from_template(&header_view);
     
-    // Create output writer with the same header
+    // Create output writer with the same header and configure threading
     let mut writer = bam::Writer::from_path(output_path, &header, Format::Bam)
         .map_err(|e| BamProcessingError::BamWrite { source: e })?;
+    
+    // Use half the threads for BAM compression, reserve the rest for rayon processing
+    let writer_threads = (proc / 2).max(1);
+    let rayon_threads = proc - writer_threads;
+    
+    // Configure writer to use compression threads
+    writer.set_threads(writer_threads)
+        .map_err(|e| BamProcessingError::BamWrite { source: e })?;
 
-    let mut subtracted_read_ids = HashSet::new();
+    // Configure rayon thread pool for this scope
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(rayon_threads)
+        .build()
+        .map_err(|e| BamProcessingError::SamParse(format!("Failed to create thread pool: {}", e)))?;
 
-    // Process each chunk
+    let mut all_subtracted_read_ids = HashSet::new();
+    let mut write_buffer: Vec<bam::Record> = Vec::with_capacity(CHUNK_SIZE);
+
+    // Collect all chunks first for parallel processing
+    let mut all_chunks = Vec::new();
+    
     reader.stream_chunks(|chunk| {
-        for record in chunk {
-            // Skip unmapped reads
-            if record.is_unmapped() {
-                continue;
-            }
-            
-            let read_id_str = unsafe {
-                std::str::from_utf8_unchecked(record.qname())
-            };
-            
-            let ref_name = if record.tid() >= 0 {
-                unsafe {
-                    std::str::from_utf8_unchecked(header_view.tid2name(record.tid() as u32))
-                }
-            } else {
-                "*"
-            };
-            
-            // Skip if reference is unmapped
-            if ref_name == "*" {
-                continue;
-            }
-            
-            // Calculate alignment score using shared function
-            let isolate_score = match extract_alignment_score(record) {
-                Some(score) => score as f32,
-                None => continue,
-            };
-            
-            // Check if this read should be eliminated
-            if processor.should_eliminate(read_id_str, isolate_score) {
-                // Only allocate string when we need to store it
-                subtracted_read_ids.insert(read_id_str.to_string());
-            } else {
-                // Write the record to output
-                writer.write(record)
-                    .map_err(|e| format!("Failed to write BAM record: {}", e))?;
-            }
-        }
+        // Clone the chunk to store it
+        let chunk_data: Vec<bam::Record> = chunk.to_vec();
+        all_chunks.push(chunk_data);
         Ok(())
-    }).map_err(|e| BamProcessingError::SamParse(e))?;
+    }).map_err(BamProcessingError::SamParse)?;
 
-    Ok(subtracted_read_ids)
+    // Process chunks in parallel using our custom thread pool
+    let results: Result<Vec<(Vec<bam::Record>, HashSet<String>)>, String> = pool.install(|| {
+        all_chunks
+            .into_par_iter()
+            .map(|chunk| {
+                let mut records_to_write = Vec::new();
+                let mut subtracted_read_ids = HashSet::new();
+                
+                for record in chunk {
+                    // Skip unmapped reads
+                    if record.is_unmapped() {
+                        continue;
+                    }
+                    
+                    let read_id_str = unsafe {
+                        std::str::from_utf8_unchecked(record.qname())
+                    };
+                    
+                    // Skip if reference is unmapped (tid < 0 means unmapped)
+                    if record.tid() < 0 {
+                        continue;
+                    }
+                    
+                    // Calculate alignment score using shared function
+                    let isolate_score = match extract_alignment_score(&record) {
+                        Some(score) => score as f32,
+                        None => continue,
+                    };
+                    
+                    // Check if this read should be eliminated
+                    if processor.should_eliminate(read_id_str, isolate_score) {
+                        // Only allocate string when we need to store it
+                        subtracted_read_ids.insert(read_id_str.to_string());
+                    } else {
+                        // Add record to write buffer
+                        records_to_write.push(record);
+                    }
+                }
+                
+                Ok((records_to_write, subtracted_read_ids))
+            })
+            .collect()
+    });
+
+    let chunk_results = results.map_err(BamProcessingError::SamParse)?;
+
+    // Write results in batches and collect subtracted IDs
+    for (records_to_write, subtracted_ids) in chunk_results {
+        // Merge subtracted IDs
+        all_subtracted_read_ids.extend(subtracted_ids);
+        
+        // Add records to write buffer
+        write_buffer.extend(records_to_write);
+        
+        // Write in batches when buffer is full
+        if write_buffer.len() >= CHUNK_SIZE {
+            for record in &write_buffer {
+                writer.write(record)
+                    .map_err(|e| BamProcessingError::BamWrite { source: e })?;
+            }
+            write_buffer.clear();
+        }
+    }
+
+    // Write any remaining records in buffer
+    for record in &write_buffer {
+        writer.write(record)
+            .map_err(|e| BamProcessingError::BamWrite { source: e })?;
+    }
+
+    Ok(all_subtracted_read_ids)
 }
 
 /// Write subtracted read IDs to file in same directory as output SAM

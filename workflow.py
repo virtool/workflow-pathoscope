@@ -191,7 +191,6 @@ async def eliminate_subtraction(
             ],
         )
 
-        # Combined operation: eliminate subtraction reads from BAM and filter FASTQ
         eliminated_count = await asyncio.to_thread(
             run_eliminate_subtraction,
             str(current_bam_input_path),
@@ -199,7 +198,7 @@ async def eliminate_subtraction(
             str(subtracted_bam_path),
             str(current_fastq_path),
             str(current_fastq_path),
-            proc,
+            proc - 1,
         )
 
         await asyncio.to_thread(to_subtraction_bam_path.unlink)

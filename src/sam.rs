@@ -10,14 +10,14 @@ pub struct MinimalAlignment {
     pub read_length: u16,   // Read length
 }
 
-/// Simple streaming SAM/BAM reader with chunked processing
+/// Simple streaming SAM/BAM reader with chunked processing.
 pub struct SamReader {
     reader: bam::Reader,
     header: HeaderView,
 }
 
-/// Fixed chunk size for all streaming operations
-const CHUNK_SIZE: usize = 10000;
+/// Fixed chunk size for all streaming operations.
+pub const CHUNK_SIZE: usize = 10000;
 
 impl SamReader {
     /// Create a new SamReader from a file path
@@ -51,9 +51,7 @@ impl SamReader {
     pub fn stream_chunks<F>(&mut self, mut callback: F) -> Result<(), String>
     where
         F: FnMut(&[bam::Record]) -> Result<(), String>,
-    {
-        info!("streaming SAM/BAM file in chunks of {}", CHUNK_SIZE);
-        
+    {        
         loop {
             let mut chunk = Vec::with_capacity(CHUNK_SIZE);
             

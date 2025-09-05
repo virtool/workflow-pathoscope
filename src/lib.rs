@@ -6,7 +6,6 @@ mod candidates;
 mod logging;
 mod sam;
 
-use subtraction::eliminate_subtraction;
 use em::{em, compute_best_hit};
 use logging::init_logging;
 use pyo3::exceptions::PyIOError;
@@ -128,9 +127,7 @@ pub fn run_expectation_maximization(
 ) -> PyResult<PathoscopeResults> {
     info!("starting em algorithm: file={}, cutoff={}", alignment_path, p_score_cutoff);
     
-    // Release the GIL during the CPU-intensive matrix operations and EM algorithm
     py.allow_threads(|| {
-        // Use streaming matrix building to reduce memory footprint
         let (u, nu, refs, reads, minimal_alignments) =
             matrix::build_matrix(alignment_path.as_str(), Some(p_score_cutoff))
                 .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to build matrix: {}", e)))?;
@@ -143,7 +140,6 @@ pub fn run_expectation_maximization(
         let (best_hit_final_reads, best_hit_final, level_1_final, level_2_final) =
             compute_best_hit(&u, &nu, &refs, &reads);
 
-        // Calculate coverage directly from EM results
         let coverage = coverage::calculate_coverage_from_em(
             &u,
             &nu,
@@ -219,7 +215,8 @@ pub fn run_eliminate_subtraction(
         let processor = subtraction::SubtractionProcessor::new(subtraction_scores);
         
         // Process isolate file and collect subtracted read IDs
-        let subtracted_ids = subtraction::process_isolate_file(&isolate_sam_path, &output_sam_path, &processor)
+        let proc = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+        let subtracted_ids = subtraction::process_isolate_file(&isolate_sam_path, &output_sam_path, &processor, proc)
             .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))?;
         
         let subtracted_count = subtracted_ids.len();
