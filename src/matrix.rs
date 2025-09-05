@@ -284,10 +284,7 @@ fn create_read_alignments_map(
     Ok((read_alignments, refs, reads, minimal_alignments, max_score, min_score))
 }
 
-/// Build matrix with streaming processing to reduce memory usage
-/// 
-/// This function processes alignments in chunks using SamReader to avoid loading 
-/// all data into memory at once. Chunking is handled internally.
+/// Build the EM matrix.
 /// 
 /// # Arguments
 /// * `alignment_path` - Path to the SAM/BAM file

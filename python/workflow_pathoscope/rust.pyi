@@ -1,10 +1,10 @@
 def run_eliminate_subtraction(
-    isolate_sam_path: str, 
-    subtraction_sam_path: str, 
+    isolate_sam_path: str,
+    subtraction_sam_path: str,
     output_sam_path: str,
     input_fastq_path: str,
     output_fastq_path: str,
-    proc: int
+    proc: int,
 ) -> int:
     """Eliminate subtraction reads from BAM and filter FASTQ file. Returns number of eliminated reads."""
 
@@ -29,7 +29,6 @@ def run_expectation_maximization(
     ref_lengths: dict[str, int],
 ) -> PathoscopeResults:
     """Run Pathoscope expectation maximization algorithm using Rust on SAM/BAM files."""
-
 
 def find_candidate_otus(
     alignment_path: str,

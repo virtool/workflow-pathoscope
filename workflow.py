@@ -12,11 +12,13 @@ from virtool.workflow.data.indexes import WFIndex
 from virtool.workflow.data.samples import WFSample
 from virtool.workflow.data.subtractions import WFSubtraction
 from virtool.workflow.runtime.run_subprocess import RunSubprocess
-from workflow_pathoscope.utils import (run_pathoscope, write_isolate_fasta,
-                                       write_report)
+from workflow_pathoscope.utils import run_pathoscope, write_isolate_fasta, write_report
 
-from workflow_pathoscope.rust import (find_candidate_otus_with_bowtie2,
-                                      init_logging, run_eliminate_subtraction)
+from workflow_pathoscope.rust import (
+    find_candidate_otus_with_bowtie2,
+    init_logging,
+    run_eliminate_subtraction,
+)
 
 # Initialize Rust logging to forward to Python logging system
 # This enables unified logging across Python and Rust components
