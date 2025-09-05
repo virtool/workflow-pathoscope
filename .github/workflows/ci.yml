@@ -15,6 +15,7 @@ env:
 
 jobs:
   commitlint:
+    name: Commitlint
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -23,6 +24,42 @@ jobs:
           fetch-depth: 0
       - name: commitlint
         uses: wagoid/commitlint-github-action@v5
+  ruff-format:
+    name: Ruff / Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install mise
+        uses: jdx/mise-action@v2
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+      - name: Set up Python
+        run: uv python install
+      - name: Install dependencies
+        run: uv sync
+      - name: Check formatting
+        run: uv run ruff format --check .
+  ruff-lint:
+    name: Ruff / Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install mise
+        uses: jdx/mise-action@v2
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+      - name: Set up Python
+        run: uv python install
+      - name: Install dependencies
+        run: uv sync
+      - name: Check linting
+        run: uv run ruff check .
   build:
     name: Build
     runs-on: ubuntu-24.04
