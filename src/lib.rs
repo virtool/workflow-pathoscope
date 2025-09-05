@@ -192,6 +192,7 @@ pub fn find_candidate_otus_with_bowtie2(
 /// * `output_sam_path` - Path to write the filtered SAM/BAM file
 /// * `input_fastq_path` - Path to the input FASTQ file to filter
 /// * `output_fastq_path` - Path to write the filtered FASTQ file
+/// * `proc` - Number of threads to use for processing
 /// 
 /// # Returns
 /// Number of reads that were subtracted (eliminated)
@@ -206,83 +207,18 @@ pub fn run_eliminate_subtraction(
 ) -> PyResult<usize> {
     // Release the GIL during the CPU-intensive file I/O and processing
     py.allow_threads(|| {
-        use std::fs::File;
-        use std::io::{BufRead, BufReader, BufWriter, Write};
-        
-        // Parse subtraction scores
-        let subtraction_scores = subtraction::parse_subtraction_scores_from_bam(&subtraction_sam_path)
-            .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))?;
-        let processor = subtraction::SubtractionProcessor::new(subtraction_scores);
-        
-        // Process isolate file and collect subtracted read IDs
-        let proc = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
-        let subtracted_ids = subtraction::process_isolate_file(&isolate_sam_path, &output_sam_path, &processor, proc)
-            .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))?;
-        
-        let subtracted_count = subtracted_ids.len();
-        
-        // Filter FASTQ file using the subtracted read IDs
-        let input_file = File::open(&input_fastq_path)
-            .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to open FASTQ file '{}': {}", input_fastq_path, e)))?;
-        let output_file = File::create(&output_fastq_path)
-            .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to create FASTQ file '{}': {}", output_fastq_path, e)))?;
-        
-        let mut reader = BufReader::new(input_file);
-        let mut writer = BufWriter::new(output_file);
-        
-        let mut lines = Vec::with_capacity(4);
-        
-        loop {
-            lines.clear();
-            
-            // Read 4 lines for a FASTQ record
-            for _ in 0..4 {
-                let mut line = String::default();
-                match reader.read_line(&mut line) {
-                    Ok(0) => break, // EOF
-                    Ok(_) => lines.push(line),
-                    Err(e) => return Err(PyErr::new::<PyIOError, _>(format!("Error reading FASTQ line: {}", e))),
-                }
-            }
-            
-            // Check if we reached EOF
-            if lines.is_empty() {
-                break;
-            }
-            
-            // Check if we have a complete 4-line record
-            if lines.len() != 4 {
-                break;
-            }
-            
-            // Extract read ID from the first line (header line starting with @)
-            let header = &lines[0];
-            if !header.starts_with('@') {
-                return Err(PyErr::new::<PyIOError, _>("Invalid FASTQ format: header line should start with '@'".to_string()));
-            }
-            
-            // Get read ID (everything after @ until first whitespace or newline)
-            let read_id = header[1..].split_whitespace().next()
-                .unwrap_or("")
-                .trim_end_matches('\n')
-                .trim_end_matches('\r');
-            
-            // If this read ID is not in the subtracted set, write all 4 lines
-            if !subtracted_ids.contains(read_id) {
-                for line in &lines {
-                    writer.write_all(line.as_bytes())
-                        .map_err(|e| PyErr::new::<PyIOError, _>(format!("Error writing FASTQ output: {}", e)))?;
-                }
-            }
-        }
-        
-        Ok(subtracted_count)
+        let proc_usize = proc.max(1) as usize;
+        subtraction::eliminate_subtraction(
+            &isolate_sam_path,
+            &subtraction_sam_path,
+            &output_sam_path,
+            &input_fastq_path,
+            &output_fastq_path,
+            proc_usize,
+        )
+        .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))
     })
 }
-
-
-
-
 
 /// Tests
 #[cfg(test)]
@@ -429,7 +365,7 @@ mod tests {
     }
 
     #[test]
-    fn test_eliminate_subtraction_integration() {
+    fn test_run_eliminate_subtraction() {
         use rust_htslib::{bam, bam::Read};
         use std::fs;
         use tempfile::TempDir;
@@ -437,12 +373,20 @@ mod tests {
         // Create temp directory for output
         let temp_dir = TempDir::new().unwrap();
         let output_bam_path = temp_dir.path().join("output.bam");
+        let input_fastq_path = temp_dir.path().join("input.fastq");
+        let output_fastq_path = temp_dir.path().join("output.fastq");
+
+        // Create a minimal FASTQ file for testing
+        std::fs::write(&input_fastq_path, "@read_keep\nACGT\n+\nIIII\n@read_eliminate\nACGT\n+\nIIII\n@read_unknown\nACGT\n+\nIIII\n@read_equal\nACGT\n+\nIIII\n").unwrap();
 
         // Run the pure Rust function directly
-        subtraction::eliminate_subtraction(
+        let subtracted_count = subtraction::eliminate_subtraction(
             "example/rust/test_isolates_minimal.sam",
             "example/rust/test_subtraction_minimal.sam",
             output_bam_path.to_str().unwrap(),
+            input_fastq_path.to_str().unwrap(),
+            output_fastq_path.to_str().unwrap(),
+            4,
         )
         .unwrap();
 
@@ -486,24 +430,29 @@ mod tests {
             "Read with equal scores should be eliminated"
         );
 
-        // Verify subtracted_read_ids.txt
-        let ids_path = temp_dir.path().join("subtracted_read_ids.txt");
-        let ids_content = fs::read_to_string(&ids_path).unwrap();
+        // Verify the return value - should be 2 (read_eliminate and read_equal)
+        assert_eq!(
+            subtracted_count, 2,
+            "Should have subtracted 2 reads (read_eliminate and read_equal)"
+        );
+
+        // Verify FASTQ output - should only contain read_keep and read_unknown
+        let fastq_output = fs::read_to_string(&output_fastq_path).unwrap();
         assert!(
-            ids_content.contains("read_eliminate"),
-            "Eliminated read should be in subtracted_read_ids.txt"
+            fastq_output.contains("@read_keep"),
+            "FASTQ output should contain read_keep"
         );
         assert!(
-            ids_content.contains("read_equal"),
-            "Equal score read should be in subtracted_read_ids.txt"
+            fastq_output.contains("@read_unknown"), 
+            "FASTQ output should contain read_unknown"
         );
         assert!(
-            !ids_content.contains("read_keep"),
-            "Kept read should not be in subtracted_read_ids.txt"
+            !fastq_output.contains("@read_eliminate"),
+            "FASTQ output should not contain read_eliminate"
         );
         assert!(
-            !ids_content.contains("read_unknown"),
-            "Unknown read should not be in subtracted_read_ids.txt"
+            !fastq_output.contains("@read_equal"),
+            "FASTQ output should not contain read_equal"
         );
     }
 }

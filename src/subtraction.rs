@@ -4,8 +4,7 @@ use rust_htslib::bam::Format;
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::Write;
-use std::path::Path;
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use thiserror::Error;
 use log::info;
 use rayon::prelude::*;
@@ -83,32 +82,45 @@ pub fn parse_subtraction_scores_from_bam(path: &str) -> Result<FxHashMap<String,
     Ok(high_scores)
 }
 
-/// Main elimination function - pure Rust implementation
+/// Eliminate subtraction-mapped reads.
 /// 
 /// Processes isolate and subtraction SAM files to eliminate reads based on subtraction scores.
-/// Creates both filtered SAM output and subtracted read IDs file.
+/// Creates both filtered SAM output, subtracted read IDs file, and filters FASTQ.
+/// 
+/// # Arguments
+/// * `isolate_sam_path` - Path to the isolate SAM/BAM file
+/// * `subtraction_sam_path` - Path to the subtraction SAM file  
+/// * `output_sam_path` - Path to write the filtered SAM/BAM file
+/// * `input_fastq_path` - Path to the input FASTQ file to filter
+/// * `output_fastq_path` - Path to write the filtered FASTQ file
+/// * `proc` - Number of threads to use for processing
+/// 
+/// # Returns
+/// Number of reads that were subtracted (eliminated)
 pub fn eliminate_subtraction(
     isolate_sam_path: &str,
     subtraction_sam_path: &str,
     output_sam_path: &str,
-) -> Result<(), BamProcessingError> {
-    info!("starting subtraction elimination: isolate={}, subtraction={}, output={}",
-          isolate_sam_path, subtraction_sam_path, output_sam_path);
+    input_fastq_path: &str,
+    output_fastq_path: &str,
+    proc: usize,
+) -> Result<usize, BamProcessingError> {
+    info!("starting subtraction elimination: isolate={}, subtraction={}, output={}, proc={}",
+          isolate_sam_path, subtraction_sam_path, output_sam_path, proc);
     
     // Parse subtraction scores
     let subtraction_scores = parse_subtraction_scores_from_bam(subtraction_sam_path)?;
     let processor = SubtractionProcessor::new(subtraction_scores);
     
-    // Process isolate file with default thread count
-    let proc = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    // Process isolate file
     let subtracted_ids = process_isolate_file(isolate_sam_path, output_sam_path, &processor, proc)?;
+    let subtracted_count = subtracted_ids.len();
     
-    info!("subtraction complete: {} reads eliminated", subtracted_ids.len());
+    // Filter FASTQ file using the subtracted read IDs
+    filter_fastq_file(input_fastq_path, output_fastq_path, &subtracted_ids)?;
     
-    // Write subtracted IDs file
-    write_subtracted_ids_file(output_sam_path, &subtracted_ids)?;
-    
-    Ok(())
+    info!("subtraction complete: {} reads eliminated", subtracted_count);
+    Ok(subtracted_count)
 }
 
 /// Process the isolate SAM file and write filtered output using rust-htslib
@@ -232,29 +244,85 @@ pub fn process_isolate_file(
     Ok(all_subtracted_read_ids)
 }
 
-/// Write subtracted read IDs to file in same directory as output SAM
-fn write_subtracted_ids_file(
-    output_sam_path: &str,
+/// Filter FASTQ file by removing reads whose IDs are in the subtracted set
+/// 
+/// # Arguments
+/// * `input_fastq_path` - Path to input FASTQ file
+/// * `output_fastq_path` - Path to output FASTQ file  
+/// * `subtracted_ids` - Set of read IDs to filter out
+/// 
+/// # Returns
+/// Result indicating success or failure
+pub fn filter_fastq_file(
+    input_fastq_path: &str,
+    output_fastq_path: &str,
     subtracted_ids: &HashSet<String>,
 ) -> Result<(), BamProcessingError> {
-    // Create subtracted_read_ids.txt in the same directory as the output SAM file
-    let output_path = Path::new(output_sam_path);
-    let subtracted_ids_path = output_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("subtracted_read_ids.txt");
-
-    let mut subtracted_read_ids_file = File::create(&subtracted_ids_path)
+    info!("filtering FASTQ file: {} -> {}", input_fastq_path, output_fastq_path);
+    
+    let input_file = File::open(input_fastq_path)
         .map_err(|e| BamProcessingError::FileCreate {
-            path: subtracted_ids_path.to_string_lossy().to_string(),
+            path: input_fastq_path.to_string(),
             source: e,
         })?;
-
-    for read_id in subtracted_ids {
-        writeln!(&mut subtracted_read_ids_file, "{}", read_id)
-            .map_err(|e| BamProcessingError::WriteOutput { source: e })?;
+    
+    let output_file = File::create(output_fastq_path)
+        .map_err(|e| BamProcessingError::FileCreate {
+            path: output_fastq_path.to_string(),
+            source: e,
+        })?;
+    
+    let mut reader = BufReader::new(input_file);
+    let mut writer = BufWriter::new(output_file);
+    
+    let mut lines = Vec::with_capacity(4);
+    
+    loop {
+        lines.clear();
+        
+        // Read 4 lines for a FASTQ record
+        for _ in 0..4 {
+            let mut line = String::default();
+            match reader.read_line(&mut line) {
+                Ok(0) => break, // EOF
+                Ok(_) => lines.push(line),
+                Err(e) => return Err(BamProcessingError::WriteOutput { source: e }),
+            }
+        }
+        
+        // Check if we reached EOF
+        if lines.is_empty() {
+            break;
+        }
+        
+        // Check if we have a complete 4-line record
+        if lines.len() != 4 {
+            break;
+        }
+        
+        // Extract read ID from the first line (header line starting with @)
+        let header = &lines[0];
+        if !header.starts_with('@') {
+            return Err(BamProcessingError::SamParse(
+                "Invalid FASTQ format: header line should start with '@'".to_string()
+            ));
+        }
+        
+        // Get read ID (everything after @ until first whitespace or newline)
+        let read_id = header[1..].split_whitespace().next()
+            .unwrap_or("")
+            .trim_end_matches('\n')
+            .trim_end_matches('\r');
+        
+        // If this read ID is not in the subtracted set, write all 4 lines
+        if !subtracted_ids.contains(read_id) {
+            for line in &lines {
+                writer.write_all(line.as_bytes())
+                    .map_err(|e| BamProcessingError::WriteOutput { source: e })?;
+            }
+        }
     }
-
+    
     Ok(())
 }
 
