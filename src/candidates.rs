@@ -3,14 +3,11 @@ use log::info;
 use pyo3::prelude::*;
 use pyo3::exceptions::PyIOError;
 
-
-
-
 /// Parse a single SAM line and extract candidate OTU information
 /// 
 /// This function processes one SAM line and determines if the read meets the score cutoff.
 /// Used for testing and by the streaming functions.
-/// 
+///  
 /// # Arguments
 /// * `line` - A SAM format line as string
 /// * `p_score_cutoff` - Minimum score threshold (AS:i score + read length)

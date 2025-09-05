@@ -1,5 +1,5 @@
-use crate::parse_sam::parse_sam;
-use rust_htslib::{bam, bam::Read};
+use crate::sam::{SamReader, extract_alignment_score};
+use rust_htslib::bam;
 use rust_htslib::bam::Format;
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
@@ -17,17 +17,8 @@ pub enum BamProcessingError {
     #[error("Failed to parse SAM file: {0}")]
     SamParse(String),
     
-    #[error("Failed to read BAM/SAM record: {source}")]
-    BamRead { source: rust_htslib::errors::Error },
-    
     #[error("Failed to write BAM/SAM record: {source}")]
     BamWrite { source: rust_htslib::errors::Error },
-    
-    #[error("Insufficient fields in SAM line")]
-    InsufficientFields,
-    
-    #[error("Failed to parse alignment score from field '{field}': {source}")]
-    AlignmentScoreParse { field: String, source: std::num::ParseFloatError },
     
     #[error("Failed to write to output file: {source}")]
     WriteOutput { source: std::io::Error },
@@ -128,20 +119,35 @@ impl SubtractionProcessor {
     }
 }
 
-/// Parse subtraction SAM file using parse_sam module and return scores for each read
+/// Parse subtraction SAM file using streaming and return scores for each read
 pub fn parse_subtraction_sam(path: &str) -> Result<FxHashMap<String, f32>, BamProcessingError> {
     info!("parsing subtraction SAM file: {}", path);
     
-    let sam_lines = parse_sam(path, None)
+    let mut reader = SamReader::new(path)
         .map_err(BamProcessingError::SamParse)?;
 
-    let mut high_scores: FxHashMap<String, f32> = FxHashMap::default();
+    // Pre-allocate HashMap with estimated capacity
+    let mut high_scores: FxHashMap<String, f32> = FxHashMap::with_capacity_and_hasher(100_000, Default::default());
     
-    for sam_line in sam_lines {
-        if let Some(score) = sam_line.score {
-            high_scores.insert(sam_line.read_id, score as f32);
+    reader.stream_chunks(|chunk| {
+        for record in chunk {
+            // Skip unmapped reads
+            if record.is_unmapped() {
+                continue;
+            }
+
+            // Get read ID
+            let read_id = std::str::from_utf8(record.qname())
+                .map_err(|_| "Invalid UTF-8 in read ID")?
+                .to_string();
+
+            // Get alignment score
+            if let Some(total_score) = extract_alignment_score(record) {
+                high_scores.insert(read_id, total_score as f32);
+            }
         }
-    }
+        Ok(())
+    }).map_err(BamProcessingError::SamParse)?;
 
     info!("parsed {} subtraction scores from {}", high_scores.len(), path);
     Ok(high_scores)
@@ -181,9 +187,8 @@ pub fn process_isolate_file(
     processor: &SubtractionProcessor,
 ) -> Result<HashSet<String>, BamProcessingError> {
     
-    // Open input file with rust-htslib reader
-    let mut reader = bam::Reader::from_path(input_path)
-        .map_err(|e| BamProcessingError::BamRead { source: e })?;
+    let mut reader = SamReader::new(input_path)
+        .map_err(|_| BamProcessingError::SamParse("Failed to open SAM file".to_string()))?;
     
     // Get the header from input to preserve SQ lines and other headers
     let header_view = reader.header().clone();
@@ -197,58 +202,49 @@ pub fn process_isolate_file(
 
     let mut subtracted_read_ids = HashSet::new();
 
-    // Process each record
-    for result in reader.records() {
-        let record = result.map_err(|e| BamProcessingError::BamRead { source: e })?;
-        
-        // Skip unmapped reads
-        if record.is_unmapped() {
-            continue;
+    // Process each chunk
+    reader.stream_chunks(|chunk| {
+        for record in chunk {
+            // Skip unmapped reads
+            if record.is_unmapped() {
+                continue;
+            }
+            
+            // Get read ID
+            let read_id = std::str::from_utf8(record.qname())
+                .map_err(|_| "Invalid UTF-8 in read ID")?
+                .to_string();
+            
+            // Get reference name
+            let ref_name = if record.tid() >= 0 {
+                std::str::from_utf8(header_view.tid2name(record.tid() as u32))
+                    .unwrap_or("*")
+            } else {
+                "*"
+            };
+            
+            // Skip if reference is unmapped
+            if ref_name == "*" {
+                continue;
+            }
+            
+            // Calculate alignment score using shared function
+            let isolate_score = match extract_alignment_score(record) {
+                Some(score) => score as f32,
+                None => continue,
+            };
+            
+            // Check if this read should be eliminated
+            if processor.should_eliminate(&read_id, isolate_score) {
+                subtracted_read_ids.insert(read_id);
+            } else {
+                // Write the record to output
+                writer.write(record)
+                    .map_err(|e| format!("Failed to write BAM record: {}", e))?;
+            }
         }
-        
-        // Get read ID
-        let read_id = std::str::from_utf8(record.qname())
-            .map_err(|_| BamProcessingError::InsufficientFields)?
-            .to_string();
-        
-        // Get reference name
-        let ref_name = if record.tid() >= 0 {
-            std::str::from_utf8(header_view.tid2name(record.tid() as u32))
-                .unwrap_or("*")
-        } else {
-            "*"
-        };
-        
-        // Skip if reference is unmapped
-        if ref_name == "*" {
-            continue;
-        }
-        
-        // Calculate alignment score (AS score + read length)
-        let read_length = record.seq_len() as f32;
-        let as_score = match record.aux(b"AS") {
-            Ok(aux) => match aux {
-                rust_htslib::bam::record::Aux::I32(score) => score as f32,
-                rust_htslib::bam::record::Aux::I8(score) => score as f32,
-                rust_htslib::bam::record::Aux::I16(score) => score as f32,
-                rust_htslib::bam::record::Aux::U8(score) => score as f32,
-                rust_htslib::bam::record::Aux::U16(score) => score as f32,
-                rust_htslib::bam::record::Aux::U32(score) => score as f32,
-                _ => 0.0,
-            },
-            Err(_) => 0.0,
-        };
-        let isolate_score = as_score + read_length;
-        
-        // Check if this read should be eliminated
-        if processor.should_eliminate(&read_id, isolate_score) {
-            subtracted_read_ids.insert(read_id);
-        } else {
-            // Write the record to output
-            writer.write(&record)
-                .map_err(|e| BamProcessingError::BamWrite { source: e })?;
-        }
-    }
+        Ok(())
+    }).map_err(|e| BamProcessingError::SamParse(e))?;
 
     Ok(subtracted_read_ids)
 }

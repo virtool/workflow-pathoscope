@@ -1,7 +1,7 @@
-use crate::parse_sam::*;
+use crate::sam::{MinimalAlignment, SamReader, extract_alignment_score};
 use crate::{UniqueReads, MultiMappingReads, MatrixResult};
 use rustc_hash::FxHashMap;
-use rust_htslib::{bam, bam::Read, bam::HeaderView};
+use rust_htslib::{bam, bam::HeaderView};
 use log::info;
 
 /// A matrix containing alignment data and metadata.
@@ -231,17 +231,15 @@ fn process_bam_record(
 /// Build read alignments map by processing BAM file in chunks
 /// 
 /// # Arguments
-/// * `reader` - BAM file reader
+/// * `reader` - SamReader for streaming
 /// * `header` - BAM file header  
-/// * `chunk_size` - Number of records to process per chunk
 /// * `p_score_cutoff` - Minimum score threshold
 /// 
 /// # Returns
 /// Tuple containing (read_alignments, refs, reads, minimal_alignments, max_score, min_score)
 fn create_read_alignments_map(
-    mut reader: bam::Reader,
+    mut reader: SamReader,
     header: &HeaderView,
-    chunk_size: usize,
     p_score_cutoff: f64,
 ) -> Result<(FxHashMap<i32, Vec<(i32, f64)>>, Vec<String>, Vec<String>, Vec<MinimalAlignment>, f64, f64), String> {
     let mut h_read_id: FxHashMap<String, i32> = FxHashMap::default();
@@ -255,27 +253,11 @@ fn create_read_alignments_map(
     let mut minimal_alignments = Vec::new();
     let mut read_alignments: FxHashMap<i32, Vec<(i32, f64)>> = FxHashMap::default();
 
-    loop {
-        let mut chunk_records = Vec::with_capacity(chunk_size);
-        
-        // Read a chunk of records
-        for _ in 0..chunk_size {
-            let mut record = bam::Record::new();
-            match reader.read(&mut record) {
-                Some(Ok(_)) => chunk_records.push(record),
-                Some(Err(_)) | None => break, // EOF or error
-            }
-        }
-        
-        if chunk_records.is_empty() {
-            break;
-        }
-        
-        
+    reader.stream_chunks(|chunk| {
         // Process this chunk
-        for record in chunk_records {
+        for record in chunk {
             if let Some((read_index, ref_index, minimal_alignment, total_score)) = process_bam_record(
-                &record,
+                record,
                 header,
                 p_score_cutoff,
                 &mut h_read_id,
@@ -296,46 +278,36 @@ fn create_read_alignments_map(
                 }
             }
         }
-    }
+        Ok(())
+    })?;
 
     Ok((read_alignments, refs, reads, minimal_alignments, max_score, min_score))
 }
 
-pub fn build_matrix(
-    alignment_path: &str,
-    p_score_cutoff: Option<f64>,
-) -> Result<MatrixResult, String> {
-    build_matrix_with_chunk_size(alignment_path, p_score_cutoff, 10000)
-}
-
 /// Build matrix with streaming processing to reduce memory usage
 /// 
-/// This function processes alignments in chunks to avoid loading all data into memory at once.
-/// For very large alignment files, this provides significant memory savings.
+/// This function processes alignments in chunks using SamReader to avoid loading 
+/// all data into memory at once. Chunking is handled internally.
 /// 
 /// # Arguments
 /// * `alignment_path` - Path to the SAM/BAM file
 /// * `p_score_cutoff` - Optional score cutoff for alignments
-/// * `chunk_size` - Number of records to process in each chunk
-pub fn build_matrix_with_chunk_size(
+pub fn build_matrix(
     alignment_path: &str,
     p_score_cutoff: Option<f64>,
-    chunk_size: usize,
 ) -> Result<MatrixResult, String> {
     let p_score_cutoff = p_score_cutoff.unwrap_or(0.01);
     
-    info!("building matrix from '{}' with score cutoff {} and chunk size {}",
-          alignment_path, p_score_cutoff, chunk_size);
+    info!("building matrix from '{}' with score cutoff {}",
+          alignment_path, p_score_cutoff);
     
     // Open reader for streaming
-    let reader = bam::Reader::from_path(alignment_path)
-        .map_err(|e| format!("Failed to open alignment file '{}': {}", alignment_path, e))?;
-    
+    let reader = SamReader::new(alignment_path)?;
     let header = reader.header().clone();
     
     // Build read alignments map using helper function
     let (read_alignments, refs, reads, minimal_alignments, max_score, min_score) = 
-        create_read_alignments_map(reader, &header, chunk_size, p_score_cutoff)?;
+        create_read_alignments_map(reader, &header, p_score_cutoff)?;
 
     // Create PathoscopeMatrix and convert to legacy format
     let matrix = PathoscopeMatrix::from_alignments(
@@ -348,18 +320,6 @@ pub fn build_matrix_with_chunk_size(
     );
 
     Ok(matrix.into_matrix_result())
-}
-
-/// Legacy alias for build_matrix_with_chunk_size
-/// 
-/// # Deprecated
-/// Use `build_matrix_with_chunk_size` instead for explicit chunk size control
-pub fn build_matrix_streaming(
-    alignment_path: &str,
-    p_score_cutoff: Option<f64>,
-    chunk_size: usize,
-) -> Result<MatrixResult, String> {
-    build_matrix_with_chunk_size(alignment_path, p_score_cutoff, chunk_size)
 }
 
 /// modifies the scores of u and nu with respect to max_score and min_score

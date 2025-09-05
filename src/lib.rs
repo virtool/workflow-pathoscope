@@ -2,9 +2,9 @@ mod subtraction;
 mod coverage;
 mod matrix;
 mod em;
-mod parse_sam;
 mod candidates;
 mod logging;
+mod sam;
 
 use subtraction::eliminate_subtraction;
 use matrix::build_matrix;
@@ -24,7 +24,7 @@ pub type MatrixResult = (
     MultiMappingReads,
     Vec<String>,
     Vec<String>,
-    Vec<parse_sam::MinimalAlignment>,
+    Vec<sam::MinimalAlignment>,
 );
 
 #[pyclass]
@@ -179,7 +179,7 @@ pub fn parse_isolate_scores(
     alignment_path: String,
     p_score_cutoff: f64,
 ) -> PyResult<FxHashMap<String, f64>> {
-    use rust_htslib::{bam, bam::Read};
+    use sam::{SamReader, extract_alignment_score};
     use std::time::Instant;
     
     info!("parsing isolate scores from {} with cutoff {}", alignment_path, p_score_cutoff);
@@ -188,7 +188,7 @@ pub fn parse_isolate_scores(
     py.allow_threads(|| {
         let start = Instant::now();
         
-        let mut reader = bam::Reader::from_path(&alignment_path)
+        let mut reader = SamReader::new(&alignment_path)
             .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to open alignment file '{}': {}", alignment_path, e)))?;
 
         // Pre-allocate HashMap capacity based on typical BAM files
@@ -203,51 +203,52 @@ pub fn parse_isolate_scores(
         let mut passed_cutoff = 0u64;
         let mut last_log = Instant::now();
 
-        for result in reader.records() {
-            total_records += 1;
-            
-            if total_records % 1_000_000 == 0 {
-                let elapsed = last_log.elapsed();
-                let rate = 1_000_000.0 / elapsed.as_secs_f64();
-                info!(
-                    "processed {}m records ({} mapped, {} passed cutoff) - {:.0} records/sec", 
-                    total_records / 1_000_000,
-                    mapped_records,
-                    passed_cutoff,
-                    rate
-                );
-                last_log = Instant::now();
-            }
-            
-            let record = result.map_err(|e| PyErr::new::<PyIOError, _>(format!("error reading record: {}", e)))?;
-
-            if record.is_unmapped() {
-                continue;
-            }
-            mapped_records += 1;
-
-            let read_id = std::str::from_utf8(record.qname())
-                .map_err(|e| PyErr::new::<PyIOError, _>(format!("invalid utf-8 in read id: {}", e)))?
-                .to_string();
-
-            let total_score = match parse_sam::extract_alignment_score(&record) {
-                Some(score) => score,
-                None => continue,
-            };
-
-            if total_score >= p_score_cutoff {
-                passed_cutoff += 1;
+        reader.stream_chunks(|chunk| {
+            for record in chunk {
+                total_records += 1;
                 
-                isolate_high_scores
-                    .entry(read_id)
-                    .and_modify(|existing_score| {
-                        if total_score > *existing_score {
-                            *existing_score = total_score;
-                        }
-                    })
-                    .or_insert(total_score);
+                if total_records % 1_000_000 == 0 {
+                    let elapsed = last_log.elapsed();
+                    let rate = 1_000_000.0 / elapsed.as_secs_f64();
+                    info!(
+                        "processed {}m records ({} mapped, {} passed cutoff) - {:.0} records/sec", 
+                        total_records / 1_000_000,
+                        mapped_records,
+                        passed_cutoff,
+                        rate
+                    );
+                    last_log = Instant::now();
+                }
+                
+                if record.is_unmapped() {
+                    continue;
+                }
+                mapped_records += 1;
+
+                let read_id = std::str::from_utf8(record.qname())
+                    .map_err(|e| format!("invalid utf-8 in read id: {}", e))?
+                    .to_string();
+
+                let total_score = match extract_alignment_score(record) {
+                    Some(score) => score,
+                    None => continue,
+                };
+
+                if total_score >= p_score_cutoff {
+                    passed_cutoff += 1;
+                    
+                    isolate_high_scores
+                        .entry(read_id)
+                        .and_modify(|existing_score| {
+                            if total_score > *existing_score {
+                                *existing_score = total_score;
+                            }
+                        })
+                        .or_insert(total_score);
+                }
             }
-        }
+            Ok(())
+        }).map_err(|e| PyErr::new::<PyIOError, _>(e))?;
 
         let elapsed = start.elapsed();
         info!(
@@ -262,7 +263,12 @@ pub fn parse_isolate_scores(
 }
 
 #[pyfunction]
-/// Entry point for expectation_maximization  
+/// Run expectation maximization algorithm
+/// 
+/// # Arguments
+/// * `alignment_path` - Path to the SAM/BAM file
+/// * `p_score_cutoff` - Minimum score threshold for alignments
+/// * `ref_lengths` - Dictionary mapping reference IDs to their lengths
 pub fn run_expectation_maximization(
     py: Python,
     alignment_path: String,
@@ -270,32 +276,12 @@ pub fn run_expectation_maximization(
     ref_lengths: FxHashMap<String, usize>,
 ) -> PyResult<PathoscopeResults> {
     info!("starting em algorithm: file={}, cutoff={}", alignment_path, p_score_cutoff);
-    run_expectation_maximization_streaming(py, alignment_path, p_score_cutoff, ref_lengths, 10000)
-}
-
-#[pyfunction]
-/// Memory-optimized expectation maximization with streaming processing
-/// 
-/// This function uses chunked processing and compact data structures to reduce
-/// memory usage during EM algorithm execution.
-/// 
-/// # Arguments
-/// * `alignment_path` - Path to the SAM/BAM file
-/// * `p_score_cutoff` - Minimum score threshold for alignments
-/// * `ref_lengths` - Dictionary mapping reference IDs to their lengths
-/// * `chunk_size` - Number of records to process in each chunk
-pub fn run_expectation_maximization_streaming(
-    py: Python,
-    alignment_path: String,
-    p_score_cutoff: f64,
-    ref_lengths: FxHashMap<String, usize>,
-    chunk_size: usize,
-) -> PyResult<PathoscopeResults> {
+    
     // Release the GIL during the CPU-intensive matrix operations and EM algorithm
     py.allow_threads(|| {
         // Use streaming matrix building to reduce memory footprint
         let (u, nu, refs, reads, minimal_alignments) =
-            matrix::build_matrix_with_chunk_size(alignment_path.as_str(), Some(p_score_cutoff), chunk_size)
+            matrix::build_matrix(alignment_path.as_str(), Some(p_score_cutoff))
                 .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to build matrix: {}", e)))?;
 
         let (best_hit_initial_reads, best_hit_initial, level_1_initial, level_2_initial) =

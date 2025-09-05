@@ -1,4 +1,4 @@
-use crate::parse_sam::MinimalAlignment;
+use crate::sam::MinimalAlignment;
 use crate::em::find_updated_score;
 use crate::{UniqueReads, MultiMappingReads};
 use rustc_hash::FxHashMap;
