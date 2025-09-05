@@ -139,14 +139,14 @@ pub fn process_isolate_file(
                 continue;
             }
             
-            // Get read ID as string slice first (no allocation)
-            let read_id_str = std::str::from_utf8(record.qname())
-                .map_err(|_| "Invalid UTF-8 in read ID")?;
+            let read_id_str = unsafe {
+                std::str::from_utf8_unchecked(record.qname())
+            };
             
-            // Get reference name
             let ref_name = if record.tid() >= 0 {
-                std::str::from_utf8(header_view.tid2name(record.tid() as u32))
-                    .unwrap_or("*")
+                unsafe {
+                    std::str::from_utf8_unchecked(header_view.tid2name(record.tid() as u32))
+                }
             } else {
                 "*"
             };
