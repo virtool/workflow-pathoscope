@@ -29,11 +29,6 @@ pub struct SubtractionProcessor {
     subtraction_scores: FxHashMap<String, f32>,
 }
 
-#[derive(Debug, PartialEq)]
-pub enum ProcessResult {
-    Keep(String),       // SAM line to write to output (headers, comments, mapped reads)
-    Eliminate(String),  // Read ID that was eliminated
-}
 
 impl SubtractionProcessor {
     /// Creates a new SubtractionProcessor with the given subtraction scores
@@ -51,76 +46,10 @@ impl SubtractionProcessor {
         }
     }
 
-    /// Process a SAM line and determine what action to take
-    /// Returns None for lines that should be skipped (empty, unmapped, malformed)
-    pub fn process_sam_line(&self, line: &str) -> Result<Option<ProcessResult>, BamProcessingError> {
-        // Skip empty lines
-        if line.trim().is_empty() {
-            return Ok(None);
-        }
-
-        // Keep header lines (@) and comment lines (#)
-        match line.chars().next() {
-            Some('@') | Some('#') => return Ok(Some(ProcessResult::Keep(line.to_string()))),
-            None => return Ok(None),
-            _ => {}
-        }
-
-        let fields: Vec<&str> = line.split('\t').collect();
-
-        // Skip lines with insufficient fields for a SAM record
-        if fields.len() < 11 {
-            return Ok(None);
-        }
-
-        let read_id = fields[0];
-        let reference = fields[2];
-
-        // Skip unmapped reads (reference is *)
-        if reference == "*" {
-            return Ok(None);
-        }
-
-        // Calculate alignment score
-        let isolate_score = self.find_sam_align_score(&fields)?;
-
-        // Check if this read should be eliminated
-        if self.should_eliminate(read_id, isolate_score) {
-            Ok(Some(ProcessResult::Eliminate(read_id.to_string())))
-        } else {
-            Ok(Some(ProcessResult::Keep(line.to_string())))
-        }
-    }
-
-    /// Find the Pathoscope alignment score for a SAM line
-    /// Returns AS score + read length
-    fn find_sam_align_score(&self, fields: &[&str]) -> Result<f32, BamProcessingError> {
-        if fields.len() < 10 {
-            return Err(BamProcessingError::InsufficientFields);
-        }
-
-        let read_length = fields[9].chars().count() as f32;
-        let mut a_score: f32 = 0.0;
-
-        // Look for AS:i: tag in optional fields (starting from field 11)
-        for field in fields.iter().skip(11) {
-            if let Some(stripped) = field.strip_prefix("AS:i:") {
-                a_score = stripped.parse().map_err(|e| {
-                    BamProcessingError::AlignmentScoreParse {
-                        field: field.to_string(),
-                        source: e,
-                    }
-                })?;
-                break;
-            }
-        }
-
-        Ok(a_score + read_length)
-    }
 }
 
-/// Parse subtraction SAM file using streaming and return scores for each read
-pub fn parse_subtraction_sam(path: &str) -> Result<FxHashMap<String, f32>, BamProcessingError> {
+/// Parse subtraction BAM file and return a map of read IDs to scores.
+pub fn parse_subtraction_scores_from_bam(path: &str) -> Result<FxHashMap<String, f32>, BamProcessingError> {
     info!("parsing subtraction SAM file: {}", path);
     
     let mut reader = SamReader::new(path)
@@ -166,7 +95,7 @@ pub fn eliminate_subtraction(
           isolate_sam_path, subtraction_sam_path, output_sam_path);
     
     // Parse subtraction scores
-    let subtraction_scores = parse_subtraction_sam(subtraction_sam_path)?;
+    let subtraction_scores = parse_subtraction_scores_from_bam(subtraction_sam_path)?;
     let processor = SubtractionProcessor::new(subtraction_scores);
     
     // Process isolate file
@@ -210,10 +139,9 @@ pub fn process_isolate_file(
                 continue;
             }
             
-            // Get read ID
-            let read_id = std::str::from_utf8(record.qname())
-                .map_err(|_| "Invalid UTF-8 in read ID")?
-                .to_string();
+            // Get read ID as string slice first (no allocation)
+            let read_id_str = std::str::from_utf8(record.qname())
+                .map_err(|_| "Invalid UTF-8 in read ID")?;
             
             // Get reference name
             let ref_name = if record.tid() >= 0 {
@@ -235,8 +163,9 @@ pub fn process_isolate_file(
             };
             
             // Check if this read should be eliminated
-            if processor.should_eliminate(&read_id, isolate_score) {
-                subtracted_read_ids.insert(read_id);
+            if processor.should_eliminate(read_id_str, isolate_score) {
+                // Only allocate string when we need to store it
+                subtracted_read_ids.insert(read_id_str.to_string());
             } else {
                 // Write the record to output
                 writer.write(record)
@@ -319,136 +248,6 @@ mod tests {
         assert!(!processor.should_eliminate("unknown_read", 100.0));
     }
 
-    #[test]
-    fn test_process_sam_line_header() {
-        let processor = SubtractionProcessor::new(FxHashMap::default());
-        let line = "@HD\tVN:1.6\tSO:unsorted";
-        
-        assert_eq!(
-            processor.process_sam_line(line).unwrap(),
-            Some(ProcessResult::Keep(line.to_string()))
-        );
-    }
-
-    #[test]
-    fn test_process_sam_line_comment() {
-        let processor = SubtractionProcessor::new(FxHashMap::default());
-        let line = "# This is a comment";
-        
-        assert_eq!(
-            processor.process_sam_line(line).unwrap(),
-            Some(ProcessResult::Keep(line.to_string()))
-        );
-    }
-
-    #[test]
-    fn test_process_sam_line_empty() {
-        let processor = SubtractionProcessor::new(FxHashMap::default());
-        
-        assert_eq!(processor.process_sam_line("").unwrap(), None);
-        assert_eq!(processor.process_sam_line("   ").unwrap(), None);
-    }
-
-    #[test]
-    fn test_process_sam_line_insufficient_fields() {
-        let processor = SubtractionProcessor::new(FxHashMap::default());
-        let line = "read1\t0\tref1";
-        
-        assert_eq!(processor.process_sam_line(line).unwrap(), None);
-    }
-
-    #[test]
-    fn test_process_sam_line_unmapped() {
-        let processor = SubtractionProcessor::new(FxHashMap::default());
-        let line = "read1\t4\t*\t0\t0\t*\t*\t0\t0\tACGT\tIIII\tAS:i:50";
-        
-        assert_eq!(processor.process_sam_line(line).unwrap(), None);
-    }
-
-    #[test]
-    fn test_process_sam_line_keep() {
-        let mut scores = FxHashMap::default();
-        scores.insert("read1".to_string(), 100.0);
-        let processor = SubtractionProcessor::new(scores);
-        
-        // AS:i:150 + read_length:4 = 154.0 > subtraction_score:100.0 -> keep
-        let line = "read1\t0\tref1\t100\t60\t4M\t*\t0\t0\tACGT\tIIII\tAS:i:150";
-        
-        match processor.process_sam_line(line).unwrap() {
-            Some(ProcessResult::Keep(kept_line)) => assert_eq!(kept_line, line),
-            other => panic!("Expected Some(Keep), got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_process_sam_line_eliminate() {
-        let mut scores = FxHashMap::default();
-        scores.insert("read1".to_string(), 200.0);
-        let processor = SubtractionProcessor::new(scores);
-        
-        // AS:i:150 + read_length:4 = 154.0 < subtraction_score:200.0 -> eliminate
-        let line = "read1\t0\tref1\t100\t60\t4M\t*\t0\t0\tACGT\tIIII\tAS:i:150";
-        
-        match processor.process_sam_line(line).unwrap() {
-            Some(ProcessResult::Eliminate(read_id)) => assert_eq!(read_id, "read1"),
-            other => panic!("Expected Some(Eliminate), got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_find_sam_align_score_basic() {
-        let processor = SubtractionProcessor::new(FxHashMap::default());
-        let fields = vec!["read1", "0", "ref1", "100", "60", "4M", "*", "0", "0", "ACGT", "IIII", "AS:i:150"];
-        
-        let score = processor.find_sam_align_score(&fields).unwrap();
-        assert_eq!(score, 154.0); // 150 + 4
-    }
-
-    #[test]
-    fn test_find_sam_align_score_no_as_tag() {
-        let processor = SubtractionProcessor::new(FxHashMap::default());
-        let fields = vec!["read1", "0", "ref1", "100", "60", "4M", "*", "0", "0", "ACGT", "IIII"];
-        
-        let score = processor.find_sam_align_score(&fields).unwrap();
-        assert_eq!(score, 4.0); // 0 + 4 (no AS tag found)
-    }
-
-    #[test]
-    fn test_find_sam_align_score_multiple_tags() {
-        let processor = SubtractionProcessor::new(FxHashMap::default());
-        let fields = vec!["read1", "0", "ref1", "100", "60", "4M", "*", "0", "0", "ACGT", "IIII", "XM:i:0", "AS:i:150", "NM:i:0"];
-        
-        let score = processor.find_sam_align_score(&fields).unwrap();
-        assert_eq!(score, 154.0); // 150 + 4
-    }
-
-    #[test]
-    fn test_find_sam_align_score_insufficient_fields() {
-        let processor = SubtractionProcessor::new(FxHashMap::default());
-        let fields = vec!["read1", "0", "ref1"];
-        
-        assert!(processor.find_sam_align_score(&fields).is_err());
-    }
-
-    #[test]
-    fn test_find_sam_align_score_invalid_as_value() {
-        let processor = SubtractionProcessor::new(FxHashMap::default());
-        let fields = vec!["read1", "0", "ref1", "100", "60", "4M", "*", "0", "0", "ACGT", "IIII", "AS:i:invalid"];
-        
-        assert!(processor.find_sam_align_score(&fields).is_err());
-    }
-
-    #[test]
-    fn test_process_sam_line_unknown_read() {
-        let processor = SubtractionProcessor::new(create_test_subtraction_scores());
-        let line = "unknown_read\t0\tref1\t100\t60\t4M\t*\t0\t0\tACGT\tIIII\tAS:i:50";
-        
-        // Unknown read should be kept regardless of score
-        match processor.process_sam_line(line).unwrap() {
-            Some(ProcessResult::Keep(kept_line)) => assert_eq!(kept_line, line),
-            other => panic!("Expected Some(Keep), got {:?}", other),
-        }
-    }
 
     #[test]
     fn test_subtraction_processor_empty_scores() {
@@ -459,26 +258,10 @@ mod tests {
         assert!(!processor.should_eliminate("any_read", 0.0));
     }
 
-    #[test]
-    fn test_process_sam_line_long_read_sequence() {
-        let mut scores = FxHashMap::default();
-        scores.insert("long_read".to_string(), 200.0);
-        let processor = SubtractionProcessor::new(scores);
-        
-        let long_seq = "A".repeat(150);
-        let long_qual = "I".repeat(150);
-        let line = format!("long_read\t0\tref1\t100\t60\t150M\t*\t0\t0\t{}\t{}\tAS:i:50", long_seq, long_qual);
-        
-        // AS:i:50 + read_length:150 = 200.0 == subtraction_score:200.0 -> eliminate
-        match processor.process_sam_line(&line).unwrap() {
-            Some(ProcessResult::Eliminate(read_id)) => assert_eq!(read_id, "long_read"),
-            other => panic!("Expected Some(Eliminate), got {:?}", other),
-        }
-    }
 
     #[test]
     fn test_parse_subtraction_sam() {
-        let result = parse_subtraction_sam("example/rust/test_basic.sam").unwrap();
+        let result = parse_subtraction_scores_from_bam("example/rust/test_basic.sam").unwrap();
 
         // Expected scores based on the SAM file content:
         // read1: AS:i:45 + read_length:50 = 95.0
