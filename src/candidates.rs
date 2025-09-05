@@ -3,6 +3,26 @@ use log::info;
 use pyo3::prelude::*;
 use pyo3::exceptions::PyIOError;
 
+const AS_TAG_PREFIX: &str = "AS:i:";
+
+/// Extract AS:i alignment score from SAM optional fields
+/// 
+/// # Arguments
+/// * `fields` - SAM fields starting from the optional fields (field 11+)
+/// 
+/// # Returns
+/// Option containing the AS:i score as f64, None if not found or invalid
+fn extract_as_score(fields: &[&str]) -> Option<f64> {
+    for field in fields {
+        if let Some(stripped) = field.strip_prefix(AS_TAG_PREFIX) {
+            if let Ok(score) = stripped.parse::<i32>() {
+                return Some(score as f64);
+            }
+        }
+    }
+    None
+}
+
 /// Parse a single SAM line and extract candidate OTU information
 /// 
 /// This function processes one SAM line and determines if the read meets the score cutoff.
@@ -41,19 +61,8 @@ pub fn parse_sam_line(line: &str, p_score_cutoff: f64) -> Option<String> {
         return None;
     }
 
-    // Find AS:i score in the optional fields (starting from field 11)
-    let mut as_score: Option<f64> = None;
-    for field in &fields[11..] {
-        if let Some(stripped) = field.strip_prefix("AS:i:") {
-            if let Ok(score) = stripped.parse::<i32>() {
-                as_score = Some(score as f64);
-                break;
-            }
-        }
-    }
-
-    // Skip if no AS score found
-    if let Some(as_score) = as_score {
+    // Extract AS:i score from optional fields (starting from field 11)
+    if let Some(as_score) = extract_as_score(&fields[11..]) {
         // Calculate total score (AS score + read length)
         let total_score = as_score + seq_len;
 
@@ -66,31 +75,6 @@ pub fn parse_sam_line(line: &str, p_score_cutoff: f64) -> Option<String> {
     None
 }
 
-/// Extract candidate OTU reference IDs from SAM text data
-/// 
-/// This function parses SAM format data directly from text without using rust-htslib.
-/// Used for testing and can be called by other functions that need SAM text parsing.
-/// 
-/// # Arguments
-/// * `sam_text` - Raw SAM format data as string
-/// * `p_score_cutoff` - Minimum score threshold (AS:i score + read length)
-/// 
-/// # Returns
-/// HashSet of reference IDs that have reads meeting the score cutoff
-pub fn extract_candidates_from_sam_text(
-    sam_text: &str,
-    p_score_cutoff: f64,
-) -> HashSet<String> {
-    let mut candidate_otus = HashSet::new();
-
-    for line in sam_text.lines() {
-        if let Some(ref_name) = parse_sam_line(line, p_score_cutoff) {
-            candidate_otus.insert(ref_name);
-        }
-    }
-
-    candidate_otus
-}
 
 /// Extract candidate OTU reference IDs by running bowtie2 directly with streaming
 /// 
@@ -233,65 +217,5 @@ mod tests {
         assert_eq!(result, None);
     }
 
-    #[test]
-    fn test_extract_candidates_from_sam_text_basic() {
-        let sam_data = "@HD\tVN:1.0\tSO:unsorted
-@SQ\tSN:ref1\tLN:1000
-@SQ\tSN:ref2\tLN:2000
-read1\t0\tref1\t100\t255\t50M\t*\t0\t0\tAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\t*\tAS:i:45
-read2\t0\tref2\t200\t255\t30M\t*\t0\t0\tTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT\t*\tAS:i:25
-read3\t0\tref1\t300\t255\t40M\t*\t0\t0\tCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC\t*\tAS:i:2";
-
-        let result = extract_candidates_from_sam_text(sam_data, 0.01);
-
-        // Should find 2 unique references since scores are:
-        // read1: AS:i:45 + 50 = 95.0
-        // read2: AS:i:25 + 30 = 55.0  
-        // read3: AS:i:2 + 40 = 42.0
-        assert_eq!(result.len(), 2, "Should find 2 unique references");
-        assert!(result.contains("ref1"), "Should contain ref1");
-        assert!(result.contains("ref2"), "Should contain ref2");
-    }
-
-    #[test]
-    fn test_extract_candidates_from_sam_text_with_cutoff() {
-        let sam_data = "@HD\tVN:1.0\tSO:unsorted
-read1\t0\tref1\t100\t255\t50M\t*\t0\t0\tAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\t*\tAS:i:45
-read2\t0\tref2\t200\t255\t30M\t*\t0\t0\tTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT\t*\tAS:i:25
-read3\t0\tref1\t300\t255\t40M\t*\t0\t0\tCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC\t*\tAS:i:2";
-
-        let result = extract_candidates_from_sam_text(sam_data, 50.0);
-
-        // Only read1 (95.0) and read2 (55.0) should pass, read3 (42.0) should be filtered
-        assert_eq!(result.len(), 2, "Should find 2 references with high cutoff");
-        assert!(result.contains("ref1"), "Should contain ref1");
-        assert!(result.contains("ref2"), "Should contain ref2");
-    }
-
-    #[test]
-    fn test_extract_candidates_from_sam_text_very_high_cutoff() {
-        let sam_data = "@HD\tVN:1.0\tSO:unsorted
-read1\t0\tref1\t100\t255\t50M\t*\t0\t0\tAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\t*\tAS:i:45";
-
-        let result = extract_candidates_from_sam_text(sam_data, 100.0);
-
-        // No reads should pass this cutoff (read1 is 95.0)
-        assert_eq!(result.len(), 0, "Should find no references with very high cutoff");
-    }
-
-    #[test]
-    fn test_extract_candidates_from_sam_text_deduplication() {
-        let sam_data = "@HD\tVN:1.0\tSO:unsorted
-read1\t0\tref1\t100\t255\t50M\t*\t0\t0\tAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\t*\tAS:i:45
-read2\t0\tref1\t200\t255\t30M\t*\t0\t0\tTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT\t*\tAS:i:25";
-
-        let result = extract_candidates_from_sam_text(sam_data, 0.01);
-
-        // Even if multiple reads map to ref1, it should only appear once in the set
-        assert_eq!(result.len(), 1, "Should deduplicate reference names");
-        assert!(result.contains("ref1"), "Should contain ref1");
-        let ref1_count = result.iter().filter(|&r| r == "ref1").count();
-        assert_eq!(ref1_count, 1, "Each reference should appear only once in the result set");
-    }
 
 }
