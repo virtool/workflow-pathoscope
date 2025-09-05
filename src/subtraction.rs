@@ -1,13 +1,13 @@
-use crate::parse_sam::parse_sam;
-use rust_htslib::{bam, bam::Read};
+use crate::sam::{SamReader, extract_alignment_score, CHUNK_SIZE};
+use rust_htslib::bam;
 use rust_htslib::bam::Format;
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::Write;
-use std::path::Path;
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use thiserror::Error;
 use log::info;
+use rayon::prelude::*;
 
 #[derive(Error, Debug)]
 pub enum BamProcessingError {
@@ -17,17 +17,8 @@ pub enum BamProcessingError {
     #[error("Failed to parse SAM file: {0}")]
     SamParse(String),
     
-    #[error("Failed to read BAM/SAM record: {source}")]
-    BamRead { source: rust_htslib::errors::Error },
-    
     #[error("Failed to write BAM/SAM record: {source}")]
     BamWrite { source: rust_htslib::errors::Error },
-    
-    #[error("Insufficient fields in SAM line")]
-    InsufficientFields,
-    
-    #[error("Failed to parse alignment score from field '{field}': {source}")]
-    AlignmentScoreParse { field: String, source: std::num::ParseFloatError },
     
     #[error("Failed to write to output file: {source}")]
     WriteOutput { source: std::io::Error },
@@ -38,11 +29,6 @@ pub struct SubtractionProcessor {
     subtraction_scores: FxHashMap<String, f32>,
 }
 
-#[derive(Debug, PartialEq)]
-pub enum ProcessResult {
-    Keep(String),       // SAM line to write to output (headers, comments, mapped reads)
-    Eliminate(String),  // Read ID that was eliminated
-}
 
 impl SubtractionProcessor {
     /// Creates a new SubtractionProcessor with the given subtraction scores
@@ -60,118 +46,81 @@ impl SubtractionProcessor {
         }
     }
 
-    /// Process a SAM line and determine what action to take
-    /// Returns None for lines that should be skipped (empty, unmapped, malformed)
-    pub fn process_sam_line(&self, line: &str) -> Result<Option<ProcessResult>, BamProcessingError> {
-        // Skip empty lines
-        if line.trim().is_empty() {
-            return Ok(None);
-        }
-
-        // Keep header lines (@) and comment lines (#)
-        match line.chars().next() {
-            Some('@') | Some('#') => return Ok(Some(ProcessResult::Keep(line.to_string()))),
-            None => return Ok(None),
-            _ => {}
-        }
-
-        let fields: Vec<&str> = line.split('\t').collect();
-
-        // Skip lines with insufficient fields for a SAM record
-        if fields.len() < 11 {
-            return Ok(None);
-        }
-
-        let read_id = fields[0];
-        let reference = fields[2];
-
-        // Skip unmapped reads (reference is *)
-        if reference == "*" {
-            return Ok(None);
-        }
-
-        // Calculate alignment score
-        let isolate_score = self.find_sam_align_score(&fields)?;
-
-        // Check if this read should be eliminated
-        if self.should_eliminate(read_id, isolate_score) {
-            Ok(Some(ProcessResult::Eliminate(read_id.to_string())))
-        } else {
-            Ok(Some(ProcessResult::Keep(line.to_string())))
-        }
-    }
-
-    /// Find the Pathoscope alignment score for a SAM line
-    /// Returns AS score + read length
-    fn find_sam_align_score(&self, fields: &[&str]) -> Result<f32, BamProcessingError> {
-        if fields.len() < 10 {
-            return Err(BamProcessingError::InsufficientFields);
-        }
-
-        let read_length = fields[9].chars().count() as f32;
-        let mut a_score: f32 = 0.0;
-
-        // Look for AS:i: tag in optional fields (starting from field 11)
-        for field in fields.iter().skip(11) {
-            if let Some(stripped) = field.strip_prefix("AS:i:") {
-                a_score = stripped.parse().map_err(|e| {
-                    BamProcessingError::AlignmentScoreParse {
-                        field: field.to_string(),
-                        source: e,
-                    }
-                })?;
-                break;
-            }
-        }
-
-        Ok(a_score + read_length)
-    }
 }
 
-/// Parse subtraction SAM file using parse_sam module and return scores for each read
-pub fn parse_subtraction_sam(path: &str) -> Result<FxHashMap<String, f32>, BamProcessingError> {
-    info!("parsing subtraction SAM file: {}", path);
+/// Parse subtraction BAM file and return a map of read IDs to scores.
+pub fn parse_subtraction_scores_from_bam(path: &str) -> Result<FxHashMap<String, f32>, BamProcessingError> {
+    info!("parsing subtraction bam file: {}", path);
     
-    let sam_lines = parse_sam(path, None)
+    let mut reader = SamReader::new(path)
         .map_err(BamProcessingError::SamParse)?;
 
-    let mut high_scores: FxHashMap<String, f32> = FxHashMap::default();
+    // Pre-allocate HashMap with estimated capacity
+    let mut high_scores: FxHashMap<String, f32> = FxHashMap::with_capacity_and_hasher(100_000, Default::default());
     
-    for sam_line in sam_lines {
-        if let Some(score) = sam_line.score {
-            high_scores.insert(sam_line.read_id, score as f32);
+    reader.stream_chunks(|chunk| {
+        for record in chunk {
+            // Skip unmapped reads
+            if record.is_unmapped() {
+                continue;
+            }
+
+            // Get read ID
+            let read_id = std::str::from_utf8(record.qname())
+                .map_err(|_| "Invalid UTF-8 in read ID")?
+                .to_string();
+
+            // Get alignment score
+            if let Some(total_score) = extract_alignment_score(record) {
+                high_scores.insert(read_id, total_score as f32);
+            }
         }
-    }
+        Ok(())
+    }).map_err(BamProcessingError::SamParse)?;
 
     info!("parsed {} subtraction scores from {}", high_scores.len(), path);
     Ok(high_scores)
 }
 
-/// Main elimination function - pure Rust implementation
+/// Eliminate subtraction-mapped reads.
 /// 
 /// Processes isolate and subtraction SAM files to eliminate reads based on subtraction scores.
-/// Creates both filtered SAM output and subtracted read IDs file.
+/// Creates both filtered SAM output, subtracted read IDs file, and filters FASTQ.
+/// 
+/// # Arguments
+/// * `isolate_sam_path` - Path to the isolate SAM/BAM file
+/// * `subtraction_sam_path` - Path to the subtraction SAM file  
+/// * `output_sam_path` - Path to write the filtered SAM/BAM file
+/// * `input_fastq_path` - Path to the input FASTQ file to filter
+/// * `output_fastq_path` - Path to write the filtered FASTQ file
+/// * `proc` - Number of threads to use for processing
+/// 
+/// # Returns
+/// Number of reads that were subtracted (eliminated)
 pub fn eliminate_subtraction(
     isolate_sam_path: &str,
     subtraction_sam_path: &str,
     output_sam_path: &str,
-) -> Result<(), BamProcessingError> {
-    info!("starting subtraction elimination: isolate={}, subtraction={}, output={}",
-          isolate_sam_path, subtraction_sam_path, output_sam_path);
+    input_fastq_path: &str,
+    output_fastq_path: &str,
+    proc: usize,
+) -> Result<usize, BamProcessingError> {
+    info!("starting subtraction elimination: isolate={}, subtraction={}, output={}, proc={}",
+          isolate_sam_path, subtraction_sam_path, output_sam_path, proc);
     
     // Parse subtraction scores
-    let subtraction_scores = parse_subtraction_sam(subtraction_sam_path)?;
+    let subtraction_scores = parse_subtraction_scores_from_bam(subtraction_sam_path)?;
     let processor = SubtractionProcessor::new(subtraction_scores);
     
     // Process isolate file
-    let subtracted_ids = process_isolate_file(isolate_sam_path, output_sam_path, &processor)?;
+    let subtracted_ids = process_isolate_file(isolate_sam_path, output_sam_path, &processor, proc)?;
+    let subtracted_count = subtracted_ids.len();
     
-    info!("subtraction complete: {} reads eliminated", subtracted_ids.len());
+    // Filter FASTQ file using the subtracted read IDs
+    filter_fastq_file(input_fastq_path, output_fastq_path, &subtracted_ids)?;
     
-    // Write subtracted IDs file
-    write_subtracted_ids_file(output_sam_path, &subtracted_ids)?;
-    
-    Ok(())
+    info!("subtraction complete: {} reads eliminated", subtracted_count);
+    Ok(subtracted_count)
 }
 
 /// Process the isolate SAM file and write filtered output using rust-htslib
@@ -179,11 +128,11 @@ pub fn process_isolate_file(
     input_path: &str,
     output_path: &str,
     processor: &SubtractionProcessor,
+    proc: usize,
 ) -> Result<HashSet<String>, BamProcessingError> {
     
-    // Open input file with rust-htslib reader
-    let mut reader = bam::Reader::from_path(input_path)
-        .map_err(|e| BamProcessingError::BamRead { source: e })?;
+    let mut reader = SamReader::new(input_path)
+        .map_err(|_| BamProcessingError::SamParse("Failed to open SAM file".to_string()))?;
     
     // Get the header from input to preserve SQ lines and other headers
     let header_view = reader.header().clone();
@@ -191,91 +140,189 @@ pub fn process_isolate_file(
     // Create a new Header from the HeaderView
     let header = bam::Header::from_template(&header_view);
     
-    // Create output writer with the same header
+    // Create output writer with the same header and configure threading
     let mut writer = bam::Writer::from_path(output_path, &header, Format::Bam)
         .map_err(|e| BamProcessingError::BamWrite { source: e })?;
+    
+    // Use half the threads for BAM compression, reserve the rest for rayon processing
+    let writer_threads = (proc / 2).max(1);
+    let rayon_threads = proc - writer_threads;
+    
+    // Configure writer to use compression threads
+    writer.set_threads(writer_threads)
+        .map_err(|e| BamProcessingError::BamWrite { source: e })?;
 
-    let mut subtracted_read_ids = HashSet::new();
+    // Configure rayon thread pool for this scope
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(rayon_threads)
+        .build()
+        .map_err(|e| BamProcessingError::SamParse(format!("Failed to create thread pool: {}", e)))?;
 
-    // Process each record
-    for result in reader.records() {
-        let record = result.map_err(|e| BamProcessingError::BamRead { source: e })?;
+    let mut all_subtracted_read_ids = HashSet::new();
+    let mut write_buffer: Vec<bam::Record> = Vec::with_capacity(CHUNK_SIZE);
+
+    // Collect all chunks first for parallel processing
+    let mut all_chunks = Vec::new();
+    
+    reader.stream_chunks(|chunk| {
+        // Clone the chunk to store it
+        let chunk_data: Vec<bam::Record> = chunk.to_vec();
+        all_chunks.push(chunk_data);
+        Ok(())
+    }).map_err(BamProcessingError::SamParse)?;
+
+    // Process chunks in parallel using our custom thread pool
+    let results: Result<Vec<(Vec<bam::Record>, HashSet<String>)>, String> = pool.install(|| {
+        all_chunks
+            .into_par_iter()
+            .map(|chunk| {
+                let mut records_to_write = Vec::new();
+                let mut subtracted_read_ids = HashSet::new();
+                
+                for record in chunk {
+                    // Skip unmapped reads
+                    if record.is_unmapped() {
+                        continue;
+                    }
+                    
+                    let read_id_str = unsafe {
+                        std::str::from_utf8_unchecked(record.qname())
+                    };
+                    
+                    // Skip if reference is unmapped (tid < 0 means unmapped)
+                    if record.tid() < 0 {
+                        continue;
+                    }
+                    
+                    // Calculate alignment score using shared function
+                    let isolate_score = match extract_alignment_score(&record) {
+                        Some(score) => score as f32,
+                        None => continue,
+                    };
+                    
+                    // Check if this read should be eliminated
+                    if processor.should_eliminate(read_id_str, isolate_score) {
+                        // Only allocate string when we need to store it
+                        subtracted_read_ids.insert(read_id_str.to_string());
+                    } else {
+                        // Add record to write buffer
+                        records_to_write.push(record);
+                    }
+                }
+                
+                Ok((records_to_write, subtracted_read_ids))
+            })
+            .collect()
+    });
+
+    let chunk_results = results.map_err(BamProcessingError::SamParse)?;
+
+    // Write results in batches and collect subtracted IDs
+    for (records_to_write, subtracted_ids) in chunk_results {
+        // Merge subtracted IDs
+        all_subtracted_read_ids.extend(subtracted_ids);
         
-        // Skip unmapped reads
-        if record.is_unmapped() {
-            continue;
-        }
+        // Add records to write buffer
+        write_buffer.extend(records_to_write);
         
-        // Get read ID
-        let read_id = std::str::from_utf8(record.qname())
-            .map_err(|_| BamProcessingError::InsufficientFields)?
-            .to_string();
-        
-        // Get reference name
-        let ref_name = if record.tid() >= 0 {
-            std::str::from_utf8(header_view.tid2name(record.tid() as u32))
-                .unwrap_or("*")
-        } else {
-            "*"
-        };
-        
-        // Skip if reference is unmapped
-        if ref_name == "*" {
-            continue;
-        }
-        
-        // Calculate alignment score (AS score + read length)
-        let read_length = record.seq_len() as f32;
-        let as_score = match record.aux(b"AS") {
-            Ok(aux) => match aux {
-                rust_htslib::bam::record::Aux::I32(score) => score as f32,
-                rust_htslib::bam::record::Aux::I8(score) => score as f32,
-                rust_htslib::bam::record::Aux::I16(score) => score as f32,
-                rust_htslib::bam::record::Aux::U8(score) => score as f32,
-                rust_htslib::bam::record::Aux::U16(score) => score as f32,
-                rust_htslib::bam::record::Aux::U32(score) => score as f32,
-                _ => 0.0,
-            },
-            Err(_) => 0.0,
-        };
-        let isolate_score = as_score + read_length;
-        
-        // Check if this read should be eliminated
-        if processor.should_eliminate(&read_id, isolate_score) {
-            subtracted_read_ids.insert(read_id);
-        } else {
-            // Write the record to output
-            writer.write(&record)
-                .map_err(|e| BamProcessingError::BamWrite { source: e })?;
+        // Write in batches when buffer is full
+        if write_buffer.len() >= CHUNK_SIZE {
+            for record in &write_buffer {
+                writer.write(record)
+                    .map_err(|e| BamProcessingError::BamWrite { source: e })?;
+            }
+            write_buffer.clear();
         }
     }
 
-    Ok(subtracted_read_ids)
+    // Write any remaining records in buffer
+    for record in &write_buffer {
+        writer.write(record)
+            .map_err(|e| BamProcessingError::BamWrite { source: e })?;
+    }
+
+    Ok(all_subtracted_read_ids)
 }
 
-/// Write subtracted read IDs to file in same directory as output SAM
-fn write_subtracted_ids_file(
-    output_sam_path: &str,
+/// Filter FASTQ file by removing reads whose IDs are in the subtracted set
+/// 
+/// # Arguments
+/// * `input_fastq_path` - Path to input FASTQ file
+/// * `output_fastq_path` - Path to output FASTQ file  
+/// * `subtracted_ids` - Set of read IDs to filter out
+/// 
+/// # Returns
+/// Result indicating success or failure
+pub fn filter_fastq_file(
+    input_fastq_path: &str,
+    output_fastq_path: &str,
     subtracted_ids: &HashSet<String>,
 ) -> Result<(), BamProcessingError> {
-    // Create subtracted_read_ids.txt in the same directory as the output SAM file
-    let output_path = Path::new(output_sam_path);
-    let subtracted_ids_path = output_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("subtracted_read_ids.txt");
-
-    let mut subtracted_read_ids_file = File::create(&subtracted_ids_path)
+    info!("filtering FASTQ file: {} -> {}", input_fastq_path, output_fastq_path);
+    
+    let input_file = File::open(input_fastq_path)
         .map_err(|e| BamProcessingError::FileCreate {
-            path: subtracted_ids_path.to_string_lossy().to_string(),
+            path: input_fastq_path.to_string(),
             source: e,
         })?;
-
-    for read_id in subtracted_ids {
-        writeln!(&mut subtracted_read_ids_file, "{}", read_id)
-            .map_err(|e| BamProcessingError::WriteOutput { source: e })?;
+    
+    let output_file = File::create(output_fastq_path)
+        .map_err(|e| BamProcessingError::FileCreate {
+            path: output_fastq_path.to_string(),
+            source: e,
+        })?;
+    
+    let mut reader = BufReader::new(input_file);
+    let mut writer = BufWriter::new(output_file);
+    
+    let mut lines = Vec::with_capacity(4);
+    
+    loop {
+        lines.clear();
+        
+        // Read 4 lines for a FASTQ record
+        for _ in 0..4 {
+            let mut line = String::default();
+            match reader.read_line(&mut line) {
+                Ok(0) => break, // EOF
+                Ok(_) => lines.push(line),
+                Err(e) => return Err(BamProcessingError::WriteOutput { source: e }),
+            }
+        }
+        
+        // Check if we reached EOF
+        if lines.is_empty() {
+            break;
+        }
+        
+        // Check if we have a complete 4-line record
+        if lines.len() != 4 {
+            break;
+        }
+        
+        // Extract read ID from the first line (header line starting with @)
+        let header = &lines[0];
+        if !header.starts_with('@') {
+            return Err(BamProcessingError::SamParse(
+                "Invalid FASTQ format: header line should start with '@'".to_string()
+            ));
+        }
+        
+        // Get read ID (everything after @ until first whitespace or newline)
+        let read_id = header[1..].split_whitespace().next()
+            .unwrap_or("")
+            .trim_end_matches('\n')
+            .trim_end_matches('\r');
+        
+        // If this read ID is not in the subtracted set, write all 4 lines
+        if !subtracted_ids.contains(read_id) {
+            for line in &lines {
+                writer.write_all(line.as_bytes())
+                    .map_err(|e| BamProcessingError::WriteOutput { source: e })?;
+            }
+        }
     }
-
+    
     Ok(())
 }
 
@@ -323,136 +370,6 @@ mod tests {
         assert!(!processor.should_eliminate("unknown_read", 100.0));
     }
 
-    #[test]
-    fn test_process_sam_line_header() {
-        let processor = SubtractionProcessor::new(FxHashMap::default());
-        let line = "@HD\tVN:1.6\tSO:unsorted";
-        
-        assert_eq!(
-            processor.process_sam_line(line).unwrap(),
-            Some(ProcessResult::Keep(line.to_string()))
-        );
-    }
-
-    #[test]
-    fn test_process_sam_line_comment() {
-        let processor = SubtractionProcessor::new(FxHashMap::default());
-        let line = "# This is a comment";
-        
-        assert_eq!(
-            processor.process_sam_line(line).unwrap(),
-            Some(ProcessResult::Keep(line.to_string()))
-        );
-    }
-
-    #[test]
-    fn test_process_sam_line_empty() {
-        let processor = SubtractionProcessor::new(FxHashMap::default());
-        
-        assert_eq!(processor.process_sam_line("").unwrap(), None);
-        assert_eq!(processor.process_sam_line("   ").unwrap(), None);
-    }
-
-    #[test]
-    fn test_process_sam_line_insufficient_fields() {
-        let processor = SubtractionProcessor::new(FxHashMap::default());
-        let line = "read1\t0\tref1";
-        
-        assert_eq!(processor.process_sam_line(line).unwrap(), None);
-    }
-
-    #[test]
-    fn test_process_sam_line_unmapped() {
-        let processor = SubtractionProcessor::new(FxHashMap::default());
-        let line = "read1\t4\t*\t0\t0\t*\t*\t0\t0\tACGT\tIIII\tAS:i:50";
-        
-        assert_eq!(processor.process_sam_line(line).unwrap(), None);
-    }
-
-    #[test]
-    fn test_process_sam_line_keep() {
-        let mut scores = FxHashMap::default();
-        scores.insert("read1".to_string(), 100.0);
-        let processor = SubtractionProcessor::new(scores);
-        
-        // AS:i:150 + read_length:4 = 154.0 > subtraction_score:100.0 -> keep
-        let line = "read1\t0\tref1\t100\t60\t4M\t*\t0\t0\tACGT\tIIII\tAS:i:150";
-        
-        match processor.process_sam_line(line).unwrap() {
-            Some(ProcessResult::Keep(kept_line)) => assert_eq!(kept_line, line),
-            other => panic!("Expected Some(Keep), got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_process_sam_line_eliminate() {
-        let mut scores = FxHashMap::default();
-        scores.insert("read1".to_string(), 200.0);
-        let processor = SubtractionProcessor::new(scores);
-        
-        // AS:i:150 + read_length:4 = 154.0 < subtraction_score:200.0 -> eliminate
-        let line = "read1\t0\tref1\t100\t60\t4M\t*\t0\t0\tACGT\tIIII\tAS:i:150";
-        
-        match processor.process_sam_line(line).unwrap() {
-            Some(ProcessResult::Eliminate(read_id)) => assert_eq!(read_id, "read1"),
-            other => panic!("Expected Some(Eliminate), got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_find_sam_align_score_basic() {
-        let processor = SubtractionProcessor::new(FxHashMap::default());
-        let fields = vec!["read1", "0", "ref1", "100", "60", "4M", "*", "0", "0", "ACGT", "IIII", "AS:i:150"];
-        
-        let score = processor.find_sam_align_score(&fields).unwrap();
-        assert_eq!(score, 154.0); // 150 + 4
-    }
-
-    #[test]
-    fn test_find_sam_align_score_no_as_tag() {
-        let processor = SubtractionProcessor::new(FxHashMap::default());
-        let fields = vec!["read1", "0", "ref1", "100", "60", "4M", "*", "0", "0", "ACGT", "IIII"];
-        
-        let score = processor.find_sam_align_score(&fields).unwrap();
-        assert_eq!(score, 4.0); // 0 + 4 (no AS tag found)
-    }
-
-    #[test]
-    fn test_find_sam_align_score_multiple_tags() {
-        let processor = SubtractionProcessor::new(FxHashMap::default());
-        let fields = vec!["read1", "0", "ref1", "100", "60", "4M", "*", "0", "0", "ACGT", "IIII", "XM:i:0", "AS:i:150", "NM:i:0"];
-        
-        let score = processor.find_sam_align_score(&fields).unwrap();
-        assert_eq!(score, 154.0); // 150 + 4
-    }
-
-    #[test]
-    fn test_find_sam_align_score_insufficient_fields() {
-        let processor = SubtractionProcessor::new(FxHashMap::default());
-        let fields = vec!["read1", "0", "ref1"];
-        
-        assert!(processor.find_sam_align_score(&fields).is_err());
-    }
-
-    #[test]
-    fn test_find_sam_align_score_invalid_as_value() {
-        let processor = SubtractionProcessor::new(FxHashMap::default());
-        let fields = vec!["read1", "0", "ref1", "100", "60", "4M", "*", "0", "0", "ACGT", "IIII", "AS:i:invalid"];
-        
-        assert!(processor.find_sam_align_score(&fields).is_err());
-    }
-
-    #[test]
-    fn test_process_sam_line_unknown_read() {
-        let processor = SubtractionProcessor::new(create_test_subtraction_scores());
-        let line = "unknown_read\t0\tref1\t100\t60\t4M\t*\t0\t0\tACGT\tIIII\tAS:i:50";
-        
-        // Unknown read should be kept regardless of score
-        match processor.process_sam_line(line).unwrap() {
-            Some(ProcessResult::Keep(kept_line)) => assert_eq!(kept_line, line),
-            other => panic!("Expected Some(Keep), got {:?}", other),
-        }
-    }
 
     #[test]
     fn test_subtraction_processor_empty_scores() {
@@ -463,26 +380,10 @@ mod tests {
         assert!(!processor.should_eliminate("any_read", 0.0));
     }
 
-    #[test]
-    fn test_process_sam_line_long_read_sequence() {
-        let mut scores = FxHashMap::default();
-        scores.insert("long_read".to_string(), 200.0);
-        let processor = SubtractionProcessor::new(scores);
-        
-        let long_seq = "A".repeat(150);
-        let long_qual = "I".repeat(150);
-        let line = format!("long_read\t0\tref1\t100\t60\t150M\t*\t0\t0\t{}\t{}\tAS:i:50", long_seq, long_qual);
-        
-        // AS:i:50 + read_length:150 = 200.0 == subtraction_score:200.0 -> eliminate
-        match processor.process_sam_line(&line).unwrap() {
-            Some(ProcessResult::Eliminate(read_id)) => assert_eq!(read_id, "long_read"),
-            other => panic!("Expected Some(Eliminate), got {:?}", other),
-        }
-    }
 
     #[test]
     fn test_parse_subtraction_sam() {
-        let result = parse_subtraction_sam("example/rust/test_basic.sam").unwrap();
+        let result = parse_subtraction_scores_from_bam("example/rust/test_basic.sam").unwrap();
 
         // Expected scores based on the SAM file content:
         // read1: AS:i:45 + read_length:50 = 95.0

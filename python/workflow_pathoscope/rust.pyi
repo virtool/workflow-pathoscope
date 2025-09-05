@@ -1,7 +1,12 @@
 def run_eliminate_subtraction(
-    isolate_sam_path: str, subtraction_sam_path: str, output_sam_path: str
-) -> None:
-    """Eliminate subtraction reads from isolate reads using Rust."""
+    isolate_sam_path: str,
+    subtraction_sam_path: str,
+    output_sam_path: str,
+    input_fastq_path: str,
+    output_fastq_path: str,
+    proc: int,
+) -> int:
+    """Eliminate subtraction reads from BAM and filter FASTQ file. Returns number of eliminated reads."""
 
 class PathoscopeResults:
     best_hit_initial_reads: list[float]
@@ -24,12 +29,6 @@ def run_expectation_maximization(
     ref_lengths: dict[str, int],
 ) -> PathoscopeResults:
     """Run Pathoscope expectation maximization algorithm using Rust on SAM/BAM files."""
-
-def parse_isolate_scores(
-    alignment_path: str,
-    p_score_cutoff: float,
-) -> dict[str, float]:
-    """Parse isolate alignment file (SAM or BAM) and extract high scores for each read."""
 
 def find_candidate_otus(
     alignment_path: str,
