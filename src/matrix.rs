@@ -1,11 +1,11 @@
-use crate::sam::{MinimalAlignment, SamReader, extract_alignment_score};
-use crate::{UniqueReads, MultiMappingReads, MatrixResult};
-use rustc_hash::FxHashMap;
-use rust_htslib::{bam, bam::HeaderView};
+use crate::sam::{extract_alignment_score, MinimalAlignment, SamReader};
+use crate::{MatrixResult, MultiMappingReads, UniqueReads};
 use log::info;
+use rust_htslib::{bam, bam::HeaderView};
+use rustc_hash::FxHashMap;
 
 /// A matrix containing alignment data and metadata.
-/// 
+///
 /// This struct encapsulates all the data produced by matrix building,
 /// providing a clean interface and methods for processing alignment data.
 #[derive(Debug, Clone)]
@@ -21,7 +21,7 @@ pub struct PathoscopeMatrix {
 
 impl PathoscopeMatrix {
     /// Create PathoscopeMatrix from raw alignment data
-    /// 
+    ///
     /// # Arguments
     /// * `read_alignments` - Map of read indices to their alignment data
     /// * `refs` - Reference sequence names
@@ -51,14 +51,14 @@ impl PathoscopeMatrix {
                 );
             } else {
                 // Non-unique read: maps to multiple references
-                let ref_indices: Vec<i32> = read_alignments.iter().map(|(ref_idx, _)| *ref_idx).collect();
+                let ref_indices: Vec<i32> = read_alignments
+                    .iter()
+                    .map(|(ref_idx, _)| *ref_idx)
+                    .collect();
                 let scores: Vec<f64> = read_alignments.iter().map(|(_, score)| *score).collect();
                 let max_score = scores.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-                
-                nu.insert(
-                    read_index,
-                    (ref_indices, scores, vec![], max_score),
-                );
+
+                nu.insert(read_index, (ref_indices, scores, vec![], max_score));
             }
         }
 
@@ -79,22 +79,30 @@ impl PathoscopeMatrix {
 
         let unique_count = matrix.unique_reads.len();
         let multi_count = matrix.multi_mapping_reads.len();
-        info!("matrix created: {} unique reads, {} multi-mapping reads, score range [{:.2}, {:.2}]",
-              unique_count, multi_count, min_score, max_score);
+        info!(
+            "matrix created: {} unique reads, {} multi-mapping reads, score range [{:.2}, {:.2}]",
+            unique_count, multi_count, min_score, max_score
+        );
 
         matrix
     }
 
     /// Rescale alignment scores using the existing rescale_samscore function
     fn rescale_scores(&mut self, u_temp: MultiMappingReads) {
-        let (u, nu) = rescale_samscore(u_temp, self.multi_mapping_reads.clone(), self.max_score, self.min_score);
+        let (u, nu) = rescale_samscore(
+            u_temp,
+            self.multi_mapping_reads.clone(),
+            self.max_score,
+            self.min_score,
+        );
         self.multi_mapping_reads = nu;
-        
+
         // Convert u to unique_reads format and store for build_unique_map
         self.unique_reads = FxHashMap::default();
         for (read_idx, (ref_indices, scores, _, _)) in u {
             if let (Some(first_ref), Some(first_score)) = (ref_indices.first(), scores.first()) {
-                self.unique_reads.insert(read_idx, (*first_ref, *first_score));
+                self.unique_reads
+                    .insert(read_idx, (*first_ref, *first_score));
             }
         }
     }
@@ -134,7 +142,7 @@ impl PathoscopeMatrix {
 }
 
 /// Process a single BAM record and extract alignment data
-/// 
+///
 /// # Arguments
 /// * `record` - BAM record to process
 /// * `header` - BAM file header for reference name lookup
@@ -147,7 +155,7 @@ impl PathoscopeMatrix {
 /// * `read_count` - Mutable reference to read counter
 /// * `max_score` - Mutable reference to maximum score tracker
 /// * `min_score` - Mutable reference to minimum score tracker
-/// 
+///
 /// # Returns
 /// Option containing (read_index, ref_index, minimal_alignment, score) if record is valid
 fn process_bam_record(
@@ -229,19 +237,29 @@ fn process_bam_record(
 }
 
 /// Build read alignments map by processing BAM file in chunks
-/// 
+///
 /// # Arguments
 /// * `reader` - SamReader for streaming
 /// * `header` - BAM file header  
 /// * `p_score_cutoff` - Minimum score threshold
-/// 
+///
 /// # Returns
 /// Tuple containing (read_alignments, refs, reads, minimal_alignments, max_score, min_score)
 fn create_read_alignments_map(
     mut reader: SamReader,
     header: &HeaderView,
     p_score_cutoff: f64,
-) -> Result<(FxHashMap<i32, Vec<(i32, f64)>>, Vec<String>, Vec<String>, Vec<MinimalAlignment>, f64, f64), String> {
+) -> Result<
+    (
+        FxHashMap<i32, Vec<(i32, f64)>>,
+        Vec<String>,
+        Vec<String>,
+        Vec<MinimalAlignment>,
+        f64,
+        f64,
+    ),
+    String,
+> {
     let mut h_read_id: FxHashMap<String, i32> = FxHashMap::default();
     let mut h_ref_id: FxHashMap<String, i32> = FxHashMap::default();
     let mut refs: Vec<String> = Vec::new();
@@ -256,19 +274,21 @@ fn create_read_alignments_map(
     reader.stream_chunks(|chunk| {
         // Process this chunk
         for record in chunk {
-            if let Some((read_index, ref_index, minimal_alignment, total_score)) = process_bam_record(
-                record,
-                header,
-                p_score_cutoff,
-                &mut h_read_id,
-                &mut h_ref_id,
-                &mut refs,
-                &mut reads,
-                &mut ref_count,
-                &mut read_count,
-                &mut max_score,
-                &mut min_score,
-            ) {
+            if let Some((read_index, ref_index, minimal_alignment, total_score)) =
+                process_bam_record(
+                    record,
+                    header,
+                    p_score_cutoff,
+                    &mut h_read_id,
+                    &mut h_ref_id,
+                    &mut refs,
+                    &mut reads,
+                    &mut ref_count,
+                    &mut read_count,
+                    &mut max_score,
+                    &mut min_score,
+                )
+            {
                 minimal_alignments.push(minimal_alignment);
 
                 // Add alignment to read's collection (skip duplicates)
@@ -281,11 +301,18 @@ fn create_read_alignments_map(
         Ok(())
     })?;
 
-    Ok((read_alignments, refs, reads, minimal_alignments, max_score, min_score))
+    Ok((
+        read_alignments,
+        refs,
+        reads,
+        minimal_alignments,
+        max_score,
+        min_score,
+    ))
 }
 
 /// Build the EM matrix.
-/// 
+///
 /// # Arguments
 /// * `alignment_path` - Path to the SAM/BAM file
 /// * `p_score_cutoff` - Optional score cutoff for alignments
@@ -294,15 +321,17 @@ pub fn build_matrix(
     p_score_cutoff: Option<f64>,
 ) -> Result<PathoscopeMatrix, String> {
     let p_score_cutoff = p_score_cutoff.unwrap_or(0.01);
-    
-    info!("building matrix from '{}' with score cutoff {}",
-          alignment_path, p_score_cutoff);
-    
+
+    info!(
+        "building matrix from '{}' with score cutoff {}",
+        alignment_path, p_score_cutoff
+    );
+
     let reader = SamReader::new(alignment_path)?;
     let header = reader.header().clone();
-    
+
     // Build read alignments map using helper function
-    let (read_alignments, refs, reads, minimal_alignments, max_score, min_score) = 
+    let (read_alignments, refs, reads, minimal_alignments, max_score, min_score) =
         create_read_alignments_map(reader, &header, p_score_cutoff)?;
 
     let matrix = PathoscopeMatrix::from_alignments(
@@ -323,10 +352,7 @@ fn rescale_samscore(
     mut nu: MultiMappingReads,
     max_score: f64,
     min_score: f64,
-) -> (
-    MultiMappingReads,
-    MultiMappingReads,
-) {
+) -> (MultiMappingReads, MultiMappingReads) {
     let scaling_factor: f64 = if min_score < 0.0 {
         100.0 / (max_score - min_score)
     } else {
@@ -382,54 +408,91 @@ mod tests {
     #[test]
     fn test_build_matrix() {
         let matrix = build_matrix("tests/minimal_test.sam", None).unwrap();
-        let (u, nu, refs, reads, _) = matrix.into_matrix_result();
-        
-        assert_eq!(refs.len(), 2, "Should have 2 references");
-        assert_eq!(reads.len(), 3, "Should have 3 reads");
-        assert_eq!(u.len(), 2, "Should have 2 unique reads (read1, read2)");
-        assert_eq!(nu.len(), 1, "Should have 1 non-unique read (read3)");
-        
+
+        assert_eq!(matrix.refs.len(), 2, "Should have 2 references");
+        assert_eq!(matrix.reads.len(), 3, "Should have 3 reads");
+        assert_eq!(
+            matrix.unique_reads.len(),
+            2,
+            "Should have 2 unique reads (read1, read2)"
+        );
+        assert_eq!(
+            matrix.multi_mapping_reads.len(),
+            1,
+            "Should have 1 non-unique read (read3)"
+        );
+
         // Verify reference names
-        assert!(refs.contains(&"ref1".to_string()));
-        assert!(refs.contains(&"ref2".to_string()));
-        
+        assert!(matrix.refs.contains(&"ref1".to_string()));
+        assert!(matrix.refs.contains(&"ref2".to_string()));
+
         // Verify read names
-        assert!(reads.contains(&"read1".to_string()));
-        assert!(reads.contains(&"read2".to_string()));
-        assert!(reads.contains(&"read3".to_string()));
-        
+        assert!(matrix.reads.contains(&"read1".to_string()));
+        assert!(matrix.reads.contains(&"read2".to_string()));
+        assert!(matrix.reads.contains(&"read3".to_string()));
+
         // Verify data structure integrity
-        for (_, (ref_idx, score)) in &u {
-            assert!(*ref_idx >= 0 && *ref_idx < refs.len() as i32, "U matrix ref index should be valid");
+        for (_, (ref_idx, score)) in &matrix.unique_reads {
+            assert!(
+                *ref_idx >= 0 && *ref_idx < matrix.refs.len() as i32,
+                "U matrix ref index should be valid"
+            );
             assert!(*score > 0.0, "U matrix scores should be positive");
         }
-        
-        for (_, (ref_indices, scores, normalized_scores, max_score)) in &nu {
-            assert!(ref_indices.len() > 1, "NU entries should map to multiple references");
-            assert_eq!(ref_indices.len(), scores.len(), "NU ref_indices and scores should have same length");
-            assert_eq!(scores.len(), normalized_scores.len(), "NU scores and normalized_scores should have same length");
-            
+
+        for (_, (ref_indices, scores, normalized_scores, max_score)) in &matrix.multi_mapping_reads
+        {
+            assert!(
+                ref_indices.len() > 1,
+                "NU entries should map to multiple references"
+            );
+            assert_eq!(
+                ref_indices.len(),
+                scores.len(),
+                "NU ref_indices and scores should have same length"
+            );
+            assert_eq!(
+                scores.len(),
+                normalized_scores.len(),
+                "NU scores and normalized_scores should have same length"
+            );
+
             // Verify normalized scores sum to approximately 1.0
             let sum: f64 = normalized_scores.iter().sum();
-            assert!((sum - 1.0).abs() < 0.001, "Normalized scores should sum to 1.0");
-            
+            assert!(
+                (sum - 1.0).abs() < 0.001,
+                "Normalized scores should sum to 1.0"
+            );
+
             assert!(*max_score > 0.0, "Max score should be positive");
-            
+
             // Verify all ref indices are valid
             for &ref_idx in ref_indices {
-                assert!(ref_idx >= 0 && ref_idx < refs.len() as i32, "NU ref index should be valid");
+                assert!(
+                    ref_idx >= 0 && ref_idx < matrix.refs.len() as i32,
+                    "NU ref index should be valid"
+                );
             }
         }
-        
+
         // Verify no duplicate references or reads
-        let mut unique_refs = refs.clone();
+        let mut unique_refs = matrix.refs.clone();
         unique_refs.sort();
         unique_refs.dedup();
-        assert_eq!(refs.len(), unique_refs.len(), "References should be unique");
-        
-        let mut unique_reads = reads.clone();
+        assert_eq!(
+            matrix.refs.len(),
+            unique_refs.len(),
+            "References should be unique"
+        );
+
+        let mut unique_reads = matrix.reads.clone();
         unique_reads.sort();
         unique_reads.dedup();
-        assert_eq!(reads.len(), unique_reads.len(), "Reads should be unique");
+        assert_eq!(
+            matrix.reads.len(),
+            unique_reads.len(),
+            "Reads should be unique"
+        );
     }
 }
+

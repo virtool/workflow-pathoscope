@@ -7,7 +7,7 @@ mod sam;
 mod subtraction;
 
 use coverage::calculate_coverage_from_matrix;
-use em::{compute_best_hit_from_matrix, em};
+use em::{compute_best_hit, em};
 use log::info;
 use logging::init_logging;
 use pyo3::exceptions::PyIOError;
@@ -136,13 +136,13 @@ pub fn run_expectation_maximization(
             .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to build matrix: {}", e)))?;
 
         // Calculate initial best hit statistics using the matrix
-        let initial_best_hit = compute_best_hit_from_matrix(&matrix);
+        let initial_best_hit = compute_best_hit(&matrix);
 
         // Run EM algorithm using the matrix
         let em_results = em(&matrix, 50, 1e-7, 0.0, 0.0);
 
         // Calculate final best hit statistics using the updated matrix
-        let final_best_hit = compute_best_hit_from_matrix(&em_results.updated_matrix);
+        let final_best_hit = compute_best_hit(&em_results.updated_matrix);
 
         // Calculate coverage using the matrix
         let coverage = calculate_coverage_from_matrix(
@@ -239,7 +239,6 @@ mod tests {
 
     extern crate yaml_rust;
     use yaml_rust::{YamlEmitter, YamlLoader};
-
 
     #[test]
     fn test_run_eliminate_subtraction() {

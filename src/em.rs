@@ -28,94 +28,14 @@ pub struct EMResults {
     pub updated_matrix: PathoscopeMatrix,
 }
 
-pub fn compute_best_hit(
-    u: &UniqueReads,
-    nu: &MultiMappingReads,
-    refs: &[String],
-    reads: &[String],
-) -> (Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>) {
-    let ref_count = refs.len();
-    let mut best_hit_reads = vec![0.0; ref_count];
-    let mut level_1_reads = vec![0.0; ref_count];
-    let mut level_2_reads = vec![0.0; ref_count];
-
-    for i in u.keys() {
-        if let Some(u_entry) = u.get(i) {
-            let ref_idx = u_entry.0 as usize;
-            if ref_idx < best_hit_reads.len() {
-                best_hit_reads[ref_idx] += 1.0;
-            }
-            if ref_idx < level_1_reads.len() {
-                level_1_reads[ref_idx] += 1.0;
-            }
-        }
-    }
-
-    for i in nu.keys() {
-        if let Some(z) = nu.get(i) {
-            let ind = &z.0;
-            let x_norm = &z.2;
-            let best_ref = x_norm.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            let mut num_best_ref = 0;
-
-            for score in x_norm.iter() {
-                if *score == best_ref {
-                    num_best_ref += 1;
-                }
-            }
-
-            num_best_ref = match num_best_ref {
-                0 => 1,
-                _ => num_best_ref,
-            };
-
-            for (j, score) in x_norm.iter().enumerate() {
-                if let Some(&ref_idx) = ind.get(j) {
-                    let ref_idx = ref_idx as usize;
-
-                    if *score == best_ref && ref_idx < best_hit_reads.len() {
-                        best_hit_reads[ref_idx] += 1.0 / num_best_ref as f64;
-                    }
-
-                    if *score >= 0.5 && ref_idx < level_1_reads.len() {
-                        level_1_reads[ref_idx] += 1.0;
-                    } else if *score >= 0.01 && ref_idx < level_2_reads.len() {
-                        level_2_reads[ref_idx] += 1.0;
-                    }
-                }
-            }
-        }
-    }
-
-    let read_count = reads.len();
-
-    let best_hit: Vec<f64> = best_hit_reads
-        .iter()
-        .map(|val| *val / read_count as f64)
-        .collect();
-    let level1: Vec<f64> = level_1_reads
-        .iter()
-        .map(|val| *val / read_count as f64)
-        .collect();
-    let level2: Vec<f64> = level_2_reads
-        .iter()
-        .map(|val| *val / read_count as f64)
-        .collect();
-
-    (best_hit_reads, best_hit, level1, level2)
-}
-
-/// Compute best hit statistics from a PathoscopeMatrix
-///
-/// This function reimplements the compute_best_hit logic to work directly with
-/// a PathoscopeMatrix struct, avoiding the need to extract individual components.
+/// Compute best hit statistics from a PathoscopeMatrix.
 ///
 /// # Arguments
 /// * `matrix` - The PathoscopeMatrix containing alignment data
 ///
 /// # Returns
 /// BestHitResults struct containing the analysis results
-pub fn compute_best_hit_from_matrix(matrix: &PathoscopeMatrix) -> BestHitResults {
+pub fn compute_best_hit(matrix: &PathoscopeMatrix) -> BestHitResults {
     let ref_count = matrix.refs.len();
     let mut best_hit_reads = vec![0.0; ref_count];
     let mut level_1_reads = vec![0.0; ref_count];
@@ -779,7 +699,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_best_hit_from_matrix() {
+    fn test_compute_best_hit() {
         use crate::matrix::PathoscopeMatrix;
         use crate::sam::MinimalAlignment;
         use rustc_hash::FxHashMap;
@@ -830,7 +750,7 @@ mod tests {
             min_score: 0.5,
         };
 
-        let results = compute_best_hit_from_matrix(&matrix);
+        let results = compute_best_hit(&matrix);
 
         // Test 1: Verify best hit assignments (raw counts)
         let expected_ref0_best_hits = 1.0   // read0 (unique)
@@ -945,7 +865,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_best_hit_from_matrix_empty() {
+    fn test_compute_best_hit_empty() {
         use crate::matrix::PathoscopeMatrix;
         use rustc_hash::FxHashMap;
 
@@ -960,7 +880,7 @@ mod tests {
             min_score: 0.0,
         };
 
-        let results = compute_best_hit_from_matrix(&matrix);
+        let results = compute_best_hit(&matrix);
 
         assert_eq!(
             results.best_hit_reads[0], 0.0,
@@ -1469,7 +1389,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_best_hit_from_matrix_comprehensive() {
+    fn test_compute_best_hit_comprehensive() {
         use crate::matrix::PathoscopeMatrix;
         use rustc_hash::FxHashMap;
 
@@ -1519,7 +1439,7 @@ mod tests {
             min_score: 0.5,
         };
 
-        let results = compute_best_hit_from_matrix(&matrix);
+        let results = compute_best_hit(&matrix);
 
         // Test 1: Verify best hit assignments (raw counts)
         let expected_ref0_best_hits = 1.0   // read0 (unique)
@@ -1634,7 +1554,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_best_hit_from_matrix_edge_cases() {
+    fn test_compute_best_hit_edge_cases() {
         use crate::matrix::PathoscopeMatrix;
         use rustc_hash::FxHashMap;
 
@@ -1654,7 +1574,7 @@ mod tests {
             min_score: 0.0,
         };
 
-        let results = compute_best_hit_from_matrix(&matrix);
+        let results = compute_best_hit(&matrix);
 
         assert_eq!(
             results.best_hit_reads[0], 0.0,
@@ -1664,8 +1584,14 @@ mod tests {
             results.best_hit[0], 0.0,
             "Empty input should result in zero normalized values"
         );
-        assert_eq!(results.level1[0], 0.0, "Empty input should result in zero level1");
-        assert_eq!(results.level2[0], 0.0, "Empty input should result in zero level2");
+        assert_eq!(
+            results.level1[0], 0.0,
+            "Empty input should result in zero level1"
+        );
+        assert_eq!(
+            results.level2[0], 0.0,
+            "Empty input should result in zero level2"
+        );
 
         // Test with nu entry that has no valid scores
         let u_empty: UniqueReads = FxHashMap::default();
@@ -1685,7 +1611,7 @@ mod tests {
             min_score: 0.0,
         };
 
-        let results = compute_best_hit_from_matrix(&matrix_invalid);
+        let results = compute_best_hit(&matrix_invalid);
 
         // Even with 0.0 normalized score, it should still be considered as best hit (0.0 == max)
         assert_eq!(
