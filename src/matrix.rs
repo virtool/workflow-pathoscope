@@ -1,4 +1,4 @@
-use crate::sam::{extract_alignment_score, MinimalAlignment, SamReader};
+use crate::sam::{extract_alignment_score, SamReader};
 use crate::{MultiMappingReads, UniqueReads};
 use log::info;
 use rust_htslib::{bam, bam::HeaderView};
@@ -14,7 +14,6 @@ pub struct PathoscopeMatrix {
     pub multi_mapping_reads: MultiMappingReads,
     pub refs: Vec<String>,
     pub reads: Vec<String>,
-    pub alignments: Vec<MinimalAlignment>,
     pub max_score: f64,
     pub min_score: f64,
 }
@@ -27,12 +26,10 @@ impl PathoscopeMatrix {
             multi_mapping_reads: FxHashMap::default(),
             refs: Vec::new(),
             reads: Vec::new(),
-            alignments: Vec::new(),
             max_score: 0.0,
             min_score: f64::INFINITY,
         }
     }
-
 
     /// Rescale alignment scores using the existing rescale_samscore function
     fn rescale_scores(&mut self, u_temp: MultiMappingReads) {
@@ -83,23 +80,18 @@ impl PathoscopeMatrix {
     /// # Arguments
     /// * `read_index` - Index of the read
     /// * `ref_index` - Index of the reference
-    /// * `minimal_alignment` - Minimal alignment data for coverage
     /// * `score` - Alignment score
     /// * `read_alignments` - Mutable reference to read alignments map for tracking
     pub fn add_alignment(
         &mut self,
         read_index: i32,
         ref_index: i32,
-        minimal_alignment: MinimalAlignment,
         score: f64,
         read_alignments: &mut FxHashMap<i32, Vec<(i32, f64)>>,
     ) {
         // Update score range
         self.max_score = self.max_score.max(score);
         self.min_score = self.min_score.min(score);
-
-        // Store minimal alignment for coverage calculation
-        self.alignments.push(minimal_alignment);
 
         // Add to read_alignments map (skip duplicates)
         let alignments = read_alignments.entry(read_index).or_default();
@@ -175,7 +167,7 @@ impl PathoscopeMatrix {
 /// * `min_score` - Mutable reference to minimum score tracker
 ///
 /// # Returns
-/// Option containing (read_index, ref_index, minimal_alignment, score) if record is valid
+/// Option containing (read_index, ref_index, score) if record is valid
 fn process_bam_record(
     record: &bam::Record,
     header: &HeaderView,
@@ -188,7 +180,7 @@ fn process_bam_record(
     read_count: &mut i32,
     max_score: &mut f64,
     min_score: &mut f64,
-) -> Option<(i32, i32, MinimalAlignment, f64)> {
+) -> Option<(i32, i32, f64)> {
     // Skip unmapped reads
     if record.is_unmapped() {
         return None;
@@ -201,11 +193,6 @@ fn process_bam_record(
     let name_bytes = header.tid2name(record.tid() as u32);
     let ref_id = std::str::from_utf8(name_bytes).unwrap_or("*").to_string();
 
-    // Get position (1-based in SAM format)
-    let position = record.pos() as u32 + 1;
-
-    // Get read length
-    let read_length = record.seq_len();
 
     // Get alignment score using shared function
     let total_score = extract_alignment_score(record)?;
@@ -243,17 +230,8 @@ fn process_bam_record(
         read_index
     };
 
-    // Create minimal alignment data
-    let minimal_alignment = MinimalAlignment {
-        read_idx: read_index,
-        ref_idx: ref_index,
-        position,
-        read_length: read_length as u16,
-    };
-
-    Some((read_index, ref_index, minimal_alignment, total_score))
+    Some((read_index, ref_index, total_score))
 }
-
 
 /// Build the EM matrix.
 ///
@@ -276,7 +254,7 @@ pub fn build_matrix(
 
     // Initialize matrix for incremental building
     let mut matrix = PathoscopeMatrix::new();
-    
+
     // Tracking variables
     let mut h_read_id: FxHashMap<String, i32> = FxHashMap::default();
     let mut h_ref_id: FxHashMap<String, i32> = FxHashMap::default();
@@ -288,7 +266,7 @@ pub fn build_matrix(
     reader.stream_chunks(|chunk| {
         // Process this chunk
         for record in chunk {
-            if let Some((read_index, ref_index, minimal_alignment, total_score)) =
+            if let Some((read_index, ref_index, total_score)) =
                 process_bam_record(
                     record,
                     &header,
@@ -307,7 +285,6 @@ pub fn build_matrix(
                 matrix.add_alignment(
                     read_index,
                     ref_index,
-                    minimal_alignment,
                     total_score,
                     &mut read_alignments,
                 );

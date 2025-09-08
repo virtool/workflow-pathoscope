@@ -1,13 +1,5 @@
 use rust_htslib::{bam, bam::HeaderView, bam::Read};
 
-/// Minimal alignment data for memory-efficient storage
-#[derive(Debug, Clone)]
-pub struct MinimalAlignment {
-    pub read_idx: i32,    // Index into reads vector
-    pub ref_idx: i32,     // Index into refs vector
-    pub position: u32,    // Start position
-    pub read_length: u16, // Read length
-}
 
 /// Simple streaming SAM/BAM reader with chunked processing.
 pub struct SamReader {

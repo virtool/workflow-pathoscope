@@ -584,7 +584,6 @@ mod tests {
     #[test]
     fn test_compute_best_hit() {
         use crate::matrix::PathoscopeMatrix;
-        use crate::sam::MinimalAlignment;
         use rustc_hash::FxHashMap;
 
         let mut unique_reads: UniqueReads = FxHashMap::default();
@@ -630,7 +629,6 @@ mod tests {
             multi_mapping_reads: multi_reads,
             refs,
             reads,
-            alignments: vec![],
             max_score: 100.0,
             min_score: 0.5,
         };
@@ -760,7 +758,6 @@ mod tests {
             multi_mapping_reads: FxHashMap::default(),
             refs: vec!["ref0".to_string()],
             reads: vec!["read0".to_string()],
-            alignments: vec![],
             max_score: 0.0,
             min_score: 0.0,
         };
@@ -817,7 +814,6 @@ mod tests {
             multi_mapping_reads: nu,
             refs,
             reads,
-            alignments: vec![],
             max_score: 100.0,
             min_score: 50.0,
         };
@@ -902,7 +898,6 @@ mod tests {
             multi_mapping_reads: FxHashMap::default(),
             refs: vec!["ref0".to_string(), "ref1".to_string()],
             reads: vec!["read0".to_string()],
-            alignments: vec![],
             max_score: 0.0,
             min_score: 0.0,
         };
@@ -959,7 +954,6 @@ mod tests {
             multi_mapping_reads: FxHashMap::default(),
             refs,
             reads,
-            alignments: vec![],
             max_score: 100.0,
             min_score: 100.0,
         };
@@ -1010,7 +1004,6 @@ mod tests {
             multi_mapping_reads: nu,
             refs,
             reads,
-            alignments: vec![],
             max_score: 100.0,
             min_score: 30.0,
         };
@@ -1067,7 +1060,6 @@ mod tests {
             multi_mapping_reads: nu,
             refs,
             reads,
-            alignments: vec![],
             max_score: 100.0,
             min_score: 0.0,
         };
@@ -1321,7 +1313,6 @@ mod tests {
             multi_mapping_reads: multi_reads,
             refs,
             reads,
-            alignments: vec![],
             max_score: 100.0,
             min_score: 0.5,
         };
@@ -1456,7 +1447,6 @@ mod tests {
             multi_mapping_reads: nu,
             refs,
             reads,
-            alignments: vec![],
             max_score: 0.0,
             min_score: 0.0,
         };
@@ -1493,7 +1483,6 @@ mod tests {
             multi_mapping_reads: nu_invalid,
             refs: refs_single,
             reads: reads_single,
-            alignments: vec![],
             max_score: 10.0,
             min_score: 0.0,
         };

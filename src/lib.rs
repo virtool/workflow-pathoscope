@@ -24,7 +24,6 @@ pub type MatrixResult = (
     MultiMappingReads,
     Vec<String>,
     Vec<String>,
-    Vec<sam::MinimalAlignment>,
 );
 
 #[pyclass]

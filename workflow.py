@@ -263,7 +263,7 @@ async def reassignment(
 
     logger.info("preparing hits")
 
-    hits = list()
+    hits = []
 
     for sequence_id, hit in report.items():
         otu_id = index.get_otu_id_by_sequence_id(sequence_id)
