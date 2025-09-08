@@ -128,9 +128,9 @@ pub fn run_expectation_maximization(
     info!("starting em algorithm: file={}, cutoff={}", alignment_path, p_score_cutoff);
     
     py.allow_threads(|| {
-        let (u, nu, refs, reads, minimal_alignments) =
-            matrix::build_matrix(alignment_path.as_str(), Some(p_score_cutoff))
-                .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to build matrix: {}", e)))?;
+        let matrix = matrix::build_matrix(alignment_path.as_str(), Some(p_score_cutoff))
+            .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to build matrix: {}", e)))?;
+        let (u, nu, refs, reads, minimal_alignments) = matrix.into_matrix_result();
 
         let (best_hit_initial_reads, best_hit_initial, level_1_initial, level_2_initial) =
             compute_best_hit(&u, &nu, &refs, &reads);

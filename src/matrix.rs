@@ -292,7 +292,7 @@ fn create_read_alignments_map(
 pub fn build_matrix(
     alignment_path: &str,
     p_score_cutoff: Option<f64>,
-) -> Result<MatrixResult, String> {
+) -> Result<PathoscopeMatrix, String> {
     let p_score_cutoff = p_score_cutoff.unwrap_or(0.01);
     
     info!("building matrix from '{}' with score cutoff {}",
@@ -305,7 +305,6 @@ pub fn build_matrix(
     let (read_alignments, refs, reads, minimal_alignments, max_score, min_score) = 
         create_read_alignments_map(reader, &header, p_score_cutoff)?;
 
-    // Create PathoscopeMatrix and convert to legacy format
     let matrix = PathoscopeMatrix::from_alignments(
         read_alignments,
         refs,
@@ -315,7 +314,7 @@ pub fn build_matrix(
         min_score,
     );
 
-    Ok(matrix.into_matrix_result())
+    Ok(matrix)
 }
 
 /// modifies the scores of u and nu with respect to max_score and min_score
@@ -382,7 +381,8 @@ mod tests {
 
     #[test]
     fn test_build_matrix() {
-        let (u, nu, refs, reads, _) = build_matrix("tests/minimal_test.sam", None).unwrap();
+        let matrix = build_matrix("tests/minimal_test.sam", None).unwrap();
+        let (u, nu, refs, reads, _) = matrix.into_matrix_result();
         
         assert_eq!(refs.len(), 2, "Should have 2 references");
         assert_eq!(reads.len(), 3, "Should have 3 reads");

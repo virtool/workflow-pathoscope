@@ -638,8 +638,9 @@ mod tests {
         let sam_path = "example/rust/test_em_with_multimapping.sam";
         
         // Build matrix from SAM file
-        let (u, nu, refs, reads, _minimal_alignments) = build_matrix(sam_path, None)
+        let matrix = build_matrix(sam_path, None)
             .expect("Failed to build matrix from test SAM file");
+        let (u, nu, refs, reads, _minimal_alignments) = matrix.into_matrix_result();
         
         // Run EM algorithm
         let (init_pi, final_pi, theta, updated_nu) = em(
