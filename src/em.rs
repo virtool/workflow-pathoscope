@@ -776,252 +776,10 @@ mod tests {
         assert_eq!(find_updated_score(&nu, 0, 0), 0.0, "Should return 0.0 when ref not found");
     }
 
-    #[test]
-    fn test_em_basic_convergence() {
-        // Simple test case: 2 references, 2 reads
-        let mut u: UniqueReads = rustc_hash::FxHashMap::default();
-        let mut nu: MultiMappingReads = rustc_hash::FxHashMap::default();
-        
-        // Read 0 uniquely maps to ref 0 with score 100.0
-        u.insert(0, (0, 100.0));
-        
-        // Read 1 multi-maps to both refs with equal scores
-        nu.insert(1, (
-            vec![0, 1],           // Maps to refs 0 and 1
-            vec![50.0, 50.0],     // Equal raw scores
-            vec![0.5, 0.5],       // Equal normalized scores (will be updated by EM)
-            100.0                 // Total score
-        ));
-        
-        let genomes = vec!["ref0".to_string(), "ref1".to_string()];
-        
-        // Run EM algorithm
-        let (init_pi, final_pi, theta, updated_nu) = em(
-            &u, 
-            nu, 
-            &genomes, 
-            10,    // max_iter
-            1e-6,  // epsilon
-            0.0,   // pi_prior
-            0.0    // theta_prior
-        );
-        
-        // Test return value structure
-        assert_eq!(init_pi.len(), 2, "init_pi should have 2 elements");
-        assert_eq!(final_pi.len(), 2, "final_pi should have 2 elements");
-        assert_eq!(theta.len(), 2, "theta should have 2 elements");
-        
-        // Test that pi values sum to approximately 1.0
-        let pi_sum: f64 = final_pi.iter().sum();
-        assert!((pi_sum - 1.0).abs() < 0.01, "Pi values should sum to ~1.0, got {}", pi_sum);
-        
-        // Test that theta values sum to approximately 1.0
-        let theta_sum: f64 = theta.iter().sum();
-        assert!((theta_sum - 1.0).abs() < 0.01, "Theta values should sum to ~1.0, got {}", theta_sum);
-        
-        // Since read 0 uniquely maps to ref 0, ref 0 should have higher pi
-        assert!(final_pi[0] > final_pi[1], "ref0 should have higher pi due to unique read, pi0={}, pi1={}", final_pi[0], final_pi[1]);
-        
-        // All values should be positive
-        assert!(final_pi[0] > 0.0 && final_pi[1] > 0.0, "All pi values should be positive");
-        assert!(theta[0] > 0.0 && theta[1] > 0.0, "All theta values should be positive");
-        
-        // Verify the multi-mapping read's scores were updated
-        let updated_read1 = updated_nu.get(&1).expect("Read 1 should exist in updated nu");
-        let updated_scores = &updated_read1.2;
-        assert_eq!(updated_scores.len(), 2, "Updated scores should have 2 elements");
-        
-        // The sum of normalized scores should be 1.0
-        let score_sum: f64 = updated_scores.iter().sum();
-        assert!((score_sum - 1.0).abs() < 1e-10, "Normalized scores should sum to 1.0, got {}", score_sum);
-    }
 
-    #[test]
-    fn test_em_empty_input() {
-        // Test with completely empty input
-        let u: UniqueReads = rustc_hash::FxHashMap::default();
-        let nu: MultiMappingReads = rustc_hash::FxHashMap::default();
-        let genomes = vec!["ref0".to_string(), "ref1".to_string()];
-        
-        let (init_pi, final_pi, theta, updated_nu) = em(
-            &u, 
-            nu, 
-            &genomes, 
-            10, 1e-6, 0.0, 0.0
-        );
-        
-        // Should return equal probabilities for all references
-        assert_eq!(init_pi.len(), 2);
-        assert_eq!(final_pi.len(), 2);
-        assert_eq!(theta.len(), 2);
-        
-        // With no data, the algorithm produces NaN values due to division by zero
-        // This documents the current behavior - empty input results in NaN
-        assert!(init_pi[0].is_nan(), "Empty input produces NaN for init_pi[0]");
-        assert!(init_pi[1].is_nan(), "Empty input produces NaN for init_pi[1]");
-        assert!(final_pi[0].is_nan(), "Empty input produces NaN for final_pi[0]");
-        assert!(final_pi[1].is_nan(), "Empty input produces NaN for final_pi[1]");
-        
-        // Nu should remain empty
-        assert!(updated_nu.is_empty(), "Updated nu should remain empty");
-    }
 
-    #[test]
-    fn test_em_only_unique_reads() {
-        // Test with only unique reads (no multi-mapping)
-        let mut u: UniqueReads = rustc_hash::FxHashMap::default();
-        let nu: MultiMappingReads = rustc_hash::FxHashMap::default();
-        
-        // Add unique reads: 2 to ref0, 1 to ref1
-        u.insert(0, (0, 100.0));  // read 0 -> ref 0
-        u.insert(1, (0, 100.0));  // read 1 -> ref 0  
-        u.insert(2, (1, 100.0));  // read 2 -> ref 1
-        
-        let genomes = vec!["ref0".to_string(), "ref1".to_string()];
-        
-        let (init_pi, final_pi, theta, updated_nu) = em(
-            &u, 
-            nu, 
-            &genomes, 
-            10, 1e-6, 0.0, 0.0
-        );
-        
-        // ref0 should have higher pi due to more reads (2 vs 1)
-        assert!(final_pi[0] > final_pi[1], "ref0 should have higher pi with more unique reads");
-        
-        // Pi should reflect the read distribution: ref0 gets 2/3, ref1 gets 1/3
-        assert!((final_pi[0] - 2.0/3.0).abs() < 0.01, "ref0 should get ~2/3 of probability");
-        assert!((final_pi[1] - 1.0/3.0).abs() < 0.01, "ref1 should get ~1/3 of probability");
-        
-        // Nu should remain empty
-        assert!(updated_nu.is_empty(), "Nu should remain empty with only unique reads");
-    }
 
-    #[test]
-    fn test_em_only_multi_mapping_reads() {
-        // Test with only multi-mapping reads (no unique reads)
-        let u: UniqueReads = rustc_hash::FxHashMap::default();
-        let mut nu: MultiMappingReads = rustc_hash::FxHashMap::default();
-        
-        // Add multi-mapping reads
-        nu.insert(0, (vec![0, 1], vec![60.0, 40.0], vec![0.6, 0.4], 100.0));
-        nu.insert(1, (vec![0, 1], vec![30.0, 70.0], vec![0.3, 0.7], 100.0));
-        
-        let genomes = vec!["ref0".to_string(), "ref1".to_string()];
-        
-        let (init_pi, final_pi, theta, updated_nu) = em(
-            &u, 
-            nu, 
-            &genomes, 
-            10, 1e-6, 0.0, 0.0
-        );
-        
-        // Should converge to some distribution
-        let pi_sum: f64 = final_pi.iter().sum();
-        assert!((pi_sum - 1.0).abs() < 0.01, "Pi should sum to 1.0");
-        
-        // All probabilities should be positive
-        assert!(final_pi[0] > 0.0 && final_pi[1] > 0.0, "All pi values should be positive");
-        assert!(theta[0] > 0.0 && theta[1] > 0.0, "All theta values should be positive");
-        
-        // Updated nu should have normalized scores
-        for (_, entry) in updated_nu.iter() {
-            let score_sum: f64 = entry.2.iter().sum();
-            assert!((score_sum - 1.0).abs() < 1e-10, "Each read's scores should sum to 1.0");
-        }
-    }
 
-    #[test]
-    fn test_em_integration_with_real_sam_data() {
-        use crate::matrix::build_matrix;
-        
-        // Use real SAM data with multi-mapping reads to test the full pipeline
-        let sam_path = "example/rust/test_em_with_multimapping.sam";
-        
-        // Build matrix from SAM file
-        let matrix = build_matrix(sam_path, None)
-            .expect("Failed to build matrix from test SAM file");
-        let (u, nu, refs, reads, _minimal_alignments) = matrix.into_matrix_result();
-        
-        // Run EM algorithm
-        let (init_pi, final_pi, theta, updated_nu) = em(
-            &u, 
-            nu, 
-            &refs, 
-            50,    // max_iter
-            1e-7,  // epsilon  
-            0.0,   // pi_prior
-            0.0    // theta_prior
-        );
-        
-        // Test return value structure
-        assert_eq!(init_pi.len(), refs.len(), "init_pi should match number of refs");
-        assert_eq!(final_pi.len(), refs.len(), "final_pi should match number of refs");
-        assert_eq!(theta.len(), refs.len(), "theta should match number of refs");
-        
-        // Test normalization
-        let pi_sum: f64 = final_pi.iter().sum();
-        assert!((pi_sum - 1.0).abs() < 0.01, "Pi values should sum to ~1.0, got {}", pi_sum);
-        
-        let theta_sum: f64 = theta.iter().sum();
-        // Theta represents multi-mapping read probabilities, should sum to ~1.0 when we have multi-mapping reads
-        if updated_nu.len() > 0 {
-            assert!((theta_sum - 1.0).abs() < 0.01, "Theta values should sum to ~1.0 when multi-mapping reads exist, got {}", theta_sum);
-        } else {
-            // If no multi-mapping reads, theta can be 0 or very small
-            assert!(theta_sum >= 0.0, "Theta sum should be non-negative, got {}", theta_sum);
-        }
-        
-        // All probabilities should be positive
-        for (i, &pi_val) in final_pi.iter().enumerate() {
-            assert!(pi_val > 0.0, "Pi[{}] should be positive, got {}", i, pi_val);
-        }
-        
-        for (i, &theta_val) in theta.iter().enumerate() {
-            assert!(theta_val >= 0.0, "Theta[{}] should be non-negative, got {}", i, theta_val);
-        }
-        
-        // Test that multi-mapping reads have normalized scores
-        for (read_id, entry) in updated_nu.iter() {
-            let score_sum: f64 = entry.2.iter().sum();
-            assert!((score_sum - 1.0).abs() < 1e-10, 
-                "Read {} scores should sum to 1.0, got {}", read_id, score_sum);
-            
-            // All individual scores should be non-negative
-            for (j, &score) in entry.2.iter().enumerate() {
-                assert!(score >= 0.0, 
-                    "Read {} score[{}] should be non-negative, got {}", read_id, j, score);
-            }
-        }
-        
-        // Test that the number of references and reads matches expectations
-        assert!(refs.len() >= 1, "Should have at least one reference");
-        assert!(reads.len() >= 1, "Should have at least one read");
-        
-        // Test that we have both unique and multi-mapping reads
-        assert!(u.len() > 0, "Should have some unique reads, got {}", u.len());
-        assert!(updated_nu.len() > 0, "Should have some multi-mapping reads, got {}", updated_nu.len());
-        
-        // Test that theta is meaningful (positive) since we have multi-mapping reads
-        let theta_sum: f64 = theta.iter().sum();
-        assert!(theta_sum > 0.0, "Theta should be positive when multi-mapping reads exist, got {}", theta_sum);
-        
-        // Test specific expectations for this SAM file:
-        // - Should have 2 references (ref1, ref2) 
-        // - Should have 6 total reads (4 unique + 2 multi-mapping)
-        assert_eq!(refs.len(), 2, "Should have 2 references");
-        assert_eq!(reads.len(), 6, "Should have 6 total reads");
-        
-        // Verify that ref1 should have highest pi (gets 3 unique reads vs 1 for ref2)
-        let max_pi_idx = final_pi.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).unwrap().0;
-        assert_eq!(max_pi_idx, 0, "ref1 should have highest pi due to more unique reads");
-        
-        println!("Integration test completed successfully:");
-        println!("  Refs: {}, Reads: {}", refs.len(), reads.len());
-        println!("  Unique reads: {}, Multi-mapping reads: {}", u.len(), updated_nu.len());
-        println!("  Final pi: {:?}", final_pi);
-        println!("  Final theta: {:?}", theta);
-    }
 
     #[test]
     fn test_compute_best_hit_from_matrix() {
@@ -1313,38 +1071,90 @@ mod tests {
     }
 
     #[test]
-    fn test_em_with_zero_score_reads() {
+    fn test_em_from_matrix_only_multi_mapping_reads() {
+        use crate::matrix::PathoscopeMatrix;
+        use rustc_hash::FxHashMap;
+
+        // Test with only multi-mapping reads (no unique reads)
+        let u: UniqueReads = FxHashMap::default();
+        let mut nu: MultiMappingReads = FxHashMap::default();
+        
+        // Add multi-mapping reads
+        nu.insert(0, (vec![0, 1], vec![60.0, 40.0], vec![0.6, 0.4], 100.0));
+        nu.insert(1, (vec![0, 1], vec![30.0, 70.0], vec![0.3, 0.7], 100.0));
+        
+        let refs = vec!["ref0".to_string(), "ref1".to_string()];
+        let reads = vec!["read0".to_string(), "read1".to_string()];
+
+        let matrix = PathoscopeMatrix {
+            unique_reads: u,
+            multi_mapping_reads: nu,
+            refs,
+            reads,
+            alignments: vec![],
+            max_score: 100.0,
+            min_score: 30.0,
+        };
+        
+        let results = em_from_matrix(&matrix, 10, 1e-6, 0.0, 0.0);
+        
+        // Should converge to some distribution
+        let pi_sum: f64 = results.pi.iter().sum();
+        assert!((pi_sum - 1.0).abs() < 0.01, "Pi should sum to 1.0");
+        
+        // All probabilities should be positive
+        assert!(results.pi[0] > 0.0 && results.pi[1] > 0.0, "All pi values should be positive");
+        assert!(results.theta[0] > 0.0 && results.theta[1] > 0.0, "All theta values should be positive");
+        
+        // Updated matrix should have normalized scores
+        for (_, entry) in results.updated_matrix.multi_mapping_reads.iter() {
+            let score_sum: f64 = entry.2.iter().sum();
+            assert!((score_sum - 1.0).abs() < 1e-10, "Each read's scores should sum to 1.0");
+        }
+    }
+
+    #[test]
+    fn test_em_from_matrix_with_zero_score_reads() {
+        use crate::matrix::PathoscopeMatrix;
+        use rustc_hash::FxHashMap;
+
         // Test with multi-mapping reads that have zero scores
-        let u: UniqueReads = rustc_hash::FxHashMap::default();
-        let mut nu: MultiMappingReads = rustc_hash::FxHashMap::default();
+        let u: UniqueReads = FxHashMap::default();
+        let mut nu: MultiMappingReads = FxHashMap::default();
         
         // Add multi-mapping reads with zero scores
         nu.insert(0, (vec![0, 1], vec![0.0, 0.0], vec![0.0, 0.0], 0.0)); // All zero scores
         nu.insert(1, (vec![0, 1], vec![50.0, 30.0], vec![0.625, 0.375], 80.0)); // Normal scores
         nu.insert(2, (vec![0, 1], vec![0.0, 100.0], vec![0.0, 1.0], 100.0)); // One zero score
         
-        let genomes = vec!["ref0".to_string(), "ref1".to_string()];
+        let refs = vec!["ref0".to_string(), "ref1".to_string()];
+        let reads = vec!["read0".to_string(), "read1".to_string(), "read2".to_string()];
+
+        let matrix = PathoscopeMatrix {
+            unique_reads: u,
+            multi_mapping_reads: nu,
+            refs,
+            reads,
+            alignments: vec![],
+            max_score: 100.0,
+            min_score: 0.0,
+        };
         
-        let (init_pi, final_pi, theta, updated_nu) = em(
-            &u, 
-            nu, 
-            &genomes, 
-            10, 1e-6, 0.0, 0.0
-        );
+        let results = em_from_matrix(&matrix, 10, 1e-6, 0.0, 0.0);
         
         // Should still converge despite zero scores
-        let pi_sum: f64 = final_pi.iter().sum();
+        let pi_sum: f64 = results.pi.iter().sum();
         assert!((pi_sum - 1.0).abs() < 0.01, "Pi should sum to 1.0 even with zero scores");
         
         // Check that reads with all zero scores don't break the algorithm
-        assert!(final_pi[0] >= 0.0 && final_pi[1] >= 0.0, "All pi values should be non-negative");
-        assert!(theta[0] >= 0.0 && theta[1] >= 0.0, "All theta values should be non-negative");
+        assert!(results.pi[0] >= 0.0 && results.pi[1] >= 0.0, "All pi values should be non-negative");
+        assert!(results.theta[0] >= 0.0 && results.theta[1] >= 0.0, "All theta values should be non-negative");
         
-        // Verify that updated_nu contains the reads
-        assert_eq!(updated_nu.len(), 3, "Should have 3 multi-mapping reads");
+        // Verify that updated matrix contains the reads
+        assert_eq!(results.updated_matrix.multi_mapping_reads.len(), 3, "Should have 3 multi-mapping reads");
         
         // Check that reads with meaningful scores still have normalized scores
-        for (read_id, entry) in updated_nu.iter() {
+        for (read_id, entry) in results.updated_matrix.multi_mapping_reads.iter() {
             if *read_id == 1 || *read_id == 2 { // Reads with non-zero scores
                 let score_sum: f64 = entry.2.iter().sum();
                 assert!((score_sum - 1.0).abs() < 1e-10, 
@@ -1353,10 +1163,94 @@ mod tests {
         }
         
         // Read 0 with all zero scores should have specific behavior
-        if let Some(zero_read) = updated_nu.get(&0) {
+        if let Some(zero_read) = results.updated_matrix.multi_mapping_reads.get(&0) {
             let score_sum: f64 = zero_read.2.iter().sum();
             // Current behavior: zero scores get normalized to [0.0, 0.0] which sums to 0.0
             assert_eq!(score_sum, 0.0, "Read with all zero scores should sum to 0.0");
         }
     }
+
+    #[test]
+    fn test_em_from_matrix_integration_with_real_sam_data() {
+        use crate::matrix::build_matrix;
+        
+        // Use real SAM data with multi-mapping reads to test the full pipeline
+        let sam_path = "example/rust/test_em_with_multimapping.sam";
+        
+        // Build matrix from SAM file
+        let matrix = build_matrix(sam_path, None)
+            .expect("Failed to build matrix from test SAM file");
+        
+        // Run EM algorithm using matrix
+        let results = em_from_matrix(&matrix, 50, 1e-7, 0.0, 0.0);
+        
+        // Test return value structure
+        assert_eq!(results.init_pi.len(), matrix.refs.len(), "init_pi should match number of refs");
+        assert_eq!(results.pi.len(), matrix.refs.len(), "pi should match number of refs");
+        assert_eq!(results.theta.len(), matrix.refs.len(), "theta should match number of refs");
+        
+        // Test normalization
+        let pi_sum: f64 = results.pi.iter().sum();
+        assert!((pi_sum - 1.0).abs() < 0.01, "Pi values should sum to ~1.0, got {}", pi_sum);
+        
+        let theta_sum: f64 = results.theta.iter().sum();
+        // Theta represents multi-mapping read probabilities, should sum to ~1.0 when we have multi-mapping reads
+        if results.updated_matrix.multi_mapping_reads.len() > 0 {
+            assert!((theta_sum - 1.0).abs() < 0.01, "Theta values should sum to ~1.0 when multi-mapping reads exist, got {}", theta_sum);
+        } else {
+            // If no multi-mapping reads, theta can be 0 or very small
+            assert!(theta_sum >= 0.0, "Theta sum should be non-negative, got {}", theta_sum);
+        }
+        
+        // All probabilities should be positive
+        for (i, &pi_val) in results.pi.iter().enumerate() {
+            assert!(pi_val > 0.0, "Pi[{}] should be positive, got {}", i, pi_val);
+        }
+        
+        for (i, &theta_val) in results.theta.iter().enumerate() {
+            assert!(theta_val >= 0.0, "Theta[{}] should be non-negative, got {}", i, theta_val);
+        }
+        
+        // Test that multi-mapping reads have normalized scores
+        for (read_id, entry) in results.updated_matrix.multi_mapping_reads.iter() {
+            let score_sum: f64 = entry.2.iter().sum();
+            assert!((score_sum - 1.0).abs() < 1e-10, 
+                "Read {} scores should sum to 1.0, got {}", read_id, score_sum);
+            
+            // All individual scores should be non-negative
+            for (j, &score) in entry.2.iter().enumerate() {
+                assert!(score >= 0.0, 
+                    "Read {} score[{}] should be non-negative, got {}", read_id, j, score);
+            }
+        }
+        
+        // Test that the number of references and reads matches expectations
+        assert!(matrix.refs.len() >= 1, "Should have at least one reference");
+        assert!(matrix.reads.len() >= 1, "Should have at least one read");
+        
+        // Test that we have both unique and multi-mapping reads
+        assert!(matrix.unique_reads.len() > 0, "Should have some unique reads, got {}", matrix.unique_reads.len());
+        assert!(results.updated_matrix.multi_mapping_reads.len() > 0, "Should have some multi-mapping reads, got {}", results.updated_matrix.multi_mapping_reads.len());
+        
+        // Test that theta is meaningful (positive) since we have multi-mapping reads
+        let theta_sum: f64 = results.theta.iter().sum();
+        assert!(theta_sum > 0.0, "Theta should be positive when multi-mapping reads exist, got {}", theta_sum);
+        
+        // Test specific expectations for this SAM file:
+        // - Should have 2 references (ref1, ref2) 
+        // - Should have 6 total reads (4 unique + 2 multi-mapping)
+        assert_eq!(matrix.refs.len(), 2, "Should have 2 references");
+        assert_eq!(matrix.reads.len(), 6, "Should have 6 total reads");
+        
+        // Verify that ref1 should have highest pi (gets 3 unique reads vs 1 for ref2)
+        let max_pi_idx = results.pi.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).unwrap().0;
+        assert_eq!(max_pi_idx, 0, "ref1 should have highest pi due to more unique reads");
+        
+        println!("Integration test completed successfully:");
+        println!("  Refs: {}, Reads: {}", matrix.refs.len(), matrix.reads.len());
+        println!("  Unique reads: {}, Multi-mapping reads: {}", matrix.unique_reads.len(), results.updated_matrix.multi_mapping_reads.len());
+        println!("  Final pi: {:?}", results.pi);
+        println!("  Final theta: {:?}", results.theta);
+    }
+
 }

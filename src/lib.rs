@@ -6,7 +6,8 @@ mod matrix;
 mod sam;
 mod subtraction;
 
-use em::{compute_best_hit, em};
+use coverage::calculate_coverage_from_matrix;
+use em::{compute_best_hit_from_matrix, em_from_matrix};
 use log::info;
 use logging::init_logging;
 use pyo3::exceptions::PyIOError;
@@ -133,38 +134,36 @@ pub fn run_expectation_maximization(
     py.allow_threads(|| {
         let matrix = matrix::build_matrix(alignment_path.as_str(), Some(p_score_cutoff))
             .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to build matrix: {}", e)))?;
-        let (u, nu, refs, reads, minimal_alignments) = matrix.into_matrix_result();
 
-        let (best_hit_initial_reads, best_hit_initial, level_1_initial, level_2_initial) =
-            compute_best_hit(&u, &nu, &refs, &reads);
+        // Calculate initial best hit statistics using the matrix
+        let initial_best_hit = compute_best_hit_from_matrix(&matrix);
 
-        let (init_pi, pi, _, nu) = em(&u, nu, &refs, 50, 1e-7, 0.0, 0.0);
+        // Run EM algorithm using the matrix
+        let em_results = em_from_matrix(&matrix, 50, 1e-7, 0.0, 0.0);
 
-        let (best_hit_final_reads, best_hit_final, level_1_final, level_2_final) =
-            compute_best_hit(&u, &nu, &refs, &reads);
+        // Calculate final best hit statistics using the updated matrix
+        let final_best_hit = compute_best_hit_from_matrix(&em_results.updated_matrix);
 
-        let coverage = coverage::calculate_coverage_from_em(
-            &u,
-            &nu,
-            &minimal_alignments,
-            &refs,
+        // Calculate coverage using the matrix
+        let coverage = calculate_coverage_from_matrix(
+            &em_results.updated_matrix,
             p_score_cutoff,
             &ref_lengths,
         );
 
         Ok(PathoscopeResults {
-            best_hit_initial_reads,
-            best_hit_initial,
-            level_1_initial,
-            level_2_initial,
-            best_hit_final_reads,
-            best_hit_final,
-            level_1_final,
-            level_2_final,
-            init_pi,
-            pi,
-            refs,
-            reads,
+            best_hit_initial_reads: initial_best_hit.best_hit_reads,
+            best_hit_initial: initial_best_hit.best_hit,
+            level_1_initial: initial_best_hit.level1,
+            level_2_initial: initial_best_hit.level2,
+            best_hit_final_reads: final_best_hit.best_hit_reads,
+            best_hit_final: final_best_hit.best_hit,
+            level_1_final: final_best_hit.level1,
+            level_2_final: final_best_hit.level2,
+            init_pi: em_results.init_pi,
+            pi: em_results.pi,
+            refs: matrix.refs,
+            reads: matrix.reads,
             coverage,
         })
     })

@@ -1,6 +1,7 @@
 use crate::sam::MinimalAlignment;
 use crate::em::find_updated_score;
 use crate::{UniqueReads, MultiMappingReads};
+use crate::matrix::PathoscopeMatrix;
 use rustc_hash::FxHashMap;
 
 // TODO: Fix the updated score calculation logic
@@ -50,6 +51,71 @@ pub fn calculate_coverage_from_em(
         if should_include {
             // Get reference name from index
             if let Some(ref_name) = refs.get(ref_index as usize) {
+                // Add coverage for this alignment
+                if let Some(coverage_array) = coverage_dict.get_mut(ref_name) {
+                    let start_index = if alignment.position > 0 {
+                        (alignment.position - 1) as usize
+                    } else {
+                        0
+                    };
+
+                    let end_index = (start_index + alignment.read_length as usize).min(coverage_array.len());
+
+                    for item in coverage_array.iter_mut().take(end_index).skip(start_index) {
+                        *item += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    coverage_dict
+}
+
+/// Calculate coverage from a PathoscopeMatrix
+/// 
+/// This function reimplements the calculate_coverage_from_em logic to work directly with
+/// a PathoscopeMatrix struct, avoiding the need to extract individual components.
+/// 
+/// # Arguments
+/// * `matrix` - The PathoscopeMatrix containing alignment data and EM results
+/// * `p_score_cutoff` - Minimum posterior probability threshold for multi-mapping reads
+/// * `ref_lengths` - Dictionary mapping reference IDs to their lengths
+/// 
+/// # Returns
+/// Coverage dictionary mapping reference names to coverage arrays
+pub fn calculate_coverage_from_matrix(
+    matrix: &PathoscopeMatrix,
+    p_score_cutoff: f64,
+    ref_lengths: &FxHashMap<String, usize>,
+) -> FxHashMap<String, Vec<usize>> {
+    let mut coverage_dict: FxHashMap<String, Vec<usize>> = FxHashMap::default();
+
+    // Initialize coverage arrays for all references
+    for (ref_id, &length) in ref_lengths {
+        coverage_dict.insert(ref_id.clone(), vec![0; length]);
+    }
+
+    // Process each minimal alignment and calculate coverage based on EM results
+    for alignment in &matrix.alignments {
+        let read_index = alignment.read_idx;
+        let ref_index = alignment.ref_idx;
+
+        // Determine if this alignment should contribute to coverage
+        let should_include = if matrix.unique_reads.contains_key(&read_index) {
+            // Unique reads always contribute
+            true
+        } else if matrix.multi_mapping_reads.contains_key(&read_index) {
+            // Multi-mapping reads only contribute if posterior probability >= threshold
+            find_updated_score(&matrix.multi_mapping_reads, read_index, ref_index) >= p_score_cutoff
+        } else {
+            // Read not found in EM results, skip
+            false
+        };
+
+        if should_include {
+            // Get reference name from index
+            if let Some(ref_name) = matrix.refs.get(ref_index as usize) {
                 // Add coverage for this alignment
                 if let Some(coverage_array) = coverage_dict.get_mut(ref_name) {
                     let start_index = if alignment.position > 0 {
