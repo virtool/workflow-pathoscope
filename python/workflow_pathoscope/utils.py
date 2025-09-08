@@ -140,9 +140,8 @@ def write_report(
 
 
 def run_pathoscope(
-    alignment_path: Path,
+    bam_path: Path,
     p_score_cutoff: float,
-    ref_lengths: dict[str, int],
 ):
     """Run Pathoscope on an alignment file.
 
@@ -150,10 +149,8 @@ def run_pathoscope(
 
     :param alignment_path: The path to the SAM or BAM file.
     :param p_score_cutoff: The minimum allowed ``p_score`` for an alignment.
-    :param ref_lengths: Dictionary mapping reference IDs to their lengths.
     """
     return run_expectation_maximization(
-        str(alignment_path),
+        str(bam_path),
         p_score_cutoff,
-        ref_lengths,
     )

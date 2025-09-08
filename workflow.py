@@ -246,10 +246,7 @@ async def reassignment(
     )
 
     pathoscope_results = await asyncio.to_thread(
-        run_pathoscope,
-        subtracted_bam_path,
-        p_score_cutoff,
-        intermediate.lengths,
+        run_pathoscope, subtracted_bam_path, p_score_cutoff
     )
 
     report_path = work_path / "report.tsv"

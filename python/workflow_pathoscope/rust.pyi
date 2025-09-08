@@ -24,9 +24,8 @@ class PathoscopeResults:
     coverage: dict[str, list[int]]
 
 def run_expectation_maximization(
-    alignment_path: str,
+    bam_path: str,
     p_score_cutoff: float,
-    ref_lengths: dict[str, int],
 ) -> PathoscopeResults:
     """Run Pathoscope expectation maximization algorithm using Rust on SAM/BAM files."""
 
@@ -45,6 +44,5 @@ def find_candidate_otus_from_bytes(
 def calculate_coverage_from_em_results(
     alignment_path: str,
     p_score_cutoff: float,
-    ref_lengths: dict[str, int],
 ) -> dict[str, list[int]]:
     """Calculate coverage directly from EM results and alignment data."""

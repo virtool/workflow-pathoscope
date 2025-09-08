@@ -6,7 +6,6 @@ mod matrix;
 mod sam;
 mod subtraction;
 
-use coverage::calculate_coverage_from_matrix;
 use em::{compute_best_hit, em};
 use log::info;
 use logging::init_logging;
@@ -14,6 +13,8 @@ use pyo3::exceptions::PyIOError;
 use pyo3::prelude::*;
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
+
+use crate::coverage::calculate_coverage_from_bam;
 
 // Type aliases for complex HashMap types used throughout the codebase
 pub type UniqueReads = FxHashMap<i32, (i32, f64)>;
@@ -119,12 +120,10 @@ fn rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
 /// # Arguments
 /// * `alignment_path` - Path to the SAM/BAM file
 /// * `p_score_cutoff` - Minimum score threshold for alignments
-/// * `ref_lengths` - Dictionary mapping reference IDs to their lengths
 pub fn run_expectation_maximization(
     py: Python,
     alignment_path: String,
     p_score_cutoff: f64,
-    ref_lengths: FxHashMap<String, usize>,
 ) -> PyResult<PathoscopeResults> {
     info!(
         "starting em algorithm: file={}, cutoff={}",
@@ -148,11 +147,14 @@ pub fn run_expectation_maximization(
         let final_best_hit = compute_best_hit(&em_results.updated_matrix);
 
         // Calculate coverage using the matrix
-        let coverage = calculate_coverage_from_matrix(
+        let coverage = calculate_coverage_from_bam(
+            &alignment_path,
             &em_results.updated_matrix,
             p_score_cutoff,
-            &ref_lengths,
-        );
+        )
+        .map_err(|e| {
+            PyErr::new::<PyIOError, _>(format!("Failed to calculate coverage: {}", e))
+        })?;
 
         Ok(PathoscopeResults {
             best_hit_initial_reads: initial_best_hit.best_hit_reads,
