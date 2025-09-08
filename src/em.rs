@@ -1,5 +1,19 @@
 use crate::{UniqueReads, MultiMappingReads};
+use crate::matrix::PathoscopeMatrix;
 use log::info;
+
+/// Best hit analysis results
+#[derive(Debug, Clone)]
+pub struct BestHitResults {
+    /// Raw counts of reads assigned as best hits to each reference
+    pub best_hit_reads: Vec<f64>,
+    /// Normalized best hit counts (divided by total reads)
+    pub best_hit: Vec<f64>,
+    /// Normalized counts of reads with score >= 0.5 for each reference
+    pub level1: Vec<f64>,
+    /// Normalized counts of reads with score >= 0.01 and < 0.5 for each reference
+    pub level2: Vec<f64>,
+}
 
 pub fn compute_best_hit(
     u: &UniqueReads,
@@ -77,6 +91,98 @@ pub fn compute_best_hit(
         .collect();
 
     (best_hit_reads, best_hit, level1, level2)
+}
+
+/// Compute best hit statistics from a PathoscopeMatrix
+/// 
+/// This function reimplements the compute_best_hit logic to work directly with
+/// a PathoscopeMatrix struct, avoiding the need to extract individual components.
+/// 
+/// # Arguments
+/// * `matrix` - The PathoscopeMatrix containing alignment data
+/// 
+/// # Returns
+/// BestHitResults struct containing the analysis results
+pub fn compute_best_hit_from_matrix(
+    matrix: &PathoscopeMatrix,
+) -> BestHitResults {
+    let ref_count = matrix.refs.len();
+    let mut best_hit_reads = vec![0.0; ref_count];
+    let mut level_1_reads = vec![0.0; ref_count];
+    let mut level_2_reads = vec![0.0; ref_count];
+
+    // Process unique reads
+    for i in matrix.unique_reads.keys() {
+        if let Some(u_entry) = matrix.unique_reads.get(i) {
+            let ref_idx = u_entry.0 as usize;
+            if ref_idx < best_hit_reads.len() {
+                best_hit_reads[ref_idx] += 1.0;
+            }
+            if ref_idx < level_1_reads.len() {
+                level_1_reads[ref_idx] += 1.0;
+            }
+        }
+    }
+
+    // Process multi-mapping reads
+    for i in matrix.multi_mapping_reads.keys() {
+        if let Some(z) = matrix.multi_mapping_reads.get(i) {
+            let ind = &z.0;
+            let x_norm = &z.2;
+            let best_ref = x_norm.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let mut num_best_ref = 0;
+
+            for score in x_norm.iter() {
+                if *score == best_ref {
+                    num_best_ref += 1;
+                }
+            }
+
+            num_best_ref = match num_best_ref {
+                0 => 1,
+                _ => num_best_ref,
+            };
+
+            for (j, score) in x_norm.iter().enumerate() {
+                if let Some(&ref_idx) = ind.get(j) {
+                    let ref_idx = ref_idx as usize;
+                    
+                    if *score == best_ref
+                        && ref_idx < best_hit_reads.len() {
+                            best_hit_reads[ref_idx] += 1.0 / num_best_ref as f64;
+                        }
+
+                    if *score >= 0.5 && ref_idx < level_1_reads.len() {
+                        level_1_reads[ref_idx] += 1.0;
+                    } else if *score >= 0.01 && ref_idx < level_2_reads.len() {
+                        level_2_reads[ref_idx] += 1.0;
+                    }
+                }
+            }
+        }
+    }
+
+    let read_count = matrix.reads.len();
+
+    let best_hit: Vec<f64> = best_hit_reads
+        .iter()
+        .map(|val| *val / read_count as f64)
+        .collect();
+    let level1: Vec<f64> = level_1_reads
+        .iter()
+        .map(|val| *val / read_count as f64)
+        .collect();
+    let level2: Vec<f64> = level_2_reads
+        .iter()
+        .map(|val| *val / read_count as f64)
+        .collect();
+
+    BestHitResults {
+        best_hit_reads,
+        best_hit,
+        level1,
+        level2,
+    }
 }
 
 /// Parameters used throughout the EM algorithm iterations
@@ -720,6 +826,149 @@ mod tests {
         println!("  Unique reads: {}, Multi-mapping reads: {}", u.len(), updated_nu.len());
         println!("  Final pi: {:?}", final_pi);
         println!("  Final theta: {:?}", theta);
+    }
+
+    #[test]
+    fn test_compute_best_hit_from_matrix() {
+        use crate::matrix::PathoscopeMatrix;
+        use crate::sam::MinimalAlignment;
+        use rustc_hash::FxHashMap;
+
+        let mut unique_reads: UniqueReads = FxHashMap::default();
+        let mut multi_reads: MultiMappingReads = FxHashMap::default();
+        
+        // Unique reads: each maps to exactly one reference
+        let read0_maps_to_ref0 = (0, 100.0);
+        let read1_maps_to_ref1 = (1, 100.0);
+        unique_reads.insert(0, read0_maps_to_ref0);
+        unique_reads.insert(1, read1_maps_to_ref1);
+        
+        // Multi-mapping reads: each maps to multiple references with different scores
+        let read2_prefers_ref0 = (vec![0, 1], vec![90.0, 10.0], vec![0.9, 0.1], 90.0);
+        let read3_tied_between_refs = (vec![0, 1], vec![80.0, 80.0], vec![0.5, 0.5], 80.0);
+        let read4_tests_thresholds = (vec![0, 1, 2], vec![60.0, 35.0, 5.0], vec![0.6, 0.35, 0.05], 60.0);
+        let read5_below_threshold = (vec![0, 1], vec![99.5, 0.5], vec![0.995, 0.005], 99.5);
+        
+        multi_reads.insert(2, read2_prefers_ref0);
+        multi_reads.insert(3, read3_tied_between_refs);
+        multi_reads.insert(4, read4_tests_thresholds);
+        multi_reads.insert(5, read5_below_threshold);
+        
+        let refs = vec!["ref0".to_string(), "ref1".to_string(), "ref2".to_string()];
+        let reads = vec![
+            "read0".to_string(), "read1".to_string(), "read2".to_string(), 
+            "read3".to_string(), "read4".to_string(), "read5".to_string()
+        ];
+
+        // Create PathoscopeMatrix
+        let matrix = PathoscopeMatrix {
+            unique_reads,
+            multi_mapping_reads: multi_reads,
+            refs,
+            reads,
+            alignments: vec![],
+            max_score: 100.0,
+            min_score: 0.5,
+        };
+        
+        let results = compute_best_hit_from_matrix(&matrix);
+        
+        // Test 1: Verify best hit assignments (raw counts)
+        let expected_ref0_best_hits = 1.0   // read0 (unique)
+                                    + 1.0   // read2 (0.9 > 0.1)
+                                    + 0.5   // read3 (tied 0.5 == 0.5)
+                                    + 1.0   // read4 (0.6 > 0.35 > 0.05)
+                                    + 1.0;  // read5 (0.995 > 0.005)
+        assert!((results.best_hit_reads[0] - expected_ref0_best_hits).abs() < 0.001, 
+                "ref0 best_hit_reads should be {}, got {}", expected_ref0_best_hits, results.best_hit_reads[0]);
+        
+        let expected_ref1_best_hits = 1.0   // read1 (unique)
+                                    + 0.0   // read2 (0.1 < 0.9)
+                                    + 0.5   // read3 (tied 0.5 == 0.5)
+                                    + 0.0   // read4 (0.35 < 0.6)
+                                    + 0.0;  // read5 (0.005 < 0.995)
+        assert!((results.best_hit_reads[1] - expected_ref1_best_hits).abs() < 0.001,
+                "ref1 best_hit_reads should be {}, got {}", expected_ref1_best_hits, results.best_hit_reads[1]);
+        
+        let expected_ref2_best_hits = 0.0;  // No reads have ref2 as best hit
+        assert!((results.best_hit_reads[2] - expected_ref2_best_hits).abs() < 0.001,
+                "ref2 best_hit_reads should be {}, got {}", expected_ref2_best_hits, results.best_hit_reads[2]);
+        
+        // Test 2: Verify normalization (divided by total read count = 6)
+        let total_reads = 6.0;
+        assert!((results.best_hit[0] - expected_ref0_best_hits/total_reads).abs() < 0.001,
+                "ref0 normalized best_hit incorrect");
+        assert!((results.best_hit[1] - expected_ref1_best_hits/total_reads).abs() < 0.001,
+                "ref1 normalized best_hit incorrect");
+        assert!((results.best_hit[2] - expected_ref2_best_hits/total_reads).abs() < 0.001,
+                "ref2 normalized best_hit incorrect");
+        
+        // Test 3: Verify level1 assignments (score >= 0.5)
+        let expected_ref0_level1 = 1.0   // read0 (unique, always counts)
+                                 + 1.0   // read2 (0.9 >= 0.5)
+                                 + 1.0   // read3 (0.5 >= 0.5)
+                                 + 1.0   // read4 (0.6 >= 0.5)
+                                 + 1.0;  // read5 (0.995 >= 0.5)
+        assert!((results.level1[0] - expected_ref0_level1/total_reads).abs() < 0.001,
+                "ref0 level1 should be {}", expected_ref0_level1/total_reads);
+        
+        let expected_ref1_level1 = 1.0   // read1 (unique, always counts)
+                                 + 0.0   // read2 (0.1 < 0.5)
+                                 + 1.0   // read3 (0.5 >= 0.5)
+                                 + 0.0   // read4 (0.35 < 0.5)
+                                 + 0.0;  // read5 (0.005 < 0.5)
+        assert!((results.level1[1] - expected_ref1_level1/total_reads).abs() < 0.001,
+                "ref1 level1 should be {}", expected_ref1_level1/total_reads);
+        
+        let expected_ref2_level1 = 0.0;  // read4 (0.05 < 0.5)
+        assert!((results.level1[2] - expected_ref2_level1/total_reads).abs() < 0.001,
+                "ref2 level1 should be 0.0");
+        
+        // Test 4: Verify level2 assignments (0.01 <= score < 0.5)
+        let expected_ref0_level2 = 0.0;  // All ref0 scores >= 0.5, so counted in level1
+        assert!((results.level2[0] - expected_ref0_level2/total_reads).abs() < 0.001,
+                "ref0 level2 should be 0.0");
+        
+        let expected_ref1_level2 = 1.0   // read2 (0.1 >= 0.01 and < 0.5)
+                                 + 0.0   // read3 (0.5 >= 0.5, counted in level1)
+                                 + 1.0   // read4 (0.35 >= 0.01 and < 0.5)
+                                 + 0.0;  // read5 (0.005 < 0.01)
+        assert!((results.level2[1] - expected_ref1_level2/total_reads).abs() < 0.001,
+                "ref1 level2 should be {}", expected_ref1_level2/total_reads);
+        
+        let expected_ref2_level2 = 1.0;  // read4 (0.05 >= 0.01 and < 0.5)
+        assert!((results.level2[2] - expected_ref2_level2/total_reads).abs() < 0.001,
+                "ref2 level2 should be {}", expected_ref2_level2/total_reads);
+        
+        // Test 5: Verify output vector lengths
+        assert_eq!(results.best_hit_reads.len(), 3, "best_hit_reads should have 3 elements");
+        assert_eq!(results.best_hit.len(), 3, "best_hit should have 3 elements");
+        assert_eq!(results.level1.len(), 3, "level1 should have 3 elements");
+        assert_eq!(results.level2.len(), 3, "level2 should have 3 elements");
+    }
+
+    #[test]
+    fn test_compute_best_hit_from_matrix_empty() {
+        use crate::matrix::PathoscopeMatrix;
+        use rustc_hash::FxHashMap;
+
+        // Test empty matrix
+        let matrix = PathoscopeMatrix {
+            unique_reads: FxHashMap::default(),
+            multi_mapping_reads: FxHashMap::default(),
+            refs: vec!["ref0".to_string()],
+            reads: vec!["read0".to_string()],
+            alignments: vec![],
+            max_score: 0.0,
+            min_score: 0.0,
+        };
+        
+        let results = compute_best_hit_from_matrix(&matrix);
+        
+        assert_eq!(results.best_hit_reads[0], 0.0, "Empty input should result in zero counts");
+        assert_eq!(results.best_hit[0], 0.0, "Empty input should result in zero normalized values");
+        assert_eq!(results.level1[0], 0.0, "Empty input should result in zero level1");
+        assert_eq!(results.level2[0], 0.0, "Empty input should result in zero level2");
     }
 
     #[test]
