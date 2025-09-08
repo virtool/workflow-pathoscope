@@ -1,18 +1,18 @@
-mod subtraction;
-mod coverage;
-mod matrix;
-mod em;
 mod candidates;
+mod coverage;
+mod em;
 mod logging;
+mod matrix;
 mod sam;
+mod subtraction;
 
-use em::{em, compute_best_hit};
+use em::{compute_best_hit, em};
+use log::info;
 use logging::init_logging;
 use pyo3::exceptions::PyIOError;
 use pyo3::prelude::*;
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
-use log::info;
 
 // Type aliases for complex HashMap types used throughout the codebase
 pub type UniqueReads = FxHashMap<i32, (i32, f64)>;
@@ -114,7 +114,7 @@ fn rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 #[pyfunction]
 /// Run expectation maximization algorithm
-/// 
+///
 /// # Arguments
 /// * `alignment_path` - Path to the SAM/BAM file
 /// * `p_score_cutoff` - Minimum score threshold for alignments
@@ -125,8 +125,11 @@ pub fn run_expectation_maximization(
     p_score_cutoff: f64,
     ref_lengths: FxHashMap<String, usize>,
 ) -> PyResult<PathoscopeResults> {
-    info!("starting em algorithm: file={}, cutoff={}", alignment_path, p_score_cutoff);
-    
+    info!(
+        "starting em algorithm: file={}, cutoff={}",
+        alignment_path, p_score_cutoff
+    );
+
     py.allow_threads(|| {
         let matrix = matrix::build_matrix(alignment_path.as_str(), Some(p_score_cutoff))
             .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to build matrix: {}", e)))?;
@@ -167,10 +170,9 @@ pub fn run_expectation_maximization(
     })
 }
 
-
 #[pyfunction]
 /// Extract candidate OTU reference IDs by running bowtie2 directly with streaming
-/// 
+///
 /// This is a PyO3 wrapper around the function in the candidates module.
 pub fn find_candidate_otus_with_bowtie2(
     py: Python,
@@ -179,13 +181,18 @@ pub fn find_candidate_otus_with_bowtie2(
     proc: i32,
     p_score_cutoff: f64,
 ) -> PyResult<HashSet<String>> {
-    candidates::find_candidate_otus_with_bowtie2(py, bowtie_index_path, read_paths, proc, p_score_cutoff)
+    candidates::find_candidate_otus_with_bowtie2(
+        py,
+        bowtie_index_path,
+        read_paths,
+        proc,
+        p_score_cutoff,
+    )
 }
-
 
 #[pyfunction]
 /// Eliminate subtraction reads from BAM and filter the input FASTQ file.
-/// 
+///
 /// # Arguments
 /// * `isolate_sam_path` - Path to the isolate SAM/BAM file
 /// * `subtraction_sam_path` - Path to the subtraction SAM file
@@ -193,7 +200,7 @@ pub fn find_candidate_otus_with_bowtie2(
 /// * `input_fastq_path` - Path to the input FASTQ file to filter
 /// * `output_fastq_path` - Path to write the filtered FASTQ file
 /// * `proc` - Number of threads to use for processing
-/// 
+///
 /// # Returns
 /// Number of reads that were subtracted (eliminated)
 pub fn run_eliminate_subtraction(
@@ -238,101 +245,149 @@ mod tests {
     fn test_compute_best_hit() {
         let mut unique_reads: UniqueReads = FxHashMap::default();
         let mut multi_reads: MultiMappingReads = FxHashMap::default();
-        
+
         // Unique reads: each maps to exactly one reference
         let read0_maps_to_ref0 = (0, 100.0);
         let read1_maps_to_ref1 = (1, 100.0);
         unique_reads.insert(0, read0_maps_to_ref0);
         unique_reads.insert(1, read1_maps_to_ref1);
-        
+
         // Multi-mapping reads: each maps to multiple references with different scores
         let read2_prefers_ref0 = (vec![0, 1], vec![90.0, 10.0], vec![0.9, 0.1], 90.0);
         let read3_tied_between_refs = (vec![0, 1], vec![80.0, 80.0], vec![0.5, 0.5], 80.0);
-        let read4_tests_thresholds = (vec![0, 1, 2], vec![60.0, 35.0, 5.0], vec![0.6, 0.35, 0.05], 60.0);
+        let read4_tests_thresholds = (
+            vec![0, 1, 2],
+            vec![60.0, 35.0, 5.0],
+            vec![0.6, 0.35, 0.05],
+            60.0,
+        );
         let read5_below_threshold = (vec![0, 1], vec![99.5, 0.5], vec![0.995, 0.005], 99.5);
-        
+
         multi_reads.insert(2, read2_prefers_ref0);
         multi_reads.insert(3, read3_tied_between_refs);
         multi_reads.insert(4, read4_tests_thresholds);
         multi_reads.insert(5, read5_below_threshold);
-        
+
         let refs = vec!["ref0".to_string(), "ref1".to_string(), "ref2".to_string()];
         let reads = vec![
-            "read0".to_string(), "read1".to_string(), "read2".to_string(), 
-            "read3".to_string(), "read4".to_string(), "read5".to_string()
+            "read0".to_string(),
+            "read1".to_string(),
+            "read2".to_string(),
+            "read3".to_string(),
+            "read4".to_string(),
+            "read5".to_string(),
         ];
-        
-        let (best_hit_reads, best_hit, level1, level2) = em::compute_best_hit(&unique_reads, &multi_reads, &refs, &reads);
-        
+
+        let (best_hit_reads, best_hit, level1, level2) =
+            em::compute_best_hit(&unique_reads, &multi_reads, &refs, &reads);
+
         // Test 1: Verify best hit assignments (raw counts)
         let expected_ref0_best_hits = 1.0   // read0 (unique)
                                     + 1.0   // read2 (0.9 > 0.1)
                                     + 0.5   // read3 (tied 0.5 == 0.5)
                                     + 1.0   // read4 (0.6 > 0.35 > 0.05)
-                                    + 1.0;  // read5 (0.995 > 0.005)
-        assert!((best_hit_reads[0] - expected_ref0_best_hits).abs() < 0.001, 
-                "ref0 best_hit_reads should be {}, got {}", expected_ref0_best_hits, best_hit_reads[0]);
-        
+                                    + 1.0; // read5 (0.995 > 0.005)
+        assert!(
+            (best_hit_reads[0] - expected_ref0_best_hits).abs() < 0.001,
+            "ref0 best_hit_reads should be {}, got {}",
+            expected_ref0_best_hits,
+            best_hit_reads[0]
+        );
+
         let expected_ref1_best_hits = 1.0   // read1 (unique)
                                     + 0.0   // read2 (0.1 < 0.9)
                                     + 0.5   // read3 (tied 0.5 == 0.5)
                                     + 0.0   // read4 (0.35 < 0.6)
-                                    + 0.0;  // read5 (0.005 < 0.995)
-        assert!((best_hit_reads[1] - expected_ref1_best_hits).abs() < 0.001,
-                "ref1 best_hit_reads should be {}, got {}", expected_ref1_best_hits, best_hit_reads[1]);
-        
-        let expected_ref2_best_hits = 0.0;  // No reads have ref2 as best hit
-        assert!((best_hit_reads[2] - expected_ref2_best_hits).abs() < 0.001,
-                "ref2 best_hit_reads should be {}, got {}", expected_ref2_best_hits, best_hit_reads[2]);
-        
+                                    + 0.0; // read5 (0.005 < 0.995)
+        assert!(
+            (best_hit_reads[1] - expected_ref1_best_hits).abs() < 0.001,
+            "ref1 best_hit_reads should be {}, got {}",
+            expected_ref1_best_hits,
+            best_hit_reads[1]
+        );
+
+        let expected_ref2_best_hits = 0.0; // No reads have ref2 as best hit
+        assert!(
+            (best_hit_reads[2] - expected_ref2_best_hits).abs() < 0.001,
+            "ref2 best_hit_reads should be {}, got {}",
+            expected_ref2_best_hits,
+            best_hit_reads[2]
+        );
+
         // Test 2: Verify normalization (divided by total read count = 6)
         let total_reads = 6.0;
-        assert!((best_hit[0] - expected_ref0_best_hits/total_reads).abs() < 0.001,
-                "ref0 normalized best_hit incorrect");
-        assert!((best_hit[1] - expected_ref1_best_hits/total_reads).abs() < 0.001,
-                "ref1 normalized best_hit incorrect");
-        assert!((best_hit[2] - expected_ref2_best_hits/total_reads).abs() < 0.001,
-                "ref2 normalized best_hit incorrect");
-        
+        assert!(
+            (best_hit[0] - expected_ref0_best_hits / total_reads).abs() < 0.001,
+            "ref0 normalized best_hit incorrect"
+        );
+        assert!(
+            (best_hit[1] - expected_ref1_best_hits / total_reads).abs() < 0.001,
+            "ref1 normalized best_hit incorrect"
+        );
+        assert!(
+            (best_hit[2] - expected_ref2_best_hits / total_reads).abs() < 0.001,
+            "ref2 normalized best_hit incorrect"
+        );
+
         // Test 3: Verify level1 assignments (score >= 0.5)
         let expected_ref0_level1 = 1.0   // read0 (unique, always counts)
                                  + 1.0   // read2 (0.9 >= 0.5)
                                  + 1.0   // read3 (0.5 >= 0.5)
                                  + 1.0   // read4 (0.6 >= 0.5)
-                                 + 1.0;  // read5 (0.995 >= 0.5)
-        assert!((level1[0] - expected_ref0_level1/total_reads).abs() < 0.001,
-                "ref0 level1 should be {}", expected_ref0_level1/total_reads);
-        
+                                 + 1.0; // read5 (0.995 >= 0.5)
+        assert!(
+            (level1[0] - expected_ref0_level1 / total_reads).abs() < 0.001,
+            "ref0 level1 should be {}",
+            expected_ref0_level1 / total_reads
+        );
+
         let expected_ref1_level1 = 1.0   // read1 (unique, always counts)
                                  + 0.0   // read2 (0.1 < 0.5)
                                  + 1.0   // read3 (0.5 >= 0.5)
                                  + 0.0   // read4 (0.35 < 0.5)
-                                 + 0.0;  // read5 (0.005 < 0.5)
-        assert!((level1[1] - expected_ref1_level1/total_reads).abs() < 0.001,
-                "ref1 level1 should be {}", expected_ref1_level1/total_reads);
-        
-        let expected_ref2_level1 = 0.0;  // read4 (0.05 < 0.5)
-        assert!((level1[2] - expected_ref2_level1/total_reads).abs() < 0.001,
-                "ref2 level1 should be 0.0");
-        
+                                 + 0.0; // read5 (0.005 < 0.5)
+        assert!(
+            (level1[1] - expected_ref1_level1 / total_reads).abs() < 0.001,
+            "ref1 level1 should be {}",
+            expected_ref1_level1 / total_reads
+        );
+
+        let expected_ref2_level1 = 0.0; // read4 (0.05 < 0.5)
+        assert!(
+            (level1[2] - expected_ref2_level1 / total_reads).abs() < 0.001,
+            "ref2 level1 should be 0.0"
+        );
+
         // Test 4: Verify level2 assignments (0.01 <= score < 0.5)
-        let expected_ref0_level2 = 0.0;  // All ref0 scores >= 0.5, so counted in level1
-        assert!((level2[0] - expected_ref0_level2/total_reads).abs() < 0.001,
-                "ref0 level2 should be 0.0");
-        
+        let expected_ref0_level2 = 0.0; // All ref0 scores >= 0.5, so counted in level1
+        assert!(
+            (level2[0] - expected_ref0_level2 / total_reads).abs() < 0.001,
+            "ref0 level2 should be 0.0"
+        );
+
         let expected_ref1_level2 = 1.0   // read2 (0.1 >= 0.01 and < 0.5)
                                  + 0.0   // read3 (0.5 >= 0.5, counted in level1)
                                  + 1.0   // read4 (0.35 >= 0.01 and < 0.5)
-                                 + 0.0;  // read5 (0.005 < 0.01)
-        assert!((level2[1] - expected_ref1_level2/total_reads).abs() < 0.001,
-                "ref1 level2 should be {}", expected_ref1_level2/total_reads);
-        
-        let expected_ref2_level2 = 1.0;  // read4 (0.05 >= 0.01 and < 0.5)
-        assert!((level2[2] - expected_ref2_level2/total_reads).abs() < 0.001,
-                "ref2 level2 should be {}", expected_ref2_level2/total_reads);
-        
+                                 + 0.0; // read5 (0.005 < 0.01)
+        assert!(
+            (level2[1] - expected_ref1_level2 / total_reads).abs() < 0.001,
+            "ref1 level2 should be {}",
+            expected_ref1_level2 / total_reads
+        );
+
+        let expected_ref2_level2 = 1.0; // read4 (0.05 >= 0.01 and < 0.5)
+        assert!(
+            (level2[2] - expected_ref2_level2 / total_reads).abs() < 0.001,
+            "ref2 level2 should be {}",
+            expected_ref2_level2 / total_reads
+        );
+
         // Test 5: Verify output vector lengths
-        assert_eq!(best_hit_reads.len(), 3, "best_hit_reads should have 3 elements");
+        assert_eq!(
+            best_hit_reads.len(),
+            3,
+            "best_hit_reads should have 3 elements"
+        );
         assert_eq!(best_hit.len(), 3, "best_hit should have 3 elements");
         assert_eq!(level1.len(), 3, "level1 should have 3 elements");
         assert_eq!(level2.len(), 3, "level2 should have 3 elements");
@@ -345,23 +400,34 @@ mod tests {
         let nu: MultiMappingReads = FxHashMap::default();
         let refs = vec!["ref0".to_string()];
         let reads = vec!["read0".to_string()];
-        
-        let (best_hit_reads, best_hit, level1, level2) = em::compute_best_hit(&u, &nu, &refs, &reads);
-        
-        assert_eq!(best_hit_reads[0], 0.0, "Empty input should result in zero counts");
-        assert_eq!(best_hit[0], 0.0, "Empty input should result in zero normalized values");
+
+        let (best_hit_reads, best_hit, level1, level2) =
+            em::compute_best_hit(&u, &nu, &refs, &reads);
+
+        assert_eq!(
+            best_hit_reads[0], 0.0,
+            "Empty input should result in zero counts"
+        );
+        assert_eq!(
+            best_hit[0], 0.0,
+            "Empty input should result in zero normalized values"
+        );
         assert_eq!(level1[0], 0.0, "Empty input should result in zero level1");
         assert_eq!(level2[0], 0.0, "Empty input should result in zero level2");
-        
+
         // Test with nu entry that has no valid scores
         let mut nu_invalid: MultiMappingReads = FxHashMap::default();
         nu_invalid.insert(0, (vec![0], vec![10.0], vec![0.0], 10.0)); // normalized score is 0.0
-        
+
         let reads_single = vec!["read0".to_string()];
-        let (best_hit_reads, best_hit, level1, level2) = em::compute_best_hit(&u, &nu_invalid, &refs, &reads_single);
-        
+        let (best_hit_reads, best_hit, level1, level2) =
+            em::compute_best_hit(&u, &nu_invalid, &refs, &reads_single);
+
         // Even with 0.0 normalized score, it should still be considered as best hit (0.0 == max)
-        assert_eq!(best_hit_reads[0], 1.0, "Zero score should still count as best hit when it's the only/max score");
+        assert_eq!(
+            best_hit_reads[0], 1.0,
+            "Zero score should still count as best hit when it's the only/max score"
+        );
     }
 
     #[test]
@@ -394,8 +460,11 @@ mod tests {
         let mut bam_reader = bam::Reader::from_path(&output_bam_path).unwrap();
         let header = bam_reader.header();
 
-        // Verify headers are preserved  
-        assert!(header.target_count() > 0, "Sequence headers should be preserved");
+        // Verify headers are preserved
+        assert!(
+            header.target_count() > 0,
+            "Sequence headers should be preserved"
+        );
 
         // Collect read names from BAM output
         let mut read_names = Vec::with_capacity(10);
@@ -443,7 +512,7 @@ mod tests {
             "FASTQ output should contain read_keep"
         );
         assert!(
-            fastq_output.contains("@read_unknown"), 
+            fastq_output.contains("@read_unknown"),
             "FASTQ output should contain read_unknown"
         );
         assert!(

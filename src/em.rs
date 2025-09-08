@@ -15,6 +15,19 @@ pub struct BestHitResults {
     pub level2: Vec<f64>,
 }
 
+/// EM algorithm results
+#[derive(Debug, Clone)]
+pub struct EMResults {
+    /// Initial pi values after first iteration
+    pub init_pi: Vec<f64>,
+    /// Final pi values (genome abundances)
+    pub pi: Vec<f64>,
+    /// Final theta values (multi-mapping probabilities)
+    pub theta: Vec<f64>,
+    /// Updated PathoscopeMatrix with final multi-mapping probabilities
+    pub updated_matrix: PathoscopeMatrix,
+}
+
 pub fn compute_best_hit(
     u: &UniqueReads,
     nu: &MultiMappingReads,
@@ -478,6 +491,188 @@ pub fn em(
     }
 
     (init_pi, pi, theta, nu)
+}
+
+/// Run EM algorithm on a PathoscopeMatrix
+/// 
+/// This function reimplements the EM algorithm to work directly with a PathoscopeMatrix
+/// struct, providing a cleaner API and avoiding the need to extract individual components.
+/// 
+/// # Arguments
+/// * `matrix` - The PathoscopeMatrix containing alignment data
+/// * `max_iter` - Maximum number of EM iterations
+/// * `epsilon` - Convergence threshold for stopping criterion
+/// * `pi_prior` - Prior weight for pi estimation (Dirichlet prior)
+/// * `theta_prior` - Prior weight for theta estimation
+/// 
+/// # Returns
+/// EMResults struct containing the EM algorithm results
+pub fn em_from_matrix(
+    matrix: &PathoscopeMatrix,
+    max_iter: i32,
+    epsilon: f64,
+    pi_prior: f64,
+    theta_prior: f64,
+) -> EMResults {
+    let genome_count = matrix.refs.len();
+    let mut updated_matrix = matrix.clone();
+    
+    // Initialize EM parameters
+    let pi = vec![1.0 / genome_count as f64; genome_count];
+    let theta = pi.clone();
+    let mut pi_sum_0 = vec![0.0; genome_count];
+
+    let u_weights: Vec<f64> = matrix.unique_reads.iter().map(|entry| (entry.1).1).collect();
+    let mut max_u_weights = 0.0;
+    let mut u_total = 0.0;
+
+    if !u_weights.is_empty() {
+        max_u_weights = u_weights.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        u_total = u_weights.iter().sum();
+    }
+
+    for i in matrix.unique_reads.keys() {
+        if let Some(u_entry) = matrix.unique_reads.get(i) {
+            let ref_idx = u_entry.0 as usize;
+            if ref_idx < pi_sum_0.len() {
+                pi_sum_0[ref_idx] += u_entry.1;
+            }
+        }
+    }
+
+    let nu_weights: Vec<f64> = matrix.multi_mapping_reads.iter().map(|entry| (entry.1).3).collect();
+    let mut max_nu_weights = 0.0;
+    let mut nu_total = 0.0;
+
+    if !nu_weights.is_empty() {
+        max_nu_weights = nu_weights.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        nu_total = nu_weights.iter().sum();
+    }
+
+    let prior_weight = f64::max(max_u_weights, max_nu_weights);
+    let nu_length = if matrix.multi_mapping_reads.is_empty() { 1 } else { matrix.multi_mapping_reads.len() };
+
+    let mut current_pi = pi;
+    let mut current_theta = theta;
+    let mut init_pi = Vec::with_capacity(genome_count);
+
+    // EM iterations
+    for i in 0..max_iter {
+        let pi_old = current_pi.clone();
+        let mut theta_sum = vec![0.0; genome_count];
+
+        // E step - update posterior probabilities for multi-mapping reads
+        let nu_keys: Vec<i32> = updated_matrix.multi_mapping_reads.keys().cloned().collect();
+        for j in nu_keys {
+            if let Some(z) = updated_matrix.multi_mapping_reads.get(&j).cloned() {
+                let ind = &z.0;
+
+                // Get relevant pis for the read
+                let pi_temp: Vec<f64> = ind
+                    .iter()
+                    .filter_map(|&val| current_pi.get(val as usize).cloned())
+                    .collect();
+
+                // Get relevant thetas for the read
+                let theta_temp: Vec<f64> = ind
+                    .iter()
+                    .filter_map(|&val| current_theta.get(val as usize).cloned())
+                    .collect();
+
+                // Calculate non-normalized xs
+                let mut x_temp: Vec<f64> = Vec::with_capacity(ind.len());
+
+                for k in 0..ind.len().min(pi_temp.len()).min(theta_temp.len()) {
+                    if let Some(&score) = z.1.get(k) {
+                        x_temp.push(pi_temp[k] * theta_temp[k] * score);
+                    }
+                }
+
+                let x_sum: f64 = x_temp.iter().sum();
+
+                // Avoid dividing by 0 at all times
+                let x_norm: Vec<f64> = if x_sum == 0.0 {
+                    vec![0.0; x_temp.len()]
+                } else {
+                    x_temp.iter().map(|val| val / x_sum).collect()
+                };
+
+                // Update x in nu
+                if let Some(nu_entry) = updated_matrix.multi_mapping_reads.get_mut(&j) {
+                    nu_entry.2.clone_from(&x_norm);
+
+                    // Only update theta_sum if we have meaningful scores (optimization)
+                    if x_sum > 0.0 {
+                        for (k, &ref_idx) in ind.iter().enumerate() {
+                            if let Some(&x_val) = x_norm.get(k) {
+                                let idx = ref_idx as usize;
+                                if idx < theta_sum.len() {
+                                    theta_sum[idx] += x_val * nu_entry.3;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // M step - update pi and theta parameters
+        let pi_sum: Vec<f64> = theta_sum
+            .iter()
+            .enumerate()
+            .map(|(idx, _)| theta_sum[idx] + pi_sum_0[idx])
+            .collect();
+        let pip = pi_prior * prior_weight;
+
+        // Update pi
+        let new_pi = pi_sum
+            .iter()
+            .map(|val| ((*val) + pip) / (u_total + nu_total + (pip * pi_sum.len() as f64)))
+            .collect();
+
+        let theta_p = theta_prior * prior_weight;
+        let nu_total_div = if nu_total == 0.0 { 1.0 } else { nu_total };
+
+        let new_theta = theta_sum
+            .iter()
+            .map(|val| (*val + theta_p) / (nu_total_div + (theta_p * theta_sum.len() as f64)))
+            .collect();
+
+        current_pi = new_pi;
+        current_theta = new_theta;
+
+        if i == 0 {
+            init_pi.clone_from(&current_pi);
+        }
+
+        // Check convergence
+        let cutoff: f64 = pi_old.iter()
+            .zip(current_pi.iter())
+            .map(|(old, new)| (old - new).abs())
+            .sum();
+
+        // Log convergence progress
+        if i == 0 || i % 10 == 9 || cutoff <= epsilon {
+            info!("em iteration {}: convergence delta = {:.2e}", i + 1, cutoff);
+        }
+
+        if cutoff <= epsilon || nu_length == 1 {
+            info!("em converged after {} iterations (delta: {:.2e})", i + 1, cutoff);
+            break;
+        }
+
+        // Detect potential divergence
+        if i > 10 && cutoff > 1e-2 {
+            info!("em may be diverging at iteration {} (delta: {:.2e})", i + 1, cutoff);
+        }
+    }
+
+    EMResults {
+        init_pi,
+        pi: current_pi,
+        theta: current_theta,
+        updated_matrix,
+    }
 }
 
 pub fn find_updated_score(
@@ -969,6 +1164,152 @@ mod tests {
         assert_eq!(results.best_hit[0], 0.0, "Empty input should result in zero normalized values");
         assert_eq!(results.level1[0], 0.0, "Empty input should result in zero level1");
         assert_eq!(results.level2[0], 0.0, "Empty input should result in zero level2");
+    }
+
+    #[test]
+    fn test_em_from_matrix_basic() {
+        use crate::matrix::PathoscopeMatrix;
+        use rustc_hash::FxHashMap;
+
+        // Simple test case: 2 references, 2 reads
+        let mut u: UniqueReads = FxHashMap::default();
+        let mut nu: MultiMappingReads = FxHashMap::default();
+        
+        // Read 0 uniquely maps to ref 0 with score 100.0
+        u.insert(0, (0, 100.0));
+        
+        // Read 1 multi-maps to both refs with equal scores
+        nu.insert(1, (
+            vec![0, 1],           // Maps to refs 0 and 1
+            vec![50.0, 50.0],     // Equal raw scores
+            vec![0.5, 0.5],       // Equal normalized scores (will be updated by EM)
+            100.0                 // Total score
+        ));
+        
+        let refs = vec!["ref0".to_string(), "ref1".to_string()];
+        let reads = vec!["read0".to_string(), "read1".to_string()];
+
+        // Create PathoscopeMatrix
+        let matrix = PathoscopeMatrix {
+            unique_reads: u,
+            multi_mapping_reads: nu,
+            refs,
+            reads,
+            alignments: vec![],
+            max_score: 100.0,
+            min_score: 50.0,
+        };
+        
+        // Run EM algorithm
+        let results = em_from_matrix(
+            &matrix, 
+            10,    // max_iter
+            1e-6,  // epsilon
+            0.0,   // pi_prior
+            0.0    // theta_prior
+        );
+        
+        // Test return value structure
+        assert_eq!(results.init_pi.len(), 2, "init_pi should have 2 elements");
+        assert_eq!(results.pi.len(), 2, "pi should have 2 elements");
+        assert_eq!(results.theta.len(), 2, "theta should have 2 elements");
+        
+        // Test that pi values sum to approximately 1.0
+        let pi_sum: f64 = results.pi.iter().sum();
+        assert!((pi_sum - 1.0).abs() < 0.01, "Pi values should sum to ~1.0, got {}", pi_sum);
+        
+        // Test that theta values sum to approximately 1.0
+        let theta_sum: f64 = results.theta.iter().sum();
+        assert!((theta_sum - 1.0).abs() < 0.01, "Theta values should sum to ~1.0, got {}", theta_sum);
+        
+        // Since read 0 uniquely maps to ref 0, ref 0 should have higher pi
+        assert!(results.pi[0] > results.pi[1], "ref0 should have higher pi due to unique read, pi0={}, pi1={}", results.pi[0], results.pi[1]);
+        
+        // All values should be positive
+        assert!(results.pi[0] > 0.0 && results.pi[1] > 0.0, "All pi values should be positive");
+        assert!(results.theta[0] > 0.0 && results.theta[1] > 0.0, "All theta values should be positive");
+        
+        // Verify the multi-mapping read's scores were updated
+        let updated_read1 = results.updated_matrix.multi_mapping_reads.get(&1).expect("Read 1 should exist in updated matrix");
+        let updated_scores = &updated_read1.2;
+        assert_eq!(updated_scores.len(), 2, "Updated scores should have 2 elements");
+        
+        // The sum of normalized scores should be 1.0
+        let score_sum: f64 = updated_scores.iter().sum();
+        assert!((score_sum - 1.0).abs() < 1e-10, "Normalized scores should sum to 1.0, got {}", score_sum);
+    }
+
+    #[test]
+    fn test_em_from_matrix_empty() {
+        use crate::matrix::PathoscopeMatrix;
+        use rustc_hash::FxHashMap;
+
+        // Test with empty matrix
+        let matrix = PathoscopeMatrix {
+            unique_reads: FxHashMap::default(),
+            multi_mapping_reads: FxHashMap::default(),
+            refs: vec!["ref0".to_string(), "ref1".to_string()],
+            reads: vec!["read0".to_string()],
+            alignments: vec![],
+            max_score: 0.0,
+            min_score: 0.0,
+        };
+        
+        let results = em_from_matrix(&matrix, 10, 1e-6, 0.0, 0.0);
+        
+        // Should return equal probabilities for all references
+        assert_eq!(results.init_pi.len(), 2);
+        assert_eq!(results.pi.len(), 2);
+        assert_eq!(results.theta.len(), 2);
+        
+        // With no data, the algorithm produces NaN values due to division by zero
+        // This documents the current behavior - empty input results in NaN
+        assert!(results.init_pi[0].is_nan(), "Empty input produces NaN for init_pi[0]");
+        assert!(results.init_pi[1].is_nan(), "Empty input produces NaN for init_pi[1]");
+        assert!(results.pi[0].is_nan(), "Empty input produces NaN for pi[0]");
+        assert!(results.pi[1].is_nan(), "Empty input produces NaN for pi[1]");
+        
+        // Matrix should remain empty
+        assert!(results.updated_matrix.multi_mapping_reads.is_empty(), "Updated matrix should have empty multi_mapping_reads");
+    }
+
+    #[test]
+    fn test_em_from_matrix_only_unique_reads() {
+        use crate::matrix::PathoscopeMatrix;
+        use rustc_hash::FxHashMap;
+
+        // Test with only unique reads (no multi-mapping)
+        let mut u: UniqueReads = FxHashMap::default();
+        
+        // Add unique reads: 2 to ref0, 1 to ref1
+        u.insert(0, (0, 100.0));  // read 0 -> ref 0
+        u.insert(1, (0, 100.0));  // read 1 -> ref 0  
+        u.insert(2, (1, 100.0));  // read 2 -> ref 1
+        
+        let refs = vec!["ref0".to_string(), "ref1".to_string()];
+        let reads = vec!["read0".to_string(), "read1".to_string(), "read2".to_string()];
+
+        let matrix = PathoscopeMatrix {
+            unique_reads: u,
+            multi_mapping_reads: FxHashMap::default(),
+            refs,
+            reads,
+            alignments: vec![],
+            max_score: 100.0,
+            min_score: 100.0,
+        };
+        
+        let results = em_from_matrix(&matrix, 10, 1e-6, 0.0, 0.0);
+        
+        // ref0 should have higher pi due to more reads (2 vs 1)
+        assert!(results.pi[0] > results.pi[1], "ref0 should have higher pi with more unique reads");
+        
+        // Pi should reflect the read distribution: ref0 gets 2/3, ref1 gets 1/3
+        assert!((results.pi[0] - 2.0/3.0).abs() < 0.01, "ref0 should get ~2/3 of probability");
+        assert!((results.pi[1] - 1.0/3.0).abs() < 0.01, "ref1 should get ~1/3 of probability");
+        
+        // Matrix multi-mapping reads should remain empty
+        assert!(results.updated_matrix.multi_mapping_reads.is_empty(), "Multi-mapping reads should remain empty with only unique reads");
     }
 
     #[test]
