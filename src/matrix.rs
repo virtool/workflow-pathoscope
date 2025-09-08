@@ -55,8 +55,10 @@ impl PathoscopeMatrix {
                     .iter()
                     .map(|(ref_idx, _)| *ref_idx)
                     .collect();
-                let scores: Vec<f64> = read_alignments.iter().map(|(_, score)| *score).collect();
-                let max_score = scores.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                let scores: Vec<f64> =
+                    read_alignments.iter().map(|(_, score)| *score).collect();
+                let max_score =
+                    scores.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
 
                 nu.insert(read_index, (ref_indices, scores, vec![], max_score));
             }
@@ -100,7 +102,9 @@ impl PathoscopeMatrix {
         // Convert u to unique_reads format and store for build_unique_map
         self.unique_reads = FxHashMap::default();
         for (read_idx, (ref_indices, scores, _, _)) in u {
-            if let (Some(first_ref), Some(first_score)) = (ref_indices.first(), scores.first()) {
+            if let (Some(first_ref), Some(first_score)) =
+                (ref_indices.first(), scores.first())
+            {
                 self.unique_reads
                     .insert(read_idx, (*first_ref, *first_score));
             }
@@ -127,17 +131,6 @@ impl PathoscopeMatrix {
                 }
             }
         }
-    }
-
-    /// Convert to the legacy MatrixResult tuple format for backward compatibility
-    pub fn into_matrix_result(self) -> MatrixResult {
-        (
-            self.unique_reads,
-            self.multi_mapping_reads,
-            self.refs,
-            self.reads,
-            self.alignments,
-        )
     }
 }
 
@@ -440,7 +433,8 @@ mod tests {
             assert!(*score > 0.0, "U matrix scores should be positive");
         }
 
-        for (_, (ref_indices, scores, normalized_scores, max_score)) in &matrix.multi_mapping_reads
+        for (_, (ref_indices, scores, normalized_scores, max_score)) in
+            &matrix.multi_mapping_reads
         {
             assert!(
                 ref_indices.len() > 1,
@@ -495,4 +489,3 @@ mod tests {
         );
     }
 }
-

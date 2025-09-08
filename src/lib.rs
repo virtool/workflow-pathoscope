@@ -132,8 +132,11 @@ pub fn run_expectation_maximization(
     );
 
     py.allow_threads(|| {
-        let matrix = matrix::build_matrix(alignment_path.as_str(), Some(p_score_cutoff))
-            .map_err(|e| PyErr::new::<PyIOError, _>(format!("Failed to build matrix: {}", e)))?;
+        let matrix =
+            matrix::build_matrix(alignment_path.as_str(), Some(p_score_cutoff))
+                .map_err(|e| {
+                    PyErr::new::<PyIOError, _>(format!("Failed to build matrix: {}", e))
+                })?;
 
         // Calculate initial best hit statistics using the matrix
         let initial_best_hit = compute_best_hit(&matrix);

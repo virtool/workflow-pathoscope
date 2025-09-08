@@ -1,7 +1,7 @@
-use crate::sam::MinimalAlignment;
 use crate::em::find_updated_score;
-use crate::{UniqueReads, MultiMappingReads};
 use crate::matrix::PathoscopeMatrix;
+use crate::sam::MinimalAlignment;
+use crate::{MultiMappingReads, UniqueReads};
 use rustc_hash::FxHashMap;
 
 // TODO: Fix the updated score calculation logic
@@ -10,7 +10,7 @@ use rustc_hash::FxHashMap;
 // that read1 with probability 0.1 for ref1 gets included because 0.1 > 0.01, even though
 // read1 has a higher probability (0.9) for ref0. This suggests the current logic includes
 // ALL alignments above threshold rather than just the best assignments per read.
-// 
+//
 // This behavior is currently verified as correct by the Python integration test, but we should
 // investigate whether this is the intended behavior or if we should only include the best
 // assignment for each multi-mapping read that meets the threshold.
@@ -59,9 +59,12 @@ pub fn calculate_coverage_from_em(
                         0
                     };
 
-                    let end_index = (start_index + alignment.read_length as usize).min(coverage_array.len());
+                    let end_index = (start_index + alignment.read_length as usize)
+                        .min(coverage_array.len());
 
-                    for item in coverage_array.iter_mut().take(end_index).skip(start_index) {
+                    for item in
+                        coverage_array.iter_mut().take(end_index).skip(start_index)
+                    {
                         *item += 1;
                     }
                 }
@@ -73,15 +76,15 @@ pub fn calculate_coverage_from_em(
 }
 
 /// Calculate coverage from a PathoscopeMatrix
-/// 
+///
 /// This function reimplements the calculate_coverage_from_em logic to work directly with
 /// a PathoscopeMatrix struct, avoiding the need to extract individual components.
-/// 
+///
 /// # Arguments
 /// * `matrix` - The PathoscopeMatrix containing alignment data and EM results
 /// * `p_score_cutoff` - Minimum posterior probability threshold for multi-mapping reads
 /// * `ref_lengths` - Dictionary mapping reference IDs to their lengths
-/// 
+///
 /// # Returns
 /// Coverage dictionary mapping reference names to coverage arrays
 pub fn calculate_coverage_from_matrix(
@@ -107,7 +110,8 @@ pub fn calculate_coverage_from_matrix(
             true
         } else if matrix.multi_mapping_reads.contains_key(&read_index) {
             // Multi-mapping reads only contribute if posterior probability >= threshold
-            find_updated_score(&matrix.multi_mapping_reads, read_index, ref_index) >= p_score_cutoff
+            find_updated_score(&matrix.multi_mapping_reads, read_index, ref_index)
+                >= p_score_cutoff
         } else {
             // Read not found in EM results, skip
             false
@@ -124,9 +128,12 @@ pub fn calculate_coverage_from_matrix(
                         0
                     };
 
-                    let end_index = (start_index + alignment.read_length as usize).min(coverage_array.len());
+                    let end_index = (start_index + alignment.read_length as usize)
+                        .min(coverage_array.len());
 
-                    for item in coverage_array.iter_mut().take(end_index).skip(start_index) {
+                    for item in
+                        coverage_array.iter_mut().take(end_index).skip(start_index)
+                    {
                         *item += 1;
                     }
                 }

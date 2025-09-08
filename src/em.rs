@@ -199,7 +199,12 @@ fn initialize_em_parameters(
 /// * `pi` - Current genome abundance estimates
 /// * `theta` - Current multi-mapping probability estimates
 /// * `theta_sum` - Output buffer for accumulating weighted assignments (modified in place)
-fn em_e_step(nu: &mut MultiMappingReads, pi: &[f64], theta: &[f64], theta_sum: &mut [f64]) {
+fn em_e_step(
+    nu: &mut MultiMappingReads,
+    pi: &[f64],
+    theta: &[f64],
+    theta_sum: &mut [f64],
+) {
     let nu_keys: Vec<i32> = nu.keys().cloned().collect();
     for j in nu_keys {
         if let Some(z) = nu.get(&j).cloned() {
@@ -286,7 +291,8 @@ fn em_m_step(
     let new_pi = pi_sum
         .iter()
         .map(|val| {
-            ((*val) + pip) / (params.u_total + params.nu_total + (pip * pi_sum.len() as f64))
+            ((*val) + pip)
+                / (params.u_total + params.nu_total + (pip * pi_sum.len() as f64))
         })
         .collect();
 
@@ -300,7 +306,9 @@ fn em_m_step(
 
     let new_theta = theta_sum
         .iter()
-        .map(|val| (*val + theta_p) / (nu_total_div + (theta_p * theta_sum.len() as f64)))
+        .map(|val| {
+            (*val + theta_p) / (nu_total_div + (theta_p * theta_sum.len() as f64))
+        })
         .collect();
 
     (new_pi, new_theta)
@@ -335,7 +343,12 @@ fn calculate_convergence(pi_old: &[f64], pi_new: &[f64]) -> f64 {
 ///
 /// # Returns
 /// true if converged, false otherwise
-fn check_convergence(iteration: i32, cutoff: f64, epsilon: f64, nu_length: usize) -> bool {
+fn check_convergence(
+    iteration: i32,
+    cutoff: f64,
+    epsilon: f64,
+    nu_length: usize,
+) -> bool {
     // Log convergence progress
     if iteration == 0 || iteration % 10 == 9 || cutoff <= epsilon {
         info!(
@@ -368,7 +381,7 @@ fn check_convergence(iteration: i32, cutoff: f64, epsilon: f64, nu_length: usize
 
 /// Run EM algorithm on a PathoscopeMatrix
 ///
-/// This function reimplements the EM algorithm to work directly with a PathoscopeMatrix
+/// This function implements the EM algorithm to work directly with a PathoscopeMatrix
 /// struct, providing a cleaner API and avoiding the need to extract individual components.
 ///
 /// # Arguments
@@ -391,185 +404,58 @@ pub fn em(
     let mut updated_matrix = matrix.clone();
 
     // Initialize EM parameters
-    let pi = vec![1.0 / genome_count as f64; genome_count];
-    let theta = pi.clone();
-    let mut pi_sum_0 = vec![0.0; genome_count];
+    let mut params = initialize_em_parameters(
+        &matrix.unique_reads,
+        &matrix.multi_mapping_reads,
+        genome_count,
+    );
 
-    let u_weights: Vec<f64> = matrix
-        .unique_reads
-        .iter()
-        .map(|entry| (entry.1).1)
-        .collect();
-    let mut max_u_weights = 0.0;
-    let mut u_total = 0.0;
-
-    if !u_weights.is_empty() {
-        max_u_weights = u_weights.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        u_total = u_weights.iter().sum();
-    }
-
-    for i in matrix.unique_reads.keys() {
-        if let Some(u_entry) = matrix.unique_reads.get(i) {
-            let ref_idx = u_entry.0 as usize;
-            if ref_idx < pi_sum_0.len() {
-                pi_sum_0[ref_idx] += u_entry.1;
-            }
-        }
-    }
-
-    let nu_weights: Vec<f64> = matrix
-        .multi_mapping_reads
-        .iter()
-        .map(|entry| (entry.1).3)
-        .collect();
-    let mut max_nu_weights = 0.0;
-    let mut nu_total = 0.0;
-
-    if !nu_weights.is_empty() {
-        max_nu_weights = nu_weights.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        nu_total = nu_weights.iter().sum();
-    }
-
-    let prior_weight = f64::max(max_u_weights, max_nu_weights);
-    let nu_length = if matrix.multi_mapping_reads.is_empty() {
-        1
-    } else {
-        matrix.multi_mapping_reads.len()
-    };
-
-    let mut current_pi = pi;
-    let mut current_theta = theta;
     let mut init_pi = Vec::with_capacity(genome_count);
 
     // EM iterations
     for i in 0..max_iter {
-        let pi_old = current_pi.clone();
+        let pi_old = params.pi.clone();
         let mut theta_sum = vec![0.0; genome_count];
 
         // E step - update posterior probabilities for multi-mapping reads
-        let nu_keys: Vec<i32> = updated_matrix.multi_mapping_reads.keys().cloned().collect();
-        for j in nu_keys {
-            if let Some(z) = updated_matrix.multi_mapping_reads.get(&j).cloned() {
-                let ind = &z.0;
-
-                // Get relevant pis for the read
-                let pi_temp: Vec<f64> = ind
-                    .iter()
-                    .filter_map(|&val| current_pi.get(val as usize).cloned())
-                    .collect();
-
-                // Get relevant thetas for the read
-                let theta_temp: Vec<f64> = ind
-                    .iter()
-                    .filter_map(|&val| current_theta.get(val as usize).cloned())
-                    .collect();
-
-                // Calculate non-normalized xs
-                let mut x_temp: Vec<f64> = Vec::with_capacity(ind.len());
-
-                for k in 0..ind.len().min(pi_temp.len()).min(theta_temp.len()) {
-                    if let Some(&score) = z.1.get(k) {
-                        x_temp.push(pi_temp[k] * theta_temp[k] * score);
-                    }
-                }
-
-                let x_sum: f64 = x_temp.iter().sum();
-
-                // Avoid dividing by 0 at all times
-                let x_norm: Vec<f64> = if x_sum == 0.0 {
-                    vec![0.0; x_temp.len()]
-                } else {
-                    x_temp.iter().map(|val| val / x_sum).collect()
-                };
-
-                // Update x in nu
-                if let Some(nu_entry) = updated_matrix.multi_mapping_reads.get_mut(&j) {
-                    nu_entry.2.clone_from(&x_norm);
-
-                    // Only update theta_sum if we have meaningful scores (optimization)
-                    if x_sum > 0.0 {
-                        for (k, &ref_idx) in ind.iter().enumerate() {
-                            if let Some(&x_val) = x_norm.get(k) {
-                                let idx = ref_idx as usize;
-                                if idx < theta_sum.len() {
-                                    theta_sum[idx] += x_val * nu_entry.3;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        em_e_step(
+            &mut updated_matrix.multi_mapping_reads,
+            &params.pi,
+            &params.theta,
+            &mut theta_sum,
+        );
 
         // M step - update pi and theta parameters
-        let pi_sum: Vec<f64> = theta_sum
-            .iter()
-            .enumerate()
-            .map(|(idx, _)| theta_sum[idx] + pi_sum_0[idx])
-            .collect();
-        let pip = pi_prior * prior_weight;
+        let (new_pi, new_theta) = em_m_step(&params, &theta_sum, pi_prior, theta_prior);
 
-        // Update pi
-        let new_pi = pi_sum
-            .iter()
-            .map(|val| ((*val) + pip) / (u_total + nu_total + (pip * pi_sum.len() as f64)))
-            .collect();
-
-        let theta_p = theta_prior * prior_weight;
-        let nu_total_div = if nu_total == 0.0 { 1.0 } else { nu_total };
-
-        let new_theta = theta_sum
-            .iter()
-            .map(|val| (*val + theta_p) / (nu_total_div + (theta_p * theta_sum.len() as f64)))
-            .collect();
-
-        current_pi = new_pi;
-        current_theta = new_theta;
+        params.pi = new_pi;
+        params.theta = new_theta;
 
         if i == 0 {
-            init_pi.clone_from(&current_pi);
+            init_pi.clone_from(&params.pi);
         }
 
         // Check convergence
-        let cutoff: f64 = pi_old
-            .iter()
-            .zip(current_pi.iter())
-            .map(|(old, new)| (old - new).abs())
-            .sum();
+        let cutoff = calculate_convergence(&pi_old, &params.pi);
 
-        // Log convergence progress
-        if i == 0 || i % 10 == 9 || cutoff <= epsilon {
-            info!("em iteration {}: convergence delta = {:.2e}", i + 1, cutoff);
-        }
-
-        if cutoff <= epsilon || nu_length == 1 {
-            info!(
-                "em converged after {} iterations (delta: {:.2e})",
-                i + 1,
-                cutoff
-            );
+        if check_convergence(i, cutoff, epsilon, params.nu_length) {
             break;
-        }
-
-        // Detect potential divergence
-        if i > 10 && cutoff > 1e-2 {
-            info!(
-                "em may be diverging at iteration {} (delta: {:.2e})",
-                i + 1,
-                cutoff
-            );
         }
     }
 
     EMResults {
         init_pi,
-        pi: current_pi,
-        theta: current_theta,
+        pi: params.pi,
+        theta: params.theta,
         updated_matrix,
     }
 }
 
-pub fn find_updated_score(nu: &MultiMappingReads, read_index: i32, ref_index: i32) -> f64 {
+pub fn find_updated_score(
+    nu: &MultiMappingReads,
+    read_index: i32,
+    ref_index: i32,
+) -> f64 {
     let v1 = match nu.get(&read_index) {
         Some(val) => val,
         None => return 0.0,
@@ -715,14 +601,16 @@ mod tests {
 
         // Multi-mapping reads: each maps to multiple references with different scores
         let read2_prefers_ref0 = (vec![0, 1], vec![90.0, 10.0], vec![0.9, 0.1], 90.0);
-        let read3_tied_between_refs = (vec![0, 1], vec![80.0, 80.0], vec![0.5, 0.5], 80.0);
+        let read3_tied_between_refs =
+            (vec![0, 1], vec![80.0, 80.0], vec![0.5, 0.5], 80.0);
         let read4_tests_thresholds = (
             vec![0, 1, 2],
             vec![60.0, 35.0, 5.0],
             vec![0.6, 0.35, 0.05],
             60.0,
         );
-        let read5_below_threshold = (vec![0, 1], vec![99.5, 0.5], vec![0.995, 0.005], 99.5);
+        let read5_below_threshold =
+            (vec![0, 1], vec![99.5, 0.5], vec![0.995, 0.005], 99.5);
 
         multi_reads.insert(2, read2_prefers_ref0);
         multi_reads.insert(3, read3_tied_between_refs);
@@ -1246,8 +1134,8 @@ mod tests {
         let sam_path = "example/rust/test_em_with_multimapping.sam";
 
         // Build matrix from SAM file
-        let matrix =
-            build_matrix(sam_path, None).expect("Failed to build matrix from test SAM file");
+        let matrix = build_matrix(sam_path, None)
+            .expect("Failed to build matrix from test SAM file");
 
         // Run EM algorithm using matrix
         let results = em(&matrix, 50, 1e-7, 0.0, 0.0);
@@ -1404,14 +1292,16 @@ mod tests {
 
         // Multi-mapping reads: each maps to multiple references with different scores
         let read2_prefers_ref0 = (vec![0, 1], vec![90.0, 10.0], vec![0.9, 0.1], 90.0);
-        let read3_tied_between_refs = (vec![0, 1], vec![80.0, 80.0], vec![0.5, 0.5], 80.0);
+        let read3_tied_between_refs =
+            (vec![0, 1], vec![80.0, 80.0], vec![0.5, 0.5], 80.0);
         let read4_tests_thresholds = (
             vec![0, 1, 2],
             vec![60.0, 35.0, 5.0],
             vec![0.6, 0.35, 0.05],
             60.0,
         );
-        let read5_below_threshold = (vec![0, 1], vec![99.5, 0.5], vec![0.995, 0.005], 99.5);
+        let read5_below_threshold =
+            (vec![0, 1], vec![99.5, 0.5], vec![0.995, 0.005], 99.5);
 
         multi_reads.insert(2, read2_prefers_ref0);
         multi_reads.insert(3, read3_tied_between_refs);
