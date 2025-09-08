@@ -7,7 +7,7 @@ mod sam;
 mod subtraction;
 
 use coverage::calculate_coverage_from_matrix;
-use em::{compute_best_hit_from_matrix, em_from_matrix};
+use em::{compute_best_hit_from_matrix, em};
 use log::info;
 use logging::init_logging;
 use pyo3::exceptions::PyIOError;
@@ -139,7 +139,7 @@ pub fn run_expectation_maximization(
         let initial_best_hit = compute_best_hit_from_matrix(&matrix);
 
         // Run EM algorithm using the matrix
-        let em_results = em_from_matrix(&matrix, 50, 1e-7, 0.0, 0.0);
+        let em_results = em(&matrix, 50, 1e-7, 0.0, 0.0);
 
         // Calculate final best hit statistics using the updated matrix
         let final_best_hit = compute_best_hit_from_matrix(&em_results.updated_matrix);
