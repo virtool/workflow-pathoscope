@@ -381,9 +381,6 @@ fn check_convergence(
 
 /// Run EM algorithm on a PathoscopeMatrix
 ///
-/// This function implements the EM algorithm to work directly with a PathoscopeMatrix
-/// struct, providing a cleaner API and avoiding the need to extract individual components.
-///
 /// # Arguments
 /// * `matrix` - The PathoscopeMatrix containing alignment data
 /// * `max_iter` - Maximum number of EM iterations
