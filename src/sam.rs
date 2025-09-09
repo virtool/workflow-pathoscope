@@ -1,5 +1,5 @@
+use crate::PathoscopeError;
 use rust_htslib::{bam, bam::HeaderView, bam::Read};
-
 
 /// Simple streaming SAM/BAM reader with chunked processing.
 pub struct SamReader {
@@ -17,10 +17,9 @@ impl SamReader {
     /// * `path` - Path to the SAM or BAM file
     ///
     /// # Returns
-    /// Result containing SamReader or error message
-    pub fn new(path: &str) -> Result<Self, String> {
-        let reader = bam::Reader::from_path(path)
-            .map_err(|e| format!("Failed to open alignment file '{}': {}", path, e))?;
+    /// Result containing SamReader or PathoscopeError
+    pub fn new(path: &str) -> Result<Self, PathoscopeError> {
+        let reader = bam::Reader::from_path(path)?;
 
         let header = reader.header().clone();
 
@@ -39,9 +38,9 @@ impl SamReader {
     ///
     /// # Returns
     /// Result indicating success or error
-    pub fn stream_chunks<F>(&mut self, mut callback: F) -> Result<(), String>
+    pub fn stream_chunks<F>(&mut self, mut callback: F) -> Result<(), PathoscopeError>
     where
-        F: FnMut(&[bam::Record]) -> Result<(), String>,
+        F: FnMut(&[bam::Record]) -> Result<(), PathoscopeError>,
     {
         loop {
             let mut chunk = Vec::with_capacity(CHUNK_SIZE);
@@ -52,7 +51,10 @@ impl SamReader {
                 match self.reader.read(&mut record) {
                     Some(Ok(_)) => chunk.push(record),
                     Some(Err(e)) => {
-                        return Err(format!("Error reading BAM record: {}", e))
+                        return Err(PathoscopeError::Parse(format!(
+                            "Error reading BAM record: {}",
+                            e
+                        )))
                     }
                     None => break, // EOF
                 }

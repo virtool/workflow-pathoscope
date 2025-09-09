@@ -1,4 +1,5 @@
 use crate::sam::{extract_alignment_score, SamReader, CHUNK_SIZE};
+use crate::PathoscopeError;
 use log::info;
 use rayon::prelude::*;
 use rust_htslib::bam;
@@ -7,28 +8,9 @@ use rustc_hash::FxHashMap;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
-use thiserror::Error;
 
 /// Result type for parallel chunk processing
 type ChunkResult = (Vec<bam::Record>, HashSet<String>);
-
-#[derive(Error, Debug)]
-pub enum BamProcessingError {
-    #[error("Failed to create output file '{path}': {source}")]
-    FileCreate {
-        path: String,
-        source: std::io::Error,
-    },
-
-    #[error("Failed to parse SAM file: {0}")]
-    SamParse(String),
-
-    #[error("Failed to write BAM/SAM record: {source}")]
-    BamWrite { source: rust_htslib::errors::Error },
-
-    #[error("Failed to write to output file: {source}")]
-    WriteOutput { source: std::io::Error },
-}
 
 #[derive(Debug, Clone)]
 pub struct SubtractionProcessor {
@@ -53,36 +35,32 @@ impl SubtractionProcessor {
 /// Parse subtraction BAM file and return a map of read IDs to scores.
 pub fn parse_subtraction_scores_from_bam(
     path: &str,
-) -> Result<FxHashMap<String, f32>, BamProcessingError> {
+) -> Result<FxHashMap<String, f32>, PathoscopeError> {
     info!("parsing subtraction bam file: {}", path);
 
-    let mut reader = SamReader::new(path).map_err(BamProcessingError::SamParse)?;
+    let mut reader = SamReader::new(path)?;
 
     // Pre-allocate HashMap with estimated capacity
     let mut high_scores: FxHashMap<String, f32> =
         FxHashMap::with_capacity_and_hasher(100_000, Default::default());
 
-    reader
-        .stream_chunks(|chunk| {
-            for record in chunk {
-                // Skip unmapped reads
-                if record.is_unmapped() {
-                    continue;
-                }
-
-                // Get read ID
-                let read_id = std::str::from_utf8(record.qname())
-                    .map_err(|_| "Invalid UTF-8 in read ID")?
-                    .to_string();
-
-                // Get alignment score
-                if let Some(total_score) = extract_alignment_score(record) {
-                    high_scores.insert(read_id, total_score as f32);
-                }
+    reader.stream_chunks(|chunk| {
+        for record in chunk {
+            // Skip unmapped reads
+            if record.is_unmapped() {
+                continue;
             }
-            Ok(())
-        })
-        .map_err(BamProcessingError::SamParse)?;
+
+            // Get read ID
+            let read_id = std::str::from_utf8(record.qname())?.to_string();
+
+            // Get alignment score
+            if let Some(total_score) = extract_alignment_score(record) {
+                high_scores.insert(read_id, total_score as f32);
+            }
+        }
+        Ok(())
+    })?;
 
     info!(
         "parsed {} subtraction scores from {}",
@@ -114,7 +92,7 @@ pub fn eliminate_subtraction(
     input_fastq_path: &str,
     output_fastq_path: &str,
     proc: usize,
-) -> Result<usize, BamProcessingError> {
+) -> Result<usize, PathoscopeError> {
     info!("starting subtraction elimination: isolate={}, subtraction={}, output={}, proc={}",
           isolate_sam_path, subtraction_sam_path, output_sam_path, proc);
 
@@ -143,10 +121,9 @@ pub fn process_isolate_file(
     output_path: &str,
     processor: &SubtractionProcessor,
     proc: usize,
-) -> Result<HashSet<String>, BamProcessingError> {
-    let mut reader = SamReader::new(input_path).map_err(|_| {
-        BamProcessingError::SamParse("Failed to open SAM file".to_string())
-    })?;
+) -> Result<HashSet<String>, PathoscopeError> {
+    let mut reader = SamReader::new(input_path)
+        .map_err(|_| PathoscopeError::Parse("Failed to open SAM file".to_string()))?;
 
     // Get the header from input to preserve SQ lines and other headers
     let header_view = reader.header().clone();
@@ -156,7 +133,7 @@ pub fn process_isolate_file(
 
     // Create output writer with the same header and configure threading
     let mut writer = bam::Writer::from_path(output_path, &header, Format::Bam)
-        .map_err(|e| BamProcessingError::BamWrite { source: e })?;
+        .map_err(PathoscopeError::Htslib)?;
 
     // Use half the threads for BAM compression, reserve the rest for rayon processing
     let writer_threads = (proc / 2).max(1);
@@ -165,14 +142,14 @@ pub fn process_isolate_file(
     // Configure writer to use compression threads
     writer
         .set_threads(writer_threads)
-        .map_err(|e| BamProcessingError::BamWrite { source: e })?;
+        .map_err(PathoscopeError::Htslib)?;
 
     // Configure rayon thread pool for this scope
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(rayon_threads)
         .build()
         .map_err(|e| {
-            BamProcessingError::SamParse(format!("Failed to create thread pool: {}", e))
+            PathoscopeError::Parse(format!("Failed to create thread pool: {}", e))
         })?;
 
     let mut all_subtracted_read_ids = HashSet::new();
@@ -181,60 +158,57 @@ pub fn process_isolate_file(
     // Collect all chunks first for parallel processing
     let mut all_chunks = Vec::new();
 
-    reader
-        .stream_chunks(|chunk| {
-            // Clone the chunk to store it
-            let chunk_data: Vec<bam::Record> = chunk.to_vec();
-            all_chunks.push(chunk_data);
-            Ok(())
-        })
-        .map_err(BamProcessingError::SamParse)?;
+    reader.stream_chunks(|chunk| {
+        // Clone the chunk to store it
+        let chunk_data: Vec<bam::Record> = chunk.to_vec();
+        all_chunks.push(chunk_data);
+        Ok(())
+    })?;
 
     // Process chunks in parallel using our custom thread pool
-    let results: Result<Vec<ChunkResult>, String> = pool
-        .install(|| {
-            all_chunks
-                .into_par_iter()
-                .map(|chunk| {
-                    let mut records_to_write = Vec::new();
-                    let mut subtracted_read_ids = HashSet::new();
+    let results: Result<Vec<ChunkResult>, String> = pool.install(|| {
+        all_chunks
+            .into_par_iter()
+            .map(|chunk| {
+                let mut records_to_write = Vec::new();
+                let mut subtracted_read_ids = HashSet::new();
 
-                    for record in chunk {
-                        // Skip unmapped reads
-                        if record.is_unmapped() {
-                            continue;
-                        }
-
-                        let read_id_str =
-                            unsafe { std::str::from_utf8_unchecked(record.qname()) };
-
-                        // Skip if reference is unmapped (tid < 0 means unmapped)
-                        if record.tid() < 0 {
-                            continue;
-                        }
-
-                        // Calculate alignment score using shared function
-                        let isolate_score = match extract_alignment_score(&record) {
-                            Some(score) => score as f32,
-                            None => continue,
-                        };
-
-                        // Check if this read should be eliminated
-                        if processor.should_eliminate(read_id_str, isolate_score) {
-                            // Only allocate string when we need to store it
-                            subtracted_read_ids.insert(read_id_str.to_string());
-                        } else {
-                            // Add record to write buffer
-                            records_to_write.push(record);
-                        }
+                for record in chunk {
+                    // Skip unmapped reads
+                    if record.is_unmapped() {
+                        continue;
                     }
 
-                    Ok((records_to_write, subtracted_read_ids))
-                })
-                .collect()
-        });
+                    let read_id_str =
+                        unsafe { std::str::from_utf8_unchecked(record.qname()) };
 
-    let chunk_results = results.map_err(BamProcessingError::SamParse)?;
+                    // Skip if reference is unmapped (tid < 0 means unmapped)
+                    if record.tid() < 0 {
+                        continue;
+                    }
+
+                    // Calculate alignment score using shared function
+                    let isolate_score = match extract_alignment_score(&record) {
+                        Some(score) => score as f32,
+                        None => continue,
+                    };
+
+                    // Check if this read should be eliminated
+                    if processor.should_eliminate(read_id_str, isolate_score) {
+                        // Only allocate string when we need to store it
+                        subtracted_read_ids.insert(read_id_str.to_string());
+                    } else {
+                        // Add record to write buffer
+                        records_to_write.push(record);
+                    }
+                }
+
+                Ok((records_to_write, subtracted_read_ids))
+            })
+            .collect()
+    });
+
+    let chunk_results = results.map_err(PathoscopeError::Parse)?;
 
     // Write results in batches and collect subtracted IDs
     for (records_to_write, subtracted_ids) in chunk_results {
@@ -247,9 +221,7 @@ pub fn process_isolate_file(
         // Write in batches when buffer is full
         if write_buffer.len() >= CHUNK_SIZE {
             for record in &write_buffer {
-                writer
-                    .write(record)
-                    .map_err(|e| BamProcessingError::BamWrite { source: e })?;
+                writer.write(record).map_err(PathoscopeError::Htslib)?;
             }
             write_buffer.clear();
         }
@@ -257,9 +229,7 @@ pub fn process_isolate_file(
 
     // Write any remaining records in buffer
     for record in &write_buffer {
-        writer
-            .write(record)
-            .map_err(|e| BamProcessingError::BamWrite { source: e })?;
+        writer.write(record).map_err(PathoscopeError::Htslib)?;
     }
 
     Ok(all_subtracted_read_ids)
@@ -278,24 +248,15 @@ pub fn filter_fastq_file(
     input_fastq_path: &str,
     output_fastq_path: &str,
     subtracted_ids: &HashSet<String>,
-) -> Result<(), BamProcessingError> {
+) -> Result<(), PathoscopeError> {
     info!(
         "filtering FASTQ file: {} -> {}",
         input_fastq_path, output_fastq_path
     );
 
-    let input_file =
-        File::open(input_fastq_path).map_err(|e| BamProcessingError::FileCreate {
-            path: input_fastq_path.to_string(),
-            source: e,
-        })?;
+    let input_file = File::open(input_fastq_path).map_err(PathoscopeError::Io)?;
 
-    let output_file = File::create(output_fastq_path).map_err(|e| {
-        BamProcessingError::FileCreate {
-            path: output_fastq_path.to_string(),
-            source: e,
-        }
-    })?;
+    let output_file = File::create(output_fastq_path).map_err(PathoscopeError::Io)?;
 
     let mut reader = BufReader::new(input_file);
     let mut writer = BufWriter::new(output_file);
@@ -311,7 +272,7 @@ pub fn filter_fastq_file(
             match reader.read_line(&mut line) {
                 Ok(0) => break, // EOF
                 Ok(_) => lines.push(line),
-                Err(e) => return Err(BamProcessingError::WriteOutput { source: e }),
+                Err(e) => return Err(PathoscopeError::Io(e)),
             }
         }
 
@@ -328,7 +289,7 @@ pub fn filter_fastq_file(
         // Extract read ID from the first line (header line starting with @)
         let header = &lines[0];
         if !header.starts_with('@') {
-            return Err(BamProcessingError::SamParse(
+            return Err(PathoscopeError::Parse(
                 "Invalid FASTQ format: header line should start with '@'".to_string(),
             ));
         }
@@ -346,7 +307,7 @@ pub fn filter_fastq_file(
             for line in &lines {
                 writer
                     .write_all(line.as_bytes())
-                    .map_err(|e| BamProcessingError::WriteOutput { source: e })?;
+                    .map_err(PathoscopeError::Io)?;
             }
         }
     }

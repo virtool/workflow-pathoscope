@@ -11,7 +11,32 @@ use log::info;
 use logging::init_logging;
 use pyo3::exceptions::PyIOError;
 use pyo3::prelude::*;
+use thiserror::Error;
+
 use rustc_hash::FxHashMap;
+
+/// Unified error type for the pathoscope workflow
+#[derive(Error, Debug)]
+pub enum PathoscopeError {
+    #[error("HTSlib error: {0}")]
+    Htslib(#[from] rust_htslib::errors::Error),
+
+    #[error("UTF-8 conversion error: {0}")]
+    Utf8(#[from] std::str::Utf8Error),
+
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("Parse error: {0}")]
+    Parse(String),
+}
+
+// Automatic conversion from PathoscopeError to PyErr
+impl From<PathoscopeError> for PyErr {
+    fn from(err: PathoscopeError) -> PyErr {
+        PyIOError::new_err(err.to_string())
+    }
+}
 use std::collections::HashSet;
 
 use crate::coverage::calculate_coverage_from_bam;
@@ -19,12 +44,7 @@ use crate::coverage::calculate_coverage_from_bam;
 // Type aliases for complex HashMap types used throughout the codebase
 pub type UniqueReads = FxHashMap<i32, (i32, f64)>;
 pub type MultiMappingReads = FxHashMap<i32, (Vec<i32>, Vec<f64>, Vec<f64>, f64)>;
-pub type MatrixResult = (
-    UniqueReads,
-    MultiMappingReads,
-    Vec<String>,
-    Vec<String>,
-);
+pub type MatrixResult = (UniqueReads, MultiMappingReads, Vec<String>, Vec<String>);
 
 #[pyclass]
 #[derive(Clone)]
@@ -131,10 +151,7 @@ pub fn run_expectation_maximization(
 
     py.allow_threads(|| {
         let matrix =
-            matrix::build_matrix(alignment_path.as_str(), Some(p_score_cutoff))
-                .map_err(|e| {
-                    PyErr::new::<PyIOError, _>(format!("Failed to build matrix: {}", e))
-                })?;
+            matrix::build_matrix(alignment_path.as_str(), Some(p_score_cutoff))?;
 
         // Calculate initial best hit statistics using the matrix
         let initial_best_hit = compute_best_hit(&matrix);
@@ -150,10 +167,7 @@ pub fn run_expectation_maximization(
             &alignment_path,
             &em_results.updated_matrix,
             p_score_cutoff,
-        )
-        .map_err(|e| {
-            PyErr::new::<PyIOError, _>(format!("Failed to calculate coverage: {}", e))
-        })?;
+        )?;
 
         Ok(PathoscopeResults {
             best_hit_initial_reads: initial_best_hit.best_hit_reads,
@@ -226,8 +240,8 @@ pub fn run_eliminate_subtraction(
             &output_fastq_path,
             proc_usize,
         )
-        .map_err(|e| PyErr::new::<PyIOError, _>(e.to_string()))
     })
+    .map_err(|e| e.into())
 }
 
 /// Tests

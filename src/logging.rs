@@ -154,7 +154,7 @@ fn rust_level_to_python(level: Level) -> u8 {
 /// ```
 #[pyfunction]
 #[pyo3(signature = (log_level=None))]
-pub fn init_logging(_py: Python, log_level: Option<String>) -> PyResult<()> {
+pub fn init_logging(_py: Python, log_level: Option<String>) -> () {
     static INIT: Once = Once::new();
 
     INIT.call_once(|| {
@@ -199,7 +199,6 @@ pub fn init_logging(_py: Python, log_level: Option<String>) -> PyResult<()> {
 
     // Test that logging works
     log::info!("rust logging initialized");
-    Ok(())
 }
 
 #[cfg(test)]
@@ -228,8 +227,7 @@ mod tests {
         pyo3::prepare_freethreaded_python();
 
         Python::with_gil(|py| {
-            let result = init_logging(py, Some("info".to_string()));
-            assert!(result.is_ok());
+            init_logging(py, Some("info".to_string()));
         });
     }
 }

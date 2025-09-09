@@ -1,5 +1,6 @@
 use crate::em::find_updated_score;
 use crate::matrix::PathoscopeMatrix;
+use crate::PathoscopeError;
 use rustc_hash::FxHashMap;
 
 // TODO: Fix the updated score calculation logic
@@ -29,7 +30,7 @@ pub fn calculate_coverage_from_bam(
     bam_path: &str,
     matrix: &PathoscopeMatrix,
     p_score_cutoff: f64,
-) -> Result<FxHashMap<String, Vec<usize>>, String> {
+) -> Result<FxHashMap<String, Vec<usize>>, PathoscopeError> {
     use crate::sam::SamReader;
 
     // Open the BAM file
@@ -40,13 +41,10 @@ pub fn calculate_coverage_from_bam(
     {
         let header = reader.header();
         for tid in 0..header.target_count() {
-            let name = std::str::from_utf8(header.tid2name(tid))
-                .map_err(|e| format!("Invalid reference name: {}", e))?
-                .to_string();
-            let length = header
-                .target_len(tid)
-                .ok_or_else(|| format!("No length for reference {}", name))?
-                as usize;
+            let name = std::str::from_utf8(header.tid2name(tid))?.to_string();
+            let length = header.target_len(tid).ok_or_else(|| {
+                PathoscopeError::Parse(format!("No length for reference {}", name))
+            })? as usize;
             ref_lengths.insert(name, length);
         }
     }
@@ -80,13 +78,10 @@ pub fn calculate_coverage_from_bam(
             }
 
             // Get read and reference names
-            let read_name = std::str::from_utf8(record.qname())
-                .map_err(|e| format!("Invalid read name: {}", e))?
-                .to_string();
+            let read_name = std::str::from_utf8(record.qname())?.to_string();
 
-            let ref_name = std::str::from_utf8(header.tid2name(record.tid() as u32))
-                .map_err(|e| format!("Invalid reference name: {}", e))?
-                .to_string();
+            let ref_name =
+                std::str::from_utf8(header.tid2name(record.tid() as u32))?.to_string();
 
             // Get indices from our mappings
             let read_index = match read_name_to_idx.get(&read_name) {

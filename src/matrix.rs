@@ -1,7 +1,6 @@
 use crate::sam::{extract_alignment_score, SamReader};
-use crate::{MultiMappingReads, UniqueReads};
+use crate::{MultiMappingReads, PathoscopeError, UniqueReads};
 use log::info;
-use rust_htslib::bam;
 use rustc_hash::FxHashMap;
 
 /// A matrix containing alignment data and metadata.
@@ -151,7 +150,6 @@ impl PathoscopeMatrix {
     }
 }
 
-
 /// Build the EM matrix.
 ///
 /// # Arguments
@@ -160,7 +158,7 @@ impl PathoscopeMatrix {
 pub fn build_matrix(
     alignment_path: &str,
     p_score_cutoff: Option<f64>,
-) -> Result<PathoscopeMatrix, String> {
+) -> Result<PathoscopeMatrix, PathoscopeError> {
     let p_score_cutoff = p_score_cutoff.unwrap_or(0.01);
 
     info!(
@@ -223,7 +221,7 @@ pub fn build_matrix(
                 idx
             });
 
-            // Get or create read index  
+            // Get or create read index
             let read_index = *h_read_id.entry(read_id.clone()).or_insert_with(|| {
                 let idx = read_count;
                 matrix.reads.push(read_id);

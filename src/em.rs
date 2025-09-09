@@ -835,7 +835,6 @@ mod tests {
             pi_sum
         );
 
-
         // Since read 0 uniquely maps to ref 0, ref 0 should have higher pi
         assert!(
             results.pi[0] > results.pi[1],
@@ -892,7 +891,7 @@ mod tests {
         // Should return equal probabilities for all references
         assert_eq!(results.init_pi.len(), 2);
         assert_eq!(results.pi.len(), 2);
-        assert_eq!(results.theta.len(), 2);
+        assert_eq!(results.pi.len(), 2);
 
         // With no data, the algorithm produces NaN values due to division by zero
         // This documents the current behavior - empty input results in NaN
@@ -1060,7 +1059,7 @@ mod tests {
             "All pi values should be non-negative"
         );
         assert!(
-            results.theta[0] >= 0.0 && results.theta[1] >= 0.0,
+            results.pi[0] >= 0.0 && results.pi[1] >= 0.0,
             "All theta values should be non-negative"
         );
 
@@ -1122,7 +1121,7 @@ mod tests {
             "pi should match number of refs"
         );
         assert_eq!(
-            results.theta.len(),
+            results.pi.len(),
             matrix.refs.len(),
             "theta should match number of refs"
         );
@@ -1135,35 +1134,26 @@ mod tests {
             pi_sum
         );
 
-        let theta_sum: f64 = results.theta.iter().sum();
-        // Theta represents multi-mapping read probabilities, should sum to ~1.0 when we have multi-mapping reads
+        let pi_sum: f64 = results.pi.iter().sum();
+        // Pi represents genome abundances, should sum to ~1.0 when we have multi-mapping reads
         if results.updated_matrix.multi_mapping_reads.len() > 0 {
             assert!(
-                (theta_sum - 1.0).abs() < 0.01,
-                "Theta values should sum to ~1.0 when multi-mapping reads exist, got {}",
-                theta_sum
+                (pi_sum - 1.0).abs() < 0.01,
+                "Pi values should sum to ~1.0 when multi-mapping reads exist, got {}",
+                pi_sum
             );
         } else {
-            // If no multi-mapping reads, theta can be 0 or very small
+            // If no multi-mapping reads, pi can be 0 or very small
             assert!(
-                theta_sum >= 0.0,
-                "Theta sum should be non-negative, got {}",
-                theta_sum
+                pi_sum >= 0.0,
+                "Pi sum should be non-negative, got {}",
+                pi_sum
             );
         }
 
         // All probabilities should be positive
         for (i, &pi_val) in results.pi.iter().enumerate() {
             assert!(pi_val > 0.0, "Pi[{}] should be positive, got {}", i, pi_val);
-        }
-
-        for (i, &theta_val) in results.theta.iter().enumerate() {
-            assert!(
-                theta_val >= 0.0,
-                "Theta[{}] should be non-negative, got {}",
-                i,
-                theta_val
-            );
         }
 
         // Test that multi-mapping reads have normalized scores
@@ -1204,12 +1194,12 @@ mod tests {
             results.updated_matrix.multi_mapping_reads.len()
         );
 
-        // Test that theta is meaningful (positive) since we have multi-mapping reads
-        let theta_sum: f64 = results.theta.iter().sum();
+        // Test that pi is meaningful (positive) since we have multi-mapping reads
+        let pi_sum: f64 = results.pi.iter().sum();
         assert!(
-            theta_sum > 0.0,
-            "Theta should be positive when multi-mapping reads exist, got {}",
-            theta_sum
+            pi_sum > 0.0,
+            "Pi should be positive when multi-mapping reads exist, got {}",
+            pi_sum
         );
 
         // Test specific expectations for this SAM file:
@@ -1243,7 +1233,6 @@ mod tests {
             results.updated_matrix.multi_mapping_reads.len()
         );
         println!("  Final pi: {:?}", results.pi);
-        println!("  Final theta: {:?}", results.theta);
     }
 
     #[test]

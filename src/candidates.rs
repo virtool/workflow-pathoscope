@@ -123,9 +123,7 @@ pub fn find_candidate_otus_with_bowtie2(
             .stderr(Stdio::piped());
 
         info!("spawning bowtie2 process");
-        let mut child = cmd.spawn().map_err(|e| {
-            PyErr::new::<PyIOError, _>(format!("Failed to spawn bowtie2: {}", e))
-        })?;
+        let mut child = cmd.spawn()?;
 
         let stdout = child.stdout.take().unwrap();
         let reader = BufReader::new(stdout);
@@ -135,12 +133,7 @@ pub fn find_candidate_otus_with_bowtie2(
         let mut passing_count = 0u64;
 
         for line_result in reader.lines() {
-            let line = line_result.map_err(|e| {
-                PyErr::new::<PyIOError, _>(format!(
-                    "Error reading bowtie2 output: {}",
-                    e
-                ))
-            })?;
+            let line = line_result?;
 
             line_count += 1;
 
@@ -152,9 +145,7 @@ pub fn find_candidate_otus_with_bowtie2(
         }
 
         // Wait for bowtie2 to finish and check exit status
-        let status = child.wait().map_err(|e| {
-            PyErr::new::<PyIOError, _>(format!("Error waiting for bowtie2: {}", e))
-        })?;
+        let status = child.wait()?;
 
         if !status.success() {
             // Read stderr for error details
