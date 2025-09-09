@@ -9,6 +9,9 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use thiserror::Error;
 
+/// Result type for parallel chunk processing
+type ChunkResult = (Vec<bam::Record>, HashSet<String>);
+
 #[derive(Error, Debug)]
 pub enum BamProcessingError {
     #[error("Failed to create output file '{path}': {source}")]
@@ -188,7 +191,7 @@ pub fn process_isolate_file(
         .map_err(BamProcessingError::SamParse)?;
 
     // Process chunks in parallel using our custom thread pool
-    let results: Result<Vec<(Vec<bam::Record>, HashSet<String>)>, String> = pool
+    let results: Result<Vec<ChunkResult>, String> = pool
         .install(|| {
             all_chunks
                 .into_par_iter()

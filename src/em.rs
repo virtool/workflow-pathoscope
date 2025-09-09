@@ -22,8 +22,6 @@ pub struct EMResults {
     pub init_pi: Vec<f64>,
     /// Final pi values (genome abundances)
     pub pi: Vec<f64>,
-    /// Final theta values (multi-mapping probabilities)
-    pub theta: Vec<f64>,
     /// Updated PathoscopeMatrix with final multi-mapping probabilities
     pub updated_matrix: PathoscopeMatrix,
 }
@@ -443,7 +441,6 @@ pub fn em(
     EMResults {
         init_pi,
         pi: params.pi,
-        theta: params.theta,
         updated_matrix,
     }
 }
@@ -829,7 +826,6 @@ mod tests {
         // Test return value structure
         assert_eq!(results.init_pi.len(), 2, "init_pi should have 2 elements");
         assert_eq!(results.pi.len(), 2, "pi should have 2 elements");
-        assert_eq!(results.theta.len(), 2, "theta should have 2 elements");
 
         // Test that pi values sum to approximately 1.0
         let pi_sum: f64 = results.pi.iter().sum();
@@ -839,13 +835,6 @@ mod tests {
             pi_sum
         );
 
-        // Test that theta values sum to approximately 1.0
-        let theta_sum: f64 = results.theta.iter().sum();
-        assert!(
-            (theta_sum - 1.0).abs() < 0.01,
-            "Theta values should sum to ~1.0, got {}",
-            theta_sum
-        );
 
         // Since read 0 uniquely maps to ref 0, ref 0 should have higher pi
         assert!(
@@ -859,10 +848,6 @@ mod tests {
         assert!(
             results.pi[0] > 0.0 && results.pi[1] > 0.0,
             "All pi values should be positive"
-        );
-        assert!(
-            results.theta[0] > 0.0 && results.theta[1] > 0.0,
-            "All theta values should be positive"
         );
 
         // Verify the multi-mapping read's scores were updated
@@ -1018,10 +1003,6 @@ mod tests {
         assert!(
             results.pi[0] > 0.0 && results.pi[1] > 0.0,
             "All pi values should be positive"
-        );
-        assert!(
-            results.theta[0] > 0.0 && results.theta[1] > 0.0,
-            "All theta values should be positive"
         );
 
         // Updated matrix should have normalized scores

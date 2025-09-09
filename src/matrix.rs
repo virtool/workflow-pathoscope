@@ -1,7 +1,7 @@
 use crate::sam::{extract_alignment_score, SamReader};
 use crate::{MultiMappingReads, UniqueReads};
 use log::info;
-use rust_htslib::{bam, bam::HeaderView};
+use rust_htslib::bam;
 use rustc_hash::FxHashMap;
 
 /// A matrix containing alignment data and metadata.
@@ -151,87 +151,6 @@ impl PathoscopeMatrix {
     }
 }
 
-/// Process a single BAM record and extract alignment data
-///
-/// # Arguments
-/// * `record` - BAM record to process
-/// * `header` - BAM file header for reference name lookup
-/// * `p_score_cutoff` - Minimum score threshold
-/// * `h_read_id` - Mutable reference to read ID to index mapping
-/// * `h_ref_id` - Mutable reference to reference ID to index mapping
-/// * `refs` - Mutable reference to reference names vector
-/// * `reads` - Mutable reference to read names vector
-/// * `ref_count` - Mutable reference to reference counter
-/// * `read_count` - Mutable reference to read counter
-/// * `max_score` - Mutable reference to maximum score tracker
-/// * `min_score` - Mutable reference to minimum score tracker
-///
-/// # Returns
-/// Option containing (read_index, ref_index, score) if record is valid
-fn process_bam_record(
-    record: &bam::Record,
-    header: &HeaderView,
-    p_score_cutoff: f64,
-    h_read_id: &mut FxHashMap<String, i32>,
-    h_ref_id: &mut FxHashMap<String, i32>,
-    refs: &mut Vec<String>,
-    reads: &mut Vec<String>,
-    ref_count: &mut i32,
-    read_count: &mut i32,
-    max_score: &mut f64,
-    min_score: &mut f64,
-) -> Option<(i32, i32, f64)> {
-    // Skip unmapped reads
-    if record.is_unmapped() {
-        return None;
-    }
-
-    // Get read ID (qname)
-    let read_id = std::str::from_utf8(record.qname()).ok()?.to_string();
-
-    // Get reference name
-    let name_bytes = header.tid2name(record.tid() as u32);
-    let ref_id = std::str::from_utf8(name_bytes).unwrap_or("*").to_string();
-
-
-    // Get alignment score using shared function
-    let total_score = extract_alignment_score(record)?;
-
-    // Apply score cutoff
-    if total_score <= p_score_cutoff {
-        return None;
-    }
-
-    // Track score range
-    *min_score = total_score.min(*min_score);
-    *max_score = total_score.max(*max_score);
-
-    // Get or create reference index
-    let ref_index = *h_ref_id.get(&ref_id).unwrap_or(&-1);
-    let ref_index = if ref_index == -1 {
-        let new_ref_index = *ref_count;
-        h_ref_id.insert(ref_id.clone(), new_ref_index);
-        refs.push(ref_id);
-        *ref_count += 1;
-        new_ref_index
-    } else {
-        ref_index
-    };
-
-    // Get or create read index
-    let read_index = *h_read_id.get(&read_id).unwrap_or(&-1);
-    let read_index = if read_index == -1 {
-        let new_read_index = *read_count;
-        h_read_id.insert(read_id.clone(), new_read_index);
-        reads.push(read_id);
-        *read_count += 1;
-        new_read_index
-    } else {
-        read_index
-    };
-
-    Some((read_index, ref_index, total_score))
-}
 
 /// Build the EM matrix.
 ///
@@ -266,29 +185,59 @@ pub fn build_matrix(
     reader.stream_chunks(|chunk| {
         // Process this chunk
         for record in chunk {
-            if let Some((read_index, ref_index, total_score)) =
-                process_bam_record(
-                    record,
-                    &header,
-                    p_score_cutoff,
-                    &mut h_read_id,
-                    &mut h_ref_id,
-                    &mut matrix.refs,
-                    &mut matrix.reads,
-                    &mut ref_count,
-                    &mut read_count,
-                    &mut matrix.max_score,
-                    &mut matrix.min_score,
-                )
-            {
-                // Add alignment to matrix incrementally
-                matrix.add_alignment(
-                    read_index,
-                    ref_index,
-                    total_score,
-                    &mut read_alignments,
-                );
+            // Skip unmapped reads
+            if record.is_unmapped() {
+                continue;
             }
+
+            // Get read ID (qname)
+            let read_id = match std::str::from_utf8(record.qname()) {
+                Ok(id) => id.to_string(),
+                Err(_) => continue,
+            };
+
+            // Get reference name
+            let name_bytes = header.tid2name(record.tid() as u32);
+            let ref_id = std::str::from_utf8(name_bytes).unwrap_or("*").to_string();
+
+            // Get alignment score using shared function
+            let total_score = match extract_alignment_score(record) {
+                Some(score) => score,
+                None => continue,
+            };
+
+            // Apply score cutoff
+            if total_score <= p_score_cutoff {
+                continue;
+            }
+
+            // Track score range
+            matrix.min_score = total_score.min(matrix.min_score);
+            matrix.max_score = total_score.max(matrix.max_score);
+
+            // Get or create reference index
+            let ref_index = *h_ref_id.entry(ref_id.clone()).or_insert_with(|| {
+                let idx = ref_count;
+                matrix.refs.push(ref_id);
+                ref_count += 1;
+                idx
+            });
+
+            // Get or create read index  
+            let read_index = *h_read_id.entry(read_id.clone()).or_insert_with(|| {
+                let idx = read_count;
+                matrix.reads.push(read_id);
+                read_count += 1;
+                idx
+            });
+
+            // Add alignment to matrix incrementally
+            matrix.add_alignment(
+                read_index,
+                ref_index,
+                total_score,
+                &mut read_alignments,
+            );
         }
         Ok(())
     })?;
