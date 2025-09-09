@@ -246,10 +246,7 @@ async def reassignment(
     )
 
     pathoscope_results = await asyncio.to_thread(
-        run_pathoscope,
-        subtracted_bam_path,
-        p_score_cutoff,
-        intermediate.lengths,
+        run_pathoscope, subtracted_bam_path, p_score_cutoff
     )
 
     report_path = work_path / "report.tsv"
@@ -266,7 +263,7 @@ async def reassignment(
 
     logger.info("preparing hits")
 
-    hits = list()
+    hits = []
 
     for sequence_id, hit in report.items():
         otu_id = index.get_otu_id_by_sequence_id(sequence_id)

@@ -18,7 +18,7 @@ authors = [
 
 [dependency-groups]
 dev = [
-    "maturin>=1.9.2",
+    "maturin[patchelf]>=1.9.2",
     "pysam>=0.22.0",
     "pytest>=8.4.1,<9.0.0",
     "pytest-asyncio<=1.1.0,<2.0.0",
