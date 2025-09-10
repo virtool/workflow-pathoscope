@@ -1,7 +1,7 @@
 use crate::sam::{extract_alignment_score, SamReader};
 use crate::{MultiMappingReads, PathoscopeError, UniqueReads};
 use log::info;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// A matrix containing alignment data and metadata.
 ///
@@ -34,13 +34,12 @@ impl PathoscopeMatrix {
     fn rescale_scores(&mut self, u_temp: MultiMappingReads) {
         let (u, nu) = rescale_samscore(
             u_temp,
-            self.multi_mapping_reads.clone(),
+            &mut self.multi_mapping_reads,
             self.max_score,
             self.min_score,
         );
         self.multi_mapping_reads = nu;
 
-        // Convert u to unique_reads format and store for build_unique_map
         self.unique_reads = FxHashMap::default();
         for (read_idx, (ref_indices, scores, _, _)) in u {
             if let (Some(first_ref), Some(first_score)) =
@@ -52,15 +51,9 @@ impl PathoscopeMatrix {
         }
     }
 
-    /// Build the final unique reads map (placeholder as rescale_scores now handles this)
-    fn build_unique_map(&mut self) {
-        // This is now handled in rescale_scores method
-    }
-
     /// Normalize multi-mapping read scores so they sum to 1.0
     fn normalize_multi_mapping(&mut self) {
-        let nu_keys: Vec<i32> = self.multi_mapping_reads.keys().cloned().collect();
-        for k in nu_keys {
+        for k in self.multi_mapping_reads.keys().cloned().collect::<Vec<i32>>() {
             if let Some(nu_entry) = self.multi_mapping_reads.get(&k) {
                 let p_score_sum = nu_entry.1.iter().sum::<f64>();
                 if let Some(nu_entry_mut) = self.multi_mapping_reads.get_mut(&k) {
@@ -86,15 +79,12 @@ impl PathoscopeMatrix {
         read_index: i32,
         ref_index: i32,
         score: f64,
-        read_alignments: &mut FxHashMap<i32, Vec<(i32, f64)>>,
+        read_alignments: &mut FxHashMap<i32, (FxHashSet<i32>, Vec<(i32, f64)>)>,
     ) {
-        // Update score range
         self.max_score = self.max_score.max(score);
         self.min_score = self.min_score.min(score);
-
-        // Add to read_alignments map (skip duplicates)
-        let alignments = read_alignments.entry(read_index).or_default();
-        if !alignments.iter().any(|(ref_idx, _)| *ref_idx == ref_index) {
+        let (seen_refs, alignments) = read_alignments.entry(read_index).or_default();
+        if seen_refs.insert(ref_index) {
             alignments.push((ref_index, score));
         }
     }
@@ -106,21 +96,18 @@ impl PathoscopeMatrix {
     ///
     /// # Arguments
     /// * `read_alignments` - Map of read indices to their alignment data
-    pub fn finalize(&mut self, read_alignments: FxHashMap<i32, Vec<(i32, f64)>>) {
-        // Classify reads as unique or multi-mapping
+    pub fn finalize(&mut self, read_alignments: FxHashMap<i32, (FxHashSet<i32>, Vec<(i32, f64)>)>) {
         let mut u_temp: MultiMappingReads = FxHashMap::default();
         let mut nu: MultiMappingReads = FxHashMap::default();
 
-        for (read_index, read_alignments) in read_alignments {
+        for (read_index, (_, read_alignments)) in read_alignments {
             if read_alignments.len() == 1 {
-                // Unique read: maps to exactly one reference
                 let (ref_index, score) = read_alignments[0];
                 u_temp.insert(
                     read_index,
                     (vec![ref_index], vec![score], vec![score], score),
                 );
             } else {
-                // Non-unique read: maps to multiple references
                 let ref_indices: Vec<i32> = read_alignments
                     .iter()
                     .map(|(ref_idx, _)| *ref_idx)
@@ -136,9 +123,7 @@ impl PathoscopeMatrix {
 
         self.multi_mapping_reads = nu;
 
-        // Rescale scores and build final data structures
         self.rescale_scores(u_temp);
-        self.build_unique_map();
         self.normalize_multi_mapping();
 
         let unique_count = self.unique_reads.len();
@@ -169,67 +154,45 @@ pub fn build_matrix(
     let mut reader = SamReader::new(alignment_path)?;
     let header = reader.header().clone();
 
-    // Initialize matrix for incremental building
     let mut matrix = PathoscopeMatrix::new();
-
-    // Tracking variables
     let mut h_read_id: FxHashMap<String, i32> = FxHashMap::default();
     let mut h_ref_id: FxHashMap<String, i32> = FxHashMap::default();
     let mut ref_count: i32 = 0;
     let mut read_count: i32 = 0;
-    let mut read_alignments: FxHashMap<i32, Vec<(i32, f64)>> = FxHashMap::default();
+    let mut read_alignments: FxHashMap<i32, (FxHashSet<i32>, Vec<(i32, f64)>)> = FxHashMap::default();
 
-    // Stream through BAM file and build matrix incrementally
     reader.stream_chunks(|chunk| {
-        // Process this chunk
         for record in chunk {
-            // Skip unmapped reads
             if record.is_unmapped() {
                 continue;
             }
-
-            // Get read ID (qname)
             let read_id = match std::str::from_utf8(record.qname()) {
                 Ok(id) => id.to_string(),
                 Err(_) => continue,
             };
-
-            // Get reference name
             let name_bytes = header.tid2name(record.tid() as u32);
             let ref_id = std::str::from_utf8(name_bytes).unwrap_or("*").to_string();
-
-            // Get alignment score using shared function
             let total_score = match extract_alignment_score(record) {
                 Some(score) => score,
                 None => continue,
             };
-
-            // Apply score cutoff
             if total_score <= p_score_cutoff {
                 continue;
             }
-
-            // Track score range
             matrix.min_score = total_score.min(matrix.min_score);
             matrix.max_score = total_score.max(matrix.max_score);
-
-            // Get or create reference index
             let ref_index = *h_ref_id.entry(ref_id.clone()).or_insert_with(|| {
                 let idx = ref_count;
                 matrix.refs.push(ref_id);
                 ref_count += 1;
                 idx
             });
-
-            // Get or create read index
             let read_index = *h_read_id.entry(read_id.clone()).or_insert_with(|| {
                 let idx = read_count;
                 matrix.reads.push(read_id);
                 read_count += 1;
                 idx
             });
-
-            // Add alignment to matrix incrementally
             matrix.add_alignment(
                 read_index,
                 ref_index,
@@ -240,7 +203,6 @@ pub fn build_matrix(
         Ok(())
     })?;
 
-    // Finalize matrix after all alignments are processed
     matrix.finalize(read_alignments);
 
     Ok(matrix)
@@ -249,7 +211,7 @@ pub fn build_matrix(
 /// modifies the scores of u and nu with respect to max_score and min_score
 fn rescale_samscore(
     mut u: MultiMappingReads,
-    mut nu: MultiMappingReads,
+    nu: &mut MultiMappingReads,
     max_score: f64,
     min_score: f64,
 ) -> (MultiMappingReads, MultiMappingReads) {
@@ -259,8 +221,7 @@ fn rescale_samscore(
         100.0 / max_score
     };
 
-    let u_keys: Vec<i32> = u.keys().cloned().collect();
-    for k in u_keys {
+    for k in u.keys().cloned().collect::<Vec<i32>>() {
         if let Some(entry) = u.get_mut(&k) {
             if min_score < 0.0 {
                 entry.1[0] -= min_score;
@@ -270,8 +231,7 @@ fn rescale_samscore(
         }
     }
 
-    let nu_keys: Vec<i32> = nu.keys().cloned().collect();
-    for k in nu_keys {
+    for k in nu.keys().cloned().collect::<Vec<i32>>() {
         if let Some(entry) = nu.get_mut(&k) {
             entry.3 = 0.0;
 
@@ -288,22 +248,12 @@ fn rescale_samscore(
             }
         }
     }
-    (u, nu)
+    (u, std::mem::take(nu))
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(unused)]
-
     use crate::matrix::*;
-    use crate::*;
-    use std::fs::File;
-    use std::io::BufRead;
-    use std::io::BufReader;
-    use std::io::Read;
-
-    extern crate yaml_rust;
-    use yaml_rust::{YamlEmitter, YamlLoader};
 
     #[test]
     fn test_build_matrix() {
