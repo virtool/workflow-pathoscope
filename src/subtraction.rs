@@ -1,16 +1,12 @@
 use crate::sam::{extract_alignment_score, SamReader, CHUNK_SIZE};
 use crate::PathoscopeError;
 use log::info;
-use rayon::prelude::*;
 use rust_htslib::bam;
 use rust_htslib::bam::Format;
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
-
-/// Result type for parallel chunk processing
-type ChunkResult = (Vec<bam::Record>, HashSet<String>);
 
 #[derive(Debug, Clone)]
 pub struct SubtractionProcessor {
@@ -135,99 +131,54 @@ pub fn process_isolate_file(
     let mut writer = bam::Writer::from_path(output_path, &header, Format::Bam)
         .map_err(PathoscopeError::Htslib)?;
 
-    // Use half the threads for BAM compression, reserve the rest for rayon processing
-    let writer_threads = (proc / 2).max(1);
-    let rayon_threads = proc - writer_threads;
-
-    // Configure writer to use compression threads
     writer
-        .set_threads(writer_threads)
+        .set_threads(proc)
         .map_err(PathoscopeError::Htslib)?;
-
-    // Configure rayon thread pool for this scope
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(rayon_threads)
-        .build()
-        .map_err(|e| {
-            PathoscopeError::Parse(format!("Failed to create thread pool: {}", e))
-        })?;
 
     let mut all_subtracted_read_ids = HashSet::new();
     let mut write_buffer: Vec<bam::Record> = Vec::with_capacity(CHUNK_SIZE);
 
-    // Collect all chunks first for parallel processing
-    let mut all_chunks = Vec::new();
-
     reader.stream_chunks(|chunk| {
-        // Clone the chunk to store it
-        let chunk_data: Vec<bam::Record> = chunk.to_vec();
-        all_chunks.push(chunk_data);
-        Ok(())
-    })?;
+        let mut chunk_records_to_write = Vec::new();
+        let mut chunk_subtracted_read_ids = HashSet::new();
 
-    // Process chunks in parallel using our custom thread pool
-    let results: Result<Vec<ChunkResult>, String> = pool.install(|| {
-        all_chunks
-            .into_par_iter()
-            .map(|chunk| {
-                let mut records_to_write = Vec::new();
-                let mut subtracted_read_ids = HashSet::new();
+        for record in chunk {
+            if record.is_unmapped() {
+                continue;
+            }
 
-                for record in chunk {
-                    // Skip unmapped reads
-                    if record.is_unmapped() {
-                        continue;
-                    }
+            let read_id_str =
+                unsafe { std::str::from_utf8_unchecked(record.qname()) };
 
-                    let read_id_str =
-                        unsafe { std::str::from_utf8_unchecked(record.qname()) };
+            if record.tid() < 0 {
+                continue;
+            }
 
-                    // Skip if reference is unmapped (tid < 0 means unmapped)
-                    if record.tid() < 0 {
-                        continue;
-                    }
+            let isolate_score = match extract_alignment_score(record) {
+                Some(score) => score as f32,
+                None => continue,
+            };
 
-                    // Calculate alignment score using shared function
-                    let isolate_score = match extract_alignment_score(&record) {
-                        Some(score) => score as f32,
-                        None => continue,
-                    };
+            if processor.should_eliminate(read_id_str, isolate_score) {
+                chunk_subtracted_read_ids.insert(read_id_str.to_string());
+            } else {
+                chunk_records_to_write.push(record.clone());
+            }
+        }
 
-                    // Check if this read should be eliminated
-                    if processor.should_eliminate(read_id_str, isolate_score) {
-                        // Only allocate string when we need to store it
-                        subtracted_read_ids.insert(read_id_str.to_string());
-                    } else {
-                        // Add record to write buffer
-                        records_to_write.push(record);
-                    }
-                }
+        all_subtracted_read_ids.extend(chunk_subtracted_read_ids);
+        write_buffer.extend(chunk_records_to_write);
 
-                Ok((records_to_write, subtracted_read_ids))
-            })
-            .collect()
-    });
-
-    let chunk_results = results.map_err(PathoscopeError::Parse)?;
-
-    // Write results in batches and collect subtracted IDs
-    for (records_to_write, subtracted_ids) in chunk_results {
-        // Merge subtracted IDs
-        all_subtracted_read_ids.extend(subtracted_ids);
-
-        // Add records to write buffer
-        write_buffer.extend(records_to_write);
-
-        // Write in batches when buffer is full
         if write_buffer.len() >= CHUNK_SIZE {
             for record in &write_buffer {
                 writer.write(record).map_err(PathoscopeError::Htslib)?;
             }
             write_buffer.clear();
         }
-    }
 
-    // Write any remaining records in buffer
+        Ok(())
+    })?;
+
     for record in &write_buffer {
         writer.write(record).map_err(PathoscopeError::Htslib)?;
     }
