@@ -53,7 +53,12 @@ impl PathoscopeMatrix {
 
     /// Normalize multi-mapping read scores so they sum to 1.0
     fn normalize_multi_mapping(&mut self) {
-        for k in self.multi_mapping_reads.keys().cloned().collect::<Vec<i32>>() {
+        for k in self
+            .multi_mapping_reads
+            .keys()
+            .cloned()
+            .collect::<Vec<i32>>()
+        {
             if let Some(nu_entry) = self.multi_mapping_reads.get(&k) {
                 let p_score_sum = nu_entry.1.iter().sum::<f64>();
                 if let Some(nu_entry_mut) = self.multi_mapping_reads.get_mut(&k) {
@@ -96,7 +101,10 @@ impl PathoscopeMatrix {
     ///
     /// # Arguments
     /// * `read_alignments` - Map of read indices to their alignment data
-    pub fn finalize(&mut self, read_alignments: FxHashMap<i32, (FxHashSet<i32>, Vec<(i32, f64)>)>) {
+    pub fn finalize(
+        &mut self,
+        read_alignments: FxHashMap<i32, (FxHashSet<i32>, Vec<(i32, f64)>)>,
+    ) {
         let mut u_temp: MultiMappingReads = FxHashMap::default();
         let mut nu: MultiMappingReads = FxHashMap::default();
 
@@ -159,7 +167,8 @@ pub fn build_matrix(
     let mut h_ref_id: FxHashMap<String, i32> = FxHashMap::default();
     let mut ref_count: i32 = 0;
     let mut read_count: i32 = 0;
-    let mut read_alignments: FxHashMap<i32, (FxHashSet<i32>, Vec<(i32, f64)>)> = FxHashMap::default();
+    let mut read_alignments: FxHashMap<i32, (FxHashSet<i32>, Vec<(i32, f64)>)> =
+        FxHashMap::default();
 
     reader.stream_chunks(|chunk| {
         for record in chunk {
