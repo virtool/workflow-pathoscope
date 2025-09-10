@@ -131,9 +131,7 @@ pub fn process_isolate_file(
     let mut writer = bam::Writer::from_path(output_path, &header, Format::Bam)
         .map_err(PathoscopeError::Htslib)?;
 
-    writer
-        .set_threads(proc)
-        .map_err(PathoscopeError::Htslib)?;
+    writer.set_threads(proc).map_err(PathoscopeError::Htslib)?;
 
     let mut all_subtracted_read_ids = HashSet::new();
     let mut write_buffer: Vec<bam::Record> = Vec::with_capacity(CHUNK_SIZE);
@@ -147,8 +145,7 @@ pub fn process_isolate_file(
                 continue;
             }
 
-            let read_id_str =
-                unsafe { std::str::from_utf8_unchecked(record.qname()) };
+            let read_id_str = unsafe { std::str::from_utf8_unchecked(record.qname()) };
 
             if record.tid() < 0 {
                 continue;
