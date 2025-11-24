@@ -1,5 +1,7 @@
 use crate::PathoscopeError;
 use rust_htslib::{bam, bam::HeaderView, bam::Read};
+use rustc_hash::FxHasher;
+use std::hash::{Hash, Hasher};
 
 /// Simple streaming SAM/BAM reader with chunked processing.
 pub struct SamReader {
