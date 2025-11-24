@@ -23,7 +23,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: commitlint
-        uses: wagoid/commitlint-github-action@v5
+        uses: wagoid/commitlint-github-action@v6
   ruff-format:
     name: Ruff / Format
     runs-on: ubuntu-latest
