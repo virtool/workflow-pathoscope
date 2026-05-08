@@ -1178,7 +1178,7 @@ wheels = [
 [[package]]
 name = "virtool"
 version = "0.0.0"
-source = { git = "https://github.com/virtool/virtool?tag=36.20.1#9eae8efe5d109b221a23691c095fe193bb46e1fa" }
+source = { git = "https://github.com/virtool/virtool?tag=36.26.0#d996b6d90edd1dd40261d50c1e3ca514eb67b54c" }
 dependencies = [
     { name = "aiofiles" },
     { name = "aiohttp", extra = ["speedups"] },
@@ -1243,7 +1243,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "virtool", git = "https://github.com/virtool/virtool?tag=36.20.1" }]
+requires-dist = [{ name = "virtool", git = "https://github.com/virtool/virtool?tag=36.26.0" }]
 
 [package.metadata.requires-dev]
 dev = [
