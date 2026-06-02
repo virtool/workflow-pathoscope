@@ -17,9 +17,9 @@ from virtool.workflow.pytest_plugin import WorkflowData
 
 from workflow import (
     BOWTIE2_INDEX_SUFFIXES,
+    create_reference_index,
+    create_subtraction_index,
     eliminate_subtraction,
-    ensure_reference_mapping_index,
-    ensure_subtraction_mapping_index,
     get_mapping_index_cache_key,
     get_mapping_index_cache_params,
     map_default_isolates,
@@ -48,7 +48,11 @@ class FakeWorkflowCache:
         if self.hit_source is None:
             return CacheMiss(key)
 
-        shutil.copytree(self.hit_source, target)
+        target.mkdir(parents=True, exist_ok=True)
+
+        for path in self.hit_source.iterdir():
+            shutil.copyfile(path, target / path.name)
+
         return CacheHit(key, target)
 
     async def put(self, key: str, source: Path, params: dict | None = None):
@@ -191,7 +195,7 @@ def subtractions(workflow_data: WorkflowData, example_path: Path, work_path: Pat
     ]
 
 
-async def test_ensure_reference_mapping_index_hit(
+async def test_create_reference_index_hit(
     index: WFIndex,
     tmp_path: Path,
     work_path: Path,
@@ -202,7 +206,7 @@ async def test_ensure_reference_mapping_index_hit(
     run_subprocess = FakeRunSubprocess()
     logger = get_logger("test")
 
-    await ensure_reference_mapping_index(
+    await create_reference_index(
         cache,
         index,
         logger,
@@ -220,7 +224,7 @@ async def test_ensure_reference_mapping_index_hit(
     assert cache.gets == [
         (
             get_mapping_index_cache_key(params),
-            work_path / "cache-artifacts" / "reference_mapping_index" / index.id,
+            index.path,
         ),
     ]
     assert cache.puts == []
@@ -232,7 +236,7 @@ async def test_ensure_reference_mapping_index_hit(
         assert path.read_bytes() == b"cached-reference"
 
 
-async def test_ensure_reference_mapping_index_miss(
+async def test_create_reference_index_miss(
     index: WFIndex,
     work_path: Path,
 ):
@@ -241,7 +245,7 @@ async def test_ensure_reference_mapping_index_miss(
     run_subprocess = FakeRunSubprocess()
     logger = get_logger("test")
 
-    await ensure_reference_mapping_index(
+    await create_reference_index(
         cache,
         index,
         logger,
@@ -257,10 +261,10 @@ async def test_ensure_reference_mapping_index_miss(
     )
     key = get_mapping_index_cache_key(params)
     expected_cache_path = (
-        work_path / "cache-artifacts" / "reference_mapping_index" / index.id
+        work_path / "cache-artifacts" / "reference_mapping_index" / index.id / key
     )
 
-    assert cache.gets == [(key, expected_cache_path)]
+    assert cache.gets == [(key, index.path)]
     assert cache.puts == [(key, expected_cache_path, params)]
     assert params == {
         "artifact": "reference_mapping_index",
@@ -286,7 +290,7 @@ async def test_ensure_reference_mapping_index_miss(
         assert path.read_bytes() == path.name.encode()
 
 
-async def test_ensure_subtraction_mapping_index_hit(
+async def test_create_subtraction_index_hit(
     subtractions: list[WFSubtraction],
     tmp_path: Path,
     work_path: Path,
@@ -298,7 +302,7 @@ async def test_ensure_subtraction_mapping_index_hit(
     logger = get_logger("test")
     subtraction = subtractions[0]
 
-    await ensure_subtraction_mapping_index(
+    await create_subtraction_index(
         cache,
         logger,
         4,
@@ -316,10 +320,7 @@ async def test_ensure_subtraction_mapping_index_hit(
     assert cache.gets == [
         (
             get_mapping_index_cache_key(params),
-            work_path
-            / "cache-artifacts"
-            / "subtraction_mapping_index"
-            / subtraction.id,
+            subtraction.path,
         ),
     ]
     assert cache.puts == []
@@ -331,7 +332,7 @@ async def test_ensure_subtraction_mapping_index_hit(
         assert path.read_bytes() == b"cached-subtraction"
 
 
-async def test_ensure_subtraction_mapping_index_miss(
+async def test_create_subtraction_index_miss(
     subtractions: list[WFSubtraction],
     work_path: Path,
 ):
@@ -340,7 +341,7 @@ async def test_ensure_subtraction_mapping_index_miss(
     logger = get_logger("test")
     subtraction = subtractions[0]
 
-    await ensure_subtraction_mapping_index(
+    await create_subtraction_index(
         cache,
         logger,
         4,
@@ -356,10 +357,14 @@ async def test_ensure_subtraction_mapping_index_miss(
     )
     key = get_mapping_index_cache_key(params)
     expected_cache_path = (
-        work_path / "cache-artifacts" / "subtraction_mapping_index" / subtraction.id
+        work_path
+        / "cache-artifacts"
+        / "subtraction_mapping_index"
+        / subtraction.id
+        / key
     )
 
-    assert cache.gets == [(key, expected_cache_path)]
+    assert cache.gets == [(key, subtraction.path)]
     assert cache.puts == [(key, expected_cache_path, params)]
     assert params == {
         "artifact": "subtraction_mapping_index",

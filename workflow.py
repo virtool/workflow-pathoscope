@@ -86,8 +86,9 @@ def get_mapping_index_bundle_path(
     work_path: Path,
     artifact: str,
     parent_id: str,
+    key: str,
 ) -> Path:
-    return work_path / "cache-artifacts" / artifact / parent_id
+    return work_path / "cache-artifacts" / artifact / parent_id / key
 
 
 def clean_bowtie2_index(prefix: Path) -> None:
@@ -122,8 +123,9 @@ async def ensure_bowtie2_mapping_index(
     tool_version = await get_bowtie2_build_version(run_subprocess)
     params = get_mapping_index_cache_params(artifact, parent_id, tool_version)
     key = get_mapping_index_cache_key(params)
-    cache_path = get_mapping_index_bundle_path(work_path, artifact, parent_id)
+    cache_path = get_mapping_index_bundle_path(work_path, artifact, parent_id, key)
     cache_prefix = cache_path / target_prefix.name
+    target_path = target_prefix.parent
     log = logger.bind(
         artifact=artifact,
         key=key,
@@ -133,15 +135,10 @@ async def ensure_bowtie2_mapping_index(
 
     log.info("checking workflow cache")
 
-    await asyncio.to_thread(shutil.rmtree, cache_path, ignore_errors=True)
-
-    result = await cache.get(key, cache_path)
-
-    await asyncio.to_thread(clean_bowtie2_index, target_prefix)
+    result = await cache.get(key, target_path)
 
     if isinstance(result, CacheHit):
-        await asyncio.to_thread(copy_bowtie2_index, result.path, target_prefix)
-        log.info("materialized cached mapping index", outcome="hit")
+        log.info("restored cached mapping index", outcome="hit")
         return
 
     log.info("building mapping index", outcome="miss")
@@ -160,6 +157,7 @@ async def ensure_bowtie2_mapping_index(
 
     await cache.put(key, cache_path, params=params)
 
+    await asyncio.to_thread(clean_bowtie2_index, target_prefix)
     await asyncio.to_thread(copy_bowtie2_index, cache_path, target_prefix)
 
     log.info("cached built mapping index", outcome="put")
@@ -171,7 +169,7 @@ async def delete_analysis_document(analysis: WFAnalysis):
 
 
 @step
-async def ensure_reference_mapping_index(
+async def create_reference_index(
     cache: WorkflowCache,
     index: WFIndex,
     logger,
@@ -193,7 +191,7 @@ async def ensure_reference_mapping_index(
     )
 
 
-async def ensure_subtraction_mapping_index(
+async def create_subtraction_index(
     cache: WorkflowCache,
     logger,
     proc: int,
@@ -363,7 +361,7 @@ async def eliminate_subtraction(
             name=subtraction.name,
         )
 
-        await ensure_subtraction_mapping_index(
+        await create_subtraction_index(
             cache,
             logger,
             proc,
