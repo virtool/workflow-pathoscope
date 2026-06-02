@@ -220,10 +220,10 @@ async def test_create_reference_index_hit(
         reference_index_path,
     )
 
-    params = get_mapping_index_cache_params(
+    params = await get_mapping_index_cache_params(
         "reference_mapping_index",
         index.id,
-        "2.5.4",
+        FakeRunSubprocess(),
     )
 
     assert cache.gets == [
@@ -260,10 +260,10 @@ async def test_create_reference_index_miss(
         reference_index_path,
     )
 
-    params = get_mapping_index_cache_params(
+    params = await get_mapping_index_cache_params(
         "reference_mapping_index",
         index.id,
-        "2.5.4",
+        FakeRunSubprocess(),
     )
     key = get_mapping_index_cache_key(params)
     assert cache.gets == [(key, reference_index_path.parent)]
@@ -317,10 +317,10 @@ async def test_create_subtraction_index_hit(
         work_path / "subtraction_indexes" / subtraction.id / "subtraction"
     )
 
-    params = get_mapping_index_cache_params(
+    params = await get_mapping_index_cache_params(
         "subtraction_mapping_index",
         subtraction.id,
-        "2.5.4",
+        FakeRunSubprocess(),
     )
 
     assert cache.gets == [
@@ -361,10 +361,10 @@ async def test_create_subtraction_index_miss(
         work_path / "subtraction_indexes" / subtraction.id / "subtraction"
     )
 
-    params = get_mapping_index_cache_params(
+    params = await get_mapping_index_cache_params(
         "subtraction_mapping_index",
         subtraction.id,
-        "2.5.4",
+        FakeRunSubprocess(),
     )
     key = get_mapping_index_cache_key(params)
     assert cache.gets == [(key, expected_index_path.parent)]

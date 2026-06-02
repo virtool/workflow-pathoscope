@@ -59,11 +59,13 @@ async def get_bowtie2_build_version(run_subprocess: RunSubprocess) -> str:
     return match.group(1)
 
 
-def get_mapping_index_cache_params(
+async def get_mapping_index_cache_params(
     artifact: str,
     parent_id: str,
-    tool_version: str,
+    run_subprocess: RunSubprocess,
 ) -> dict[str, str]:
+    tool_version = await get_bowtie2_build_version(run_subprocess)
+
     return {
         "artifact": artifact,
         "workflow": WORKFLOW_NAME,
@@ -88,8 +90,7 @@ async def ensure_bowtie2_mapping_index(
     run_subprocess: RunSubprocess,
     target_prefix: Path,
 ) -> None:
-    tool_version = await get_bowtie2_build_version(run_subprocess)
-    params = get_mapping_index_cache_params(artifact, parent_id, tool_version)
+    params = await get_mapping_index_cache_params(artifact, parent_id, run_subprocess)
     key = get_mapping_index_cache_key(params)
     target_path = target_prefix.parent
     log = logger.bind(
