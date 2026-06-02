@@ -6,6 +6,7 @@ services:
     volumes:
       # Mount entire project directory
       - .:/app
+      - ../virtool.reecehoffmann-vir-2315-workflowapiclient-cache-methods-and-tar-packaging-helper:/virtool.reecehoffmann-vir-2315-workflowapiclient-cache-methods-and-tar-packaging-helper:ro
       # Persistent volumes for build artifacts
       - venv-data:/app/.venv
       - target-data:/app/target

@@ -37,7 +37,7 @@ features = ["pyo3/extension-module"]
 asyncio_mode = "auto"
 
 [tool.uv.sources]
-virtool = { git = "https://github.com/virtool/virtool", tag = "36.26.0" }
+virtool = { path = "../virtool.reecehoffmann-vir-2315-workflowapiclient-cache-methods-and-tar-packaging-helper", editable = true }
 
 [build-system]
 requires = ["maturin>=1.13.3,<2.0"]
