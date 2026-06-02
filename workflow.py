@@ -77,37 +77,6 @@ def get_mapping_index_cache_key(params: dict[str, str]) -> str:
     return derive_key(params)
 
 
-def iter_bowtie2_index_paths(prefix: Path):
-    for suffix in BOWTIE2_INDEX_SUFFIXES:
-        yield prefix.parent / f"{prefix.name}.{suffix}"
-
-
-def get_mapping_index_bundle_path(
-    work_path: Path,
-    artifact: str,
-    parent_id: str,
-    key: str,
-) -> Path:
-    return work_path / "cache-artifacts" / artifact / parent_id / key
-
-
-def clean_bowtie2_index(prefix: Path) -> None:
-    for path in iter_bowtie2_index_paths(prefix):
-        path.unlink(missing_ok=True)
-
-
-def copy_bowtie2_index(source: Path, target_prefix: Path) -> None:
-    target_prefix.parent.mkdir(parents=True, exist_ok=True)
-
-    for target in iter_bowtie2_index_paths(target_prefix):
-        source_path = source / target.name
-
-        if not source_path.exists():
-            raise FileNotFoundError(source_path)
-
-        shutil.copyfile(source_path, target)
-
-
 async def ensure_bowtie2_mapping_index(
     *,
     artifact: str,
@@ -118,13 +87,10 @@ async def ensure_bowtie2_mapping_index(
     proc: int,
     run_subprocess: RunSubprocess,
     target_prefix: Path,
-    work_path: Path,
 ) -> None:
     tool_version = await get_bowtie2_build_version(run_subprocess)
     params = get_mapping_index_cache_params(artifact, parent_id, tool_version)
     key = get_mapping_index_cache_key(params)
-    cache_path = get_mapping_index_bundle_path(work_path, artifact, parent_id, key)
-    cache_prefix = cache_path / target_prefix.name
     target_path = target_prefix.parent
     log = logger.bind(
         artifact=artifact,
@@ -143,7 +109,7 @@ async def ensure_bowtie2_mapping_index(
 
     log.info("building mapping index", outcome="miss")
 
-    await asyncio.to_thread(cache_path.mkdir, parents=True, exist_ok=True)
+    await asyncio.to_thread(target_path.mkdir, parents=True, exist_ok=True)
 
     await run_subprocess(
         [
@@ -151,14 +117,11 @@ async def ensure_bowtie2_mapping_index(
             "--threads",
             str(proc),
             str(fasta_path),
-            str(cache_prefix),
+            str(target_prefix),
         ],
     )
 
-    await cache.put(key, cache_path, params=params)
-
-    await asyncio.to_thread(clean_bowtie2_index, target_prefix)
-    await asyncio.to_thread(copy_bowtie2_index, cache_path, target_prefix)
+    await cache.put(key, target_path, params=params)
 
     log.info("cached built mapping index", outcome="put")
 
@@ -175,7 +138,7 @@ async def create_reference_index(
     logger,
     proc: int,
     run_subprocess: RunSubprocess,
-    work_path: Path,
+    reference_index_path: Path,
 ):
     """Ensure the reference Bowtie2 index exists locally."""
     await ensure_bowtie2_mapping_index(
@@ -186,8 +149,7 @@ async def create_reference_index(
         parent_id=index.id,
         proc=proc,
         run_subprocess=run_subprocess,
-        target_prefix=index.bowtie_path,
-        work_path=work_path,
+        target_prefix=reference_index_path,
     )
 
 
@@ -198,7 +160,11 @@ async def create_subtraction_index(
     run_subprocess: RunSubprocess,
     subtraction: WFSubtraction,
     work_path: Path,
-) -> None:
+) -> Path:
+    subtraction_index_path = (
+        work_path / "subtraction_indexes" / subtraction.id / "subtraction"
+    )
+
     await ensure_bowtie2_mapping_index(
         artifact="subtraction_mapping_index",
         cache=cache,
@@ -207,9 +173,10 @@ async def create_subtraction_index(
         parent_id=subtraction.id,
         proc=proc,
         run_subprocess=run_subprocess,
-        target_prefix=subtraction.bowtie2_index_path,
-        work_path=work_path,
+        target_prefix=subtraction_index_path,
     )
+
+    return subtraction_index_path
 
 
 @step
@@ -219,6 +186,7 @@ async def map_default_isolates(
     index: WFIndex,
     proc: int,
     p_score_cutoff: float,
+    reference_index_path: Path,
     sample: WFSample,
 ):
     """Map sample reads to all default isolates to identify candidate OTUs.
@@ -229,7 +197,7 @@ async def map_default_isolates(
 
     candidate_otus = await asyncio.to_thread(
         find_candidate_otus_with_bowtie2,
-        str(index.bowtie_path),
+        str(reference_index_path),
         [str(path) for path in sample.read_paths],
         proc,
         p_score_cutoff,
@@ -361,7 +329,7 @@ async def eliminate_subtraction(
             name=subtraction.name,
         )
 
-        await create_subtraction_index(
+        subtraction_index_path = await create_subtraction_index(
             cache,
             logger,
             proc,
@@ -372,7 +340,7 @@ async def eliminate_subtraction(
 
         bowtie_cmd = (
             f"bowtie2 --local --no-unal -N 0 -p {proc} "
-            f"-x {shlex.quote(str(subtraction.bowtie2_index_path))} "
+            f"-x {shlex.quote(str(subtraction_index_path))} "
             f"-U {current_fastq_path}"
         )
 
