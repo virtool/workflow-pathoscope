@@ -3,6 +3,7 @@ import os
 import re
 import shlex
 import shutil
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -15,7 +16,12 @@ from virtool.workflow.data.indexes import WFIndex
 from virtool.workflow.data.samples import WFSample
 from virtool.workflow.data.subtractions import WFSubtraction
 from virtool.workflow.runtime.run_subprocess import RunSubprocess
-from workflow_pathoscope.utils import run_pathoscope, write_isolate_fasta, write_report
+from workflow_pathoscope.utils import (
+    run_pathoscope,
+    write_default_reference_fasta,
+    write_isolate_fasta,
+    write_report,
+)
 
 from workflow_pathoscope.rust import (
     find_candidate_otus_with_bowtie2,
@@ -63,16 +69,22 @@ async def get_mapping_index_cache_params(
     artifact: str,
     parent_id: str,
     run_subprocess: RunSubprocess,
+    extra_params: dict[str, str] | None = None,
 ) -> dict[str, str]:
     tool_version = await get_bowtie2_build_version(run_subprocess)
 
-    return {
+    params = {
         "artifact": artifact,
         "workflow": WORKFLOW_NAME,
         "parent_id": parent_id,
         "tool_name": BOWTIE2_BUILD_TOOL,
         "tool_version": tool_version,
     }
+
+    if extra_params is not None:
+        params.update(extra_params)
+
+    return params
 
 
 def get_mapping_index_cache_key(params: dict[str, str]) -> str:
@@ -83,14 +95,21 @@ async def ensure_bowtie2_mapping_index(
     *,
     artifact: str,
     cache: WorkflowCache,
+    extra_cache_params: dict[str, str] | None = None,
     fasta_path: Path,
     logger,
     parent_id: str,
+    prepare_fasta: Callable[[], Awaitable[Path]] | None = None,
     proc: int,
     run_subprocess: RunSubprocess,
     target_prefix: Path,
 ) -> None:
-    params = await get_mapping_index_cache_params(artifact, parent_id, run_subprocess)
+    params = await get_mapping_index_cache_params(
+        artifact,
+        parent_id,
+        run_subprocess,
+        extra_cache_params,
+    )
     key = get_mapping_index_cache_key(params)
     target_path = target_prefix.parent
     log = logger.bind(
@@ -111,6 +130,9 @@ async def ensure_bowtie2_mapping_index(
     log.info("building mapping index", outcome="miss")
 
     await asyncio.to_thread(target_path.mkdir, parents=True, exist_ok=True)
+
+    if prepare_fasta is not None:
+        fasta_path = await prepare_fasta()
 
     await run_subprocess(
         [
@@ -142,12 +164,39 @@ async def create_reference_index(
     reference_index_path: Path,
 ):
     """Ensure the reference Bowtie2 index exists locally."""
+    reference_fasta_path = reference_index_path.parent / "reference.fa"
+
+    async def prepare_reference_fasta() -> Path:
+        reference_json_path = index.path / "reference.json.gz"
+
+        if not reference_json_path.exists():
+            reference_json_path = index.json_path
+
+        lengths = await asyncio.to_thread(
+            write_default_reference_fasta,
+            reference_json_path,
+            reference_fasta_path,
+        )
+
+        logger.info(
+            "assembled default reference fasta",
+            count=len(lengths),
+            source=str(reference_json_path),
+        )
+
+        return reference_fasta_path
+
     await ensure_bowtie2_mapping_index(
         artifact="reference_mapping_index",
         cache=cache,
-        fasta_path=index.path / "reference.fa.gz",
+        extra_cache_params={
+            "source": "reference.json.gz",
+            "selection": "default_isolates",
+        },
+        fasta_path=reference_fasta_path,
         logger=logger,
         parent_id=index.id,
+        prepare_fasta=prepare_reference_fasta,
         proc=proc,
         run_subprocess=run_subprocess,
         target_prefix=reference_index_path,

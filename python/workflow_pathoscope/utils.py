@@ -1,8 +1,43 @@
 import csv
+import gzip
 import json
 from pathlib import Path
 
 from workflow_pathoscope.rust import run_expectation_maximization, PathoscopeResults
+
+
+def _open_json(path: Path):
+    if path.suffix == ".gz":
+        return gzip.open(path, "rt")
+
+    return open(path)
+
+
+def _iter_otus(reference_data):
+    if isinstance(reference_data, dict):
+        return reference_data["otus"]
+
+    return reference_data
+
+
+def write_default_reference_fasta(
+    json_path: Path,
+    target_path: Path,
+) -> dict[str, int]:
+    """Generate a FASTA file containing only default isolates from a reference JSON."""
+    lengths = {}
+
+    with _open_json(json_path) as f_json, open(target_path, "w") as f_target:
+        for otu in _iter_otus(json.load(f_json)):
+            for isolate in otu["isolates"]:
+                if not isolate["default"]:
+                    continue
+
+                for sequence in isolate["sequences"]:
+                    f_target.write(f">{sequence['_id']}\n{sequence['sequence']}\n")
+                    lengths[sequence["_id"]] = len(sequence["sequence"])
+
+    return lengths
 
 
 def write_isolate_fasta(
@@ -20,8 +55,8 @@ def write_isolate_fasta(
     """
     lengths = {}
 
-    with open(json_path) as f_json, open(target_path, "w") as f_target:
-        for otu in json.load(f_json):
+    with _open_json(json_path) as f_json, open(target_path, "w") as f_target:
+        for otu in _iter_otus(json.load(f_json)):
             if otu["_id"] in otu_ids:
                 for isolate in otu["isolates"]:
                     for sequence in isolate["sequences"]:

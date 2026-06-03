@@ -1,3 +1,5 @@
+import gzip
+import json
 import shutil
 
 import pysam
@@ -26,6 +28,7 @@ from workflow import (
     map_isolates,
     reassignment,
 )
+from workflow_pathoscope.utils import write_default_reference_fasta
 
 
 @pytest.fixture()
@@ -102,6 +105,48 @@ def write_bowtie2_bundle(path: Path, prefix: str, content: bytes = b"cached"):
 
     for suffix in BOWTIE2_INDEX_SUFFIXES:
         (path / f"{prefix}.{suffix}").write_bytes(content)
+
+
+def write_reference_json_gz(path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    with gzip.open(path, "wt") as f:
+        json.dump(
+            {
+                "otus": [
+                    {
+                        "_id": "default-otu",
+                        "isolates": [
+                            {
+                                "default": True,
+                                "sequences": [
+                                    {"_id": "default-a", "sequence": "ACGT"},
+                                    {"_id": "default-b", "sequence": "TTA"},
+                                ],
+                            },
+                            {
+                                "default": False,
+                                "sequences": [
+                                    {"_id": "non-default", "sequence": "GGGG"},
+                                ],
+                            },
+                        ],
+                    },
+                    {
+                        "_id": "non-default-otu",
+                        "isolates": [
+                            {
+                                "default": False,
+                                "sequences": [
+                                    {"_id": "non-default-only", "sequence": "CCCC"},
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            },
+            f,
+        )
 
 
 @pytest.fixture()
@@ -224,6 +269,10 @@ async def test_create_reference_index_hit(
         "reference_mapping_index",
         index.id,
         FakeRunSubprocess(),
+        {
+            "source": "reference.json.gz",
+            "selection": "default_isolates",
+        },
     )
 
     assert cache.gets == [
@@ -246,7 +295,7 @@ async def test_create_reference_index_miss(
     index: WFIndex,
     reference_index_path: Path,
 ):
-    (index.path / "reference.fa.gz").write_bytes(b">reference\nACGT\n")
+    write_reference_json_gz(index.path / "reference.json.gz")
     cache = FakeWorkflowCache()
     run_subprocess = FakeRunSubprocess()
     logger = get_logger("test")
@@ -264,6 +313,10 @@ async def test_create_reference_index_miss(
         "reference_mapping_index",
         index.id,
         FakeRunSubprocess(),
+        {
+            "source": "reference.json.gz",
+            "selection": "default_isolates",
+        },
     )
     key = get_mapping_index_cache_key(params)
     assert cache.gets == [(key, reference_index_path.parent)]
@@ -272,16 +325,21 @@ async def test_create_reference_index_miss(
         "artifact": "reference_mapping_index",
         "workflow": "pathoscope",
         "parent_id": index.id,
+        "source": "reference.json.gz",
+        "selection": "default_isolates",
         "tool_name": "bowtie2-build",
         "tool_version": "2.5.4",
     }
+    assert (reference_index_path.parent / "reference.fa").read_text() == (
+        ">default-a\nACGT\n>default-b\nTTA\n"
+    )
     assert run_subprocess.commands == [
         ["bowtie2-build", "--version"],
         [
             "bowtie2-build",
             "--threads",
             "4",
-            str(index.path / "reference.fa.gz"),
+            str(reference_index_path.parent / "reference.fa"),
             str(reference_index_path),
         ],
     ]
@@ -291,6 +349,19 @@ async def test_create_reference_index_miss(
         for suffix in BOWTIE2_INDEX_SUFFIXES
     ):
         assert path.read_bytes() == path.name.encode()
+
+
+def test_write_default_reference_fasta(tmp_path: Path):
+    json_path = tmp_path / "reference.json.gz"
+    target_path = tmp_path / "reference.fa"
+
+    write_reference_json_gz(json_path)
+
+    assert write_default_reference_fasta(json_path, target_path) == {
+        "default-a": 4,
+        "default-b": 3,
+    }
+    assert target_path.read_text() == ">default-a\nACGT\n>default-b\nTTA\n"
 
 
 async def test_create_subtraction_index_hit(
