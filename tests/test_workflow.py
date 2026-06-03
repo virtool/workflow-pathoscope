@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 from structlog import get_logger
 from syrupy import SnapshotAssertion
+from virtool.caches.utils import derive_key
 from virtool.workflow import RunSubprocess
 from virtool.workflow.data.analyses import WFAnalysis
 from virtool.workflow.data.cache import CacheHit, CacheMiss
@@ -22,13 +23,12 @@ from workflow import (
     create_reference_index,
     create_subtraction_index,
     eliminate_subtraction,
-    get_mapping_index_cache_key,
     get_mapping_index_cache_params,
     map_default_isolates,
     map_isolates,
     reassignment,
 )
-from workflow_pathoscope.utils import write_default_reference_fasta
+from workflow_pathoscope.utils import write_default_isolate_fasta
 
 
 @pytest.fixture()
@@ -107,10 +107,12 @@ def write_bowtie2_bundle(path: Path, prefix: str, content: bytes = b"cached"):
         (path / f"{prefix}.{suffix}").write_bytes(content)
 
 
-def write_reference_json_gz(path: Path):
+def write_reference_json(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    with gzip.open(path, "wt") as f:
+    opener = gzip.open if path.suffix == ".gz" else open
+
+    with opener(path, "wt") as f:
         json.dump(
             {
                 "otus": [
@@ -270,14 +272,14 @@ async def test_create_reference_index_hit(
         index.id,
         FakeRunSubprocess(),
         {
-            "source": "reference.json.gz",
+            "source": "index.json_path",
             "selection": "default_isolates",
         },
     )
 
     assert cache.gets == [
         (
-            get_mapping_index_cache_key(params),
+            derive_key(params),
             reference_index_path.parent,
         ),
     ]
@@ -295,7 +297,7 @@ async def test_create_reference_index_miss(
     index: WFIndex,
     reference_index_path: Path,
 ):
-    write_reference_json_gz(index.path / "reference.json.gz")
+    write_reference_json(index.json_path)
     cache = FakeWorkflowCache()
     run_subprocess = FakeRunSubprocess()
     logger = get_logger("test")
@@ -314,18 +316,18 @@ async def test_create_reference_index_miss(
         index.id,
         FakeRunSubprocess(),
         {
-            "source": "reference.json.gz",
+            "source": "index.json_path",
             "selection": "default_isolates",
         },
     )
-    key = get_mapping_index_cache_key(params)
+    key = derive_key(params)
     assert cache.gets == [(key, reference_index_path.parent)]
     assert cache.puts == [(key, reference_index_path.parent, params)]
     assert params == {
-        "artifact": "reference_mapping_index",
+        "index_kind": "reference_mapping_index",
         "workflow": "pathoscope",
         "parent_id": index.id,
-        "source": "reference.json.gz",
+        "source": "index.json_path",
         "selection": "default_isolates",
         "tool_name": "bowtie2-build",
         "tool_version": "2.5.4",
@@ -351,13 +353,13 @@ async def test_create_reference_index_miss(
         assert path.read_bytes() == path.name.encode()
 
 
-def test_write_default_reference_fasta(tmp_path: Path):
+def test_write_default_isolate_fasta(tmp_path: Path):
     json_path = tmp_path / "reference.json.gz"
     target_path = tmp_path / "reference.fa"
 
-    write_reference_json_gz(json_path)
+    write_reference_json(json_path)
 
-    assert write_default_reference_fasta(json_path, target_path) == {
+    assert write_default_isolate_fasta(json_path, target_path) == {
         "default-a": 4,
         "default-b": 3,
     }
@@ -396,7 +398,7 @@ async def test_create_subtraction_index_hit(
 
     assert cache.gets == [
         (
-            get_mapping_index_cache_key(params),
+            derive_key(params),
             expected_index_path.parent,
         ),
     ]
@@ -437,12 +439,12 @@ async def test_create_subtraction_index_miss(
         subtraction.id,
         FakeRunSubprocess(),
     )
-    key = get_mapping_index_cache_key(params)
+    key = derive_key(params)
     assert cache.gets == [(key, expected_index_path.parent)]
     assert cache.puts == [(key, expected_index_path.parent, params)]
     assert subtraction_index_path == expected_index_path
     assert params == {
-        "artifact": "subtraction_mapping_index",
+        "index_kind": "subtraction_mapping_index",
         "workflow": "pathoscope",
         "parent_id": subtraction.id,
         "tool_name": "bowtie2-build",

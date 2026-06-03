@@ -13,14 +13,14 @@ def _open_json(path: Path):
     return open(path)
 
 
-def _iter_otus(reference_data):
+def _get_reference_otus(reference_data):
     if isinstance(reference_data, dict):
         return reference_data["otus"]
 
     return reference_data
 
 
-def write_default_reference_fasta(
+def write_default_isolate_fasta(
     json_path: Path,
     target_path: Path,
 ) -> dict[str, int]:
@@ -28,7 +28,7 @@ def write_default_reference_fasta(
     lengths = {}
 
     with _open_json(json_path) as f_json, open(target_path, "w") as f_target:
-        for otu in _iter_otus(json.load(f_json)):
+        for otu in _get_reference_otus(json.load(f_json)):
             for isolate in otu["isolates"]:
                 if not isolate["default"]:
                     continue
@@ -56,7 +56,7 @@ def write_isolate_fasta(
     lengths = {}
 
     with _open_json(json_path) as f_json, open(target_path, "w") as f_target:
-        for otu in _iter_otus(json.load(f_json)):
+        for otu in _get_reference_otus(json.load(f_json)):
             if otu["_id"] in otu_ids:
                 for isolate in otu["isolates"]:
                     for sequence in isolate["sequences"]:

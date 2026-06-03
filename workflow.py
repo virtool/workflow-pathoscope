@@ -3,7 +3,6 @@ import os
 import re
 import shlex
 import shutil
-from collections.abc import Awaitable, Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -18,7 +17,7 @@ from virtool.workflow.data.subtractions import WFSubtraction
 from virtool.workflow.runtime.run_subprocess import RunSubprocess
 from workflow_pathoscope.utils import (
     run_pathoscope,
-    write_default_reference_fasta,
+    write_default_isolate_fasta,
     write_isolate_fasta,
     write_report,
 )
@@ -66,7 +65,7 @@ async def get_bowtie2_build_version(run_subprocess: RunSubprocess) -> str:
 
 
 async def get_mapping_index_cache_params(
-    artifact: str,
+    index_kind: str,
     parent_id: str,
     run_subprocess: RunSubprocess,
     extra_params: dict[str, str] | None = None,
@@ -74,7 +73,7 @@ async def get_mapping_index_cache_params(
     tool_version = await get_bowtie2_build_version(run_subprocess)
 
     params = {
-        "artifact": artifact,
+        "index_kind": index_kind,
         "workflow": WORKFLOW_NAME,
         "parent_id": parent_id,
         "tool_name": BOWTIE2_BUILD_TOOL,
@@ -87,66 +86,21 @@ async def get_mapping_index_cache_params(
     return params
 
 
-def get_mapping_index_cache_key(params: dict[str, str]) -> str:
-    return derive_key(params)
-
-
-async def ensure_bowtie2_mapping_index(
-    *,
-    artifact: str,
-    cache: WorkflowCache,
-    extra_cache_params: dict[str, str] | None = None,
+async def build_bowtie2_index(
     fasta_path: Path,
-    logger,
-    parent_id: str,
-    prepare_fasta: Callable[[], Awaitable[Path]] | None = None,
+    index_prefix: Path,
     proc: int,
     run_subprocess: RunSubprocess,
-    target_prefix: Path,
 ) -> None:
-    params = await get_mapping_index_cache_params(
-        artifact,
-        parent_id,
-        run_subprocess,
-        extra_cache_params,
-    )
-    key = get_mapping_index_cache_key(params)
-    target_path = target_prefix.parent
-    log = logger.bind(
-        artifact=artifact,
-        key=key,
-        parent_id=parent_id,
-        workflow=WORKFLOW_NAME,
-    )
-
-    log.info("checking workflow cache")
-
-    result = await cache.get(key, target_path)
-
-    if isinstance(result, CacheHit):
-        log.info("restored cached mapping index", outcome="hit")
-        return
-
-    log.info("building mapping index", outcome="miss")
-
-    await asyncio.to_thread(target_path.mkdir, parents=True, exist_ok=True)
-
-    if prepare_fasta is not None:
-        fasta_path = await prepare_fasta()
-
     await run_subprocess(
         [
             BOWTIE2_BUILD_TOOL,
             "--threads",
             str(proc),
             str(fasta_path),
-            str(target_prefix),
+            str(index_prefix),
         ],
     )
-
-    await cache.put(key, target_path, params=params)
-
-    log.info("cached built mapping index", outcome="put")
 
 
 @hooks.on_failure
@@ -165,42 +119,58 @@ async def create_reference_index(
 ):
     """Ensure the reference Bowtie2 index exists locally."""
     reference_fasta_path = reference_index_path.parent / "reference.fa"
-
-    async def prepare_reference_fasta() -> Path:
-        reference_json_path = index.path / "reference.json.gz"
-
-        if not reference_json_path.exists():
-            reference_json_path = index.json_path
-
-        lengths = await asyncio.to_thread(
-            write_default_reference_fasta,
-            reference_json_path,
-            reference_fasta_path,
-        )
-
-        logger.info(
-            "assembled default reference fasta",
-            count=len(lengths),
-            source=str(reference_json_path),
-        )
-
-        return reference_fasta_path
-
-    await ensure_bowtie2_mapping_index(
-        artifact="reference_mapping_index",
-        cache=cache,
-        extra_cache_params={
-            "source": "reference.json.gz",
+    reference_index_dir = reference_index_path.parent
+    params = await get_mapping_index_cache_params(
+        "reference_mapping_index",
+        index.id,
+        run_subprocess,
+        {
+            "source": "index.json_path",
             "selection": "default_isolates",
         },
-        fasta_path=reference_fasta_path,
-        logger=logger,
-        parent_id=index.id,
-        prepare_fasta=prepare_reference_fasta,
-        proc=proc,
-        run_subprocess=run_subprocess,
-        target_prefix=reference_index_path,
     )
+    key = derive_key(params)
+    log = logger.bind(
+        index_kind="reference_mapping_index",
+        key=key,
+        parent_id=index.id,
+        workflow=WORKFLOW_NAME,
+    )
+
+    log.info("checking workflow cache")
+
+    result = await cache.get(key, reference_index_dir)
+
+    if isinstance(result, CacheHit):
+        log.info("restored cached mapping index", outcome="hit")
+        return
+
+    log.info("building mapping index", outcome="miss")
+
+    await asyncio.to_thread(reference_index_dir.mkdir, parents=True, exist_ok=True)
+
+    lengths = await asyncio.to_thread(
+        write_default_isolate_fasta,
+        index.json_path,
+        reference_fasta_path,
+    )
+
+    logger.info(
+        "assembled default reference fasta",
+        count=len(lengths),
+        source=str(index.json_path),
+    )
+
+    await build_bowtie2_index(
+        reference_fasta_path,
+        reference_index_path,
+        proc,
+        run_subprocess,
+    )
+
+    await cache.put(key, reference_index_dir, params=params)
+
+    log.info("cached built mapping index", outcome="put")
 
 
 async def create_subtraction_index(
@@ -214,17 +184,42 @@ async def create_subtraction_index(
     subtraction_index_path = (
         work_path / "subtraction_indexes" / subtraction.id / "subtraction"
     )
-
-    await ensure_bowtie2_mapping_index(
-        artifact="subtraction_mapping_index",
-        cache=cache,
-        fasta_path=subtraction.fasta_path,
-        logger=logger,
-        parent_id=subtraction.id,
-        proc=proc,
-        run_subprocess=run_subprocess,
-        target_prefix=subtraction_index_path,
+    subtraction_index_dir = subtraction_index_path.parent
+    params = await get_mapping_index_cache_params(
+        "subtraction_mapping_index",
+        subtraction.id,
+        run_subprocess,
     )
+    key = derive_key(params)
+    log = logger.bind(
+        index_kind="subtraction_mapping_index",
+        key=key,
+        parent_id=subtraction.id,
+        workflow=WORKFLOW_NAME,
+    )
+
+    log.info("checking workflow cache")
+
+    result = await cache.get(key, subtraction_index_dir)
+
+    if isinstance(result, CacheHit):
+        log.info("restored cached mapping index", outcome="hit")
+        return subtraction_index_path
+
+    log.info("building mapping index", outcome="miss")
+
+    await asyncio.to_thread(subtraction_index_dir.mkdir, parents=True, exist_ok=True)
+
+    await build_bowtie2_index(
+        subtraction.fasta_path,
+        subtraction_index_path,
+        proc,
+        run_subprocess,
+    )
+
+    await cache.put(key, subtraction_index_dir, params=params)
+
+    log.info("cached built mapping index", outcome="put")
 
     return subtraction_index_path
 
@@ -276,14 +271,11 @@ async def build_isolate_index(
         isolate_fasta_path,
     )
 
-    await run_subprocess(
-        [
-            "bowtie2-build",
-            "--threads",
-            str(proc),
-            str(isolate_fasta_path),
-            str(isolate_index_path),
-        ],
+    await build_bowtie2_index(
+        isolate_fasta_path,
+        isolate_index_path,
+        proc,
+        run_subprocess,
     )
 
 
