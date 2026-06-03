@@ -22,12 +22,14 @@ from workflow import (
     create_reference_index,
     create_subtraction_index,
     eliminate_subtraction,
-    get_mapping_index_cache_params,
     map_default_isolates,
     map_isolates,
     reassignment,
 )
-from workflow_pathoscope.utils import write_default_isolate_fasta
+from workflow_pathoscope.utils import (
+    get_mapping_index_cache_params,
+    write_default_isolate_fasta,
+)
 
 
 BOWTIE2_INDEX_SUFFIXES = (

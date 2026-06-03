@@ -1,9 +1,133 @@
+import asyncio
 import csv
 import gzip
 import json
+import re
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
+from virtool.caches.utils import derive_key
+from virtool.workflow.data.cache import CacheHit, WorkflowCache
+from virtool.workflow.runtime.run_subprocess import RunSubprocess
+
 from workflow_pathoscope.rust import PathoscopeResults, run_expectation_maximization
+
+
+BOWTIE2_BUILD_TOOL = "bowtie2-build"
+WORKFLOW_NAME = "pathoscope"
+
+
+async def get_bowtie2_build_version(run_subprocess: RunSubprocess) -> str:
+    output = []
+
+    async def collect_stdout(line: bytes) -> None:
+        output.append(line.decode())
+
+    await run_subprocess(
+        [BOWTIE2_BUILD_TOOL, "--version"],
+        stdout_handler=collect_stdout,
+    )
+
+    match = re.search(r"\bversion\s+([^\s]+)", "".join(output))
+
+    if match is None:
+        raise ValueError("Could not parse bowtie2-build version")
+
+    return match.group(1)
+
+
+async def get_mapping_index_cache_params(
+    index_kind: str,
+    parent_id: str,
+    run_subprocess: RunSubprocess,
+    extra_params: dict[str, str] | None = None,
+) -> dict[str, str]:
+    tool_version = await get_bowtie2_build_version(run_subprocess)
+
+    params = {
+        "index_kind": index_kind,
+        "workflow": WORKFLOW_NAME,
+        "parent_id": parent_id,
+        "tool_name": BOWTIE2_BUILD_TOOL,
+        "tool_version": tool_version,
+    }
+
+    if extra_params is not None:
+        params.update(extra_params)
+
+    return params
+
+
+async def build_bowtie2_index(
+    fasta_path: Path,
+    index_prefix: Path,
+    proc: int,
+    run_subprocess: RunSubprocess,
+) -> None:
+    await run_subprocess(
+        [
+            BOWTIE2_BUILD_TOOL,
+            "--threads",
+            str(proc),
+            str(fasta_path),
+            str(index_prefix),
+        ],
+    )
+
+
+async def create_mapping_index(
+    cache: WorkflowCache,
+    logger,
+    proc: int,
+    run_subprocess: RunSubprocess,
+    *,
+    fasta_path: Path,
+    index_kind: str,
+    index_prefix: Path,
+    parent_id: str,
+    extra_params: dict[str, str] | None = None,
+    prepare_index: Callable[[], Awaitable[None]] | None = None,
+) -> None:
+    index_dir = index_prefix.parent
+    params = await get_mapping_index_cache_params(
+        index_kind,
+        parent_id,
+        run_subprocess,
+        extra_params,
+    )
+    key = derive_key(params)
+    log = logger.bind(
+        index_kind=index_kind,
+        key=key,
+        parent_id=parent_id,
+        workflow=WORKFLOW_NAME,
+    )
+
+    log.info("checking workflow cache")
+
+    result = await cache.get(key, index_dir)
+
+    if isinstance(result, CacheHit):
+        log.info("restored cached mapping index", outcome="hit")
+        return
+
+    log.info("building mapping index", outcome="miss")
+
+    await asyncio.to_thread(index_dir.mkdir, parents=True, exist_ok=True)
+
+    if prepare_index is not None:
+        await prepare_index()
+
+    await build_bowtie2_index(
+        fasta_path,
+        index_prefix,
+        proc,
+        run_subprocess,
+    )
+
+    await cache.put(key, index_dir, params=params)
+
+    log.info("cached built mapping index", outcome="put")
 
 
 def _open_json(path: Path):
