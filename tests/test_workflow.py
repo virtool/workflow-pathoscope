@@ -22,6 +22,7 @@ from workflow import (
     create_reference_index,
     create_subtraction_index,
     eliminate_subtraction,
+    get_subtraction_index_path,
     map_default_isolates,
     map_isolates,
     reassignment,
@@ -56,11 +57,16 @@ def reference_index_path(work_path: Path) -> Path:
 
 
 @pytest.fixture()
+def subtraction_indexes_path(work_path: Path) -> Path:
+    return work_path / "subtraction_indexes"
+
+
+@pytest.fixture()
 def subtraction_index_path(
     subtractions: list[WFSubtraction],
-    work_path: Path,
+    subtraction_indexes_path: Path,
 ) -> Path:
-    return work_path / "subtraction_indexes" / subtractions[0].id / "subtraction"
+    return get_subtraction_index_path(subtraction_indexes_path, subtractions[0].id)
 
 
 class FakeWorkflowCache:
@@ -290,12 +296,13 @@ async def test_create_reference_index_hit(
     reference_index_path: Path,
     tmp_path: Path,
 ):
+    write_reference_json(index.json_path)
     source = tmp_path / "cached-reference"
     write_bowtie2_bundle(
         source,
         "reference",
         b"cached-reference",
-        {"reference.fa": b"cached-fasta", "cache-manifest.json": b"cached-manifest"},
+        {"cache-manifest.json": b"cached-manifest"},
     )
     cache = FakeWorkflowCache(source)
     run_subprocess = FakeRunSubprocess()
@@ -374,21 +381,16 @@ async def test_create_reference_index_miss(
         "tool_name": "bowtie2-build",
         "tool_version": "2.5.4",
     }
-    assert (reference_index_path.parent / "reference.fa").read_text() == (
-        ">default-a\nACGT\n>default-b\nTTA\n"
-    )
-    assert run_subprocess.commands == [
-        ["bowtie2-build", "--version"],
-        [
-            "bowtie2-build",
-            "--threads",
-            "4",
-            str(reference_index_path.parent / "reference.fa"),
-            str(reference_index_path),
-        ],
+    assert len(run_subprocess.commands) == 2
+    assert run_subprocess.commands[0] == ["bowtie2-build", "--version"]
+    assert run_subprocess.commands[1][:3] == [
+        "bowtie2-build",
+        "--threads",
+        "4",
     ]
+    assert Path(run_subprocess.commands[1][3]).name == "reference.fa"
+    assert run_subprocess.commands[1][4] == str(reference_index_path)
     assert read_directory_bytes(reference_index_path.parent) == {
-        "reference.fa": b">default-a\nACGT\n>default-b\nTTA\n",
         **bowtie2_bundle_bytes("reference"),
     }
 
@@ -409,8 +411,8 @@ def test_write_default_isolate_fasta(tmp_path: Path):
 async def test_create_subtraction_index_hit(
     subtractions: list[WFSubtraction],
     subtraction_index_path: Path,
+    subtraction_indexes_path: Path,
     tmp_path: Path,
-    work_path: Path,
 ):
     source = tmp_path / "cached-subtraction"
     write_bowtie2_bundle(
@@ -423,16 +425,14 @@ async def test_create_subtraction_index_hit(
     run_subprocess = FakeRunSubprocess()
     logger = get_logger("test")
     subtraction = subtractions[0]
-    subtraction_index_paths = {}
 
-    result_index_paths = await create_subtraction_index(
+    result_indexes_path = await create_subtraction_index(
         cache,
         logger,
         4,
         run_subprocess,
         subtractions,
-        subtraction_index_paths,
-        work_path,
+        subtraction_indexes_path,
     )
 
     params = await get_mapping_index_cache_params(
@@ -448,8 +448,7 @@ async def test_create_subtraction_index_hit(
         ),
     ]
     assert cache.puts == []
-    assert result_index_paths == {subtraction.id: subtraction_index_path}
-    assert subtraction_index_paths == {subtraction.id: subtraction_index_path}
+    assert result_indexes_path == subtraction_indexes_path
     assert run_subprocess.commands == [["bowtie2-build", "--version"]]
     assert read_directory_bytes(subtraction_index_path.parent) == read_directory_bytes(
         source
@@ -459,22 +458,20 @@ async def test_create_subtraction_index_hit(
 async def test_create_subtraction_index_miss(
     subtractions: list[WFSubtraction],
     subtraction_index_path: Path,
-    work_path: Path,
+    subtraction_indexes_path: Path,
 ):
     cache = FakeWorkflowCache()
     run_subprocess = FakeRunSubprocess()
     logger = get_logger("test")
     subtraction = subtractions[0]
-    subtraction_index_paths = {}
 
-    result_index_paths = await create_subtraction_index(
+    result_indexes_path = await create_subtraction_index(
         cache,
         logger,
         4,
         run_subprocess,
         subtractions,
-        subtraction_index_paths,
-        work_path,
+        subtraction_indexes_path,
     )
 
     params = await get_mapping_index_cache_params(
@@ -485,8 +482,7 @@ async def test_create_subtraction_index_miss(
     key = derive_key(params)
     assert cache.gets == [(key, subtraction_index_path.parent)]
     assert cache.puts == [(key, subtraction_index_path.parent, params)]
-    assert result_index_paths == {subtraction.id: subtraction_index_path}
-    assert subtraction_index_paths == {subtraction.id: subtraction_index_path}
+    assert result_indexes_path == subtraction_indexes_path
     assert params == {
         "index_kind": "subtraction_mapping_index",
         "workflow": "pathoscope",
@@ -591,6 +587,7 @@ async def test_eliminate_subtraction(
     example_path: Path,
     no_subtractions: bool,
     subtractions: list[WFSubtraction],
+    subtraction_indexes_path: Path,
     run_subprocess: RunSubprocess,
     snapshot: SnapshotAssertion,
     work_path: Path,
@@ -610,7 +607,6 @@ async def test_eliminate_subtraction(
         subtractions = []
 
     intermediate = SimpleNamespace()
-    subtraction_index_paths = {}
 
     if subtractions:
         await create_subtraction_index(
@@ -619,8 +615,7 @@ async def test_eliminate_subtraction(
             proc,
             FakeRunSubprocess(),
             subtractions,
-            subtraction_index_paths,
-            work_path,
+            subtraction_indexes_path,
         )
 
     await eliminate_subtraction(
@@ -632,7 +627,7 @@ async def test_eliminate_subtraction(
         proc,
         results,
         run_subprocess,
-        subtraction_index_paths,
+        subtraction_indexes_path,
         subtractions,
         subtracted_path,
         work_path,

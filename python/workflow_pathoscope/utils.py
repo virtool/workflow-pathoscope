@@ -3,7 +3,6 @@ import csv
 import gzip
 import json
 import re
-from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from virtool.caches.utils import derive_key
@@ -86,7 +85,6 @@ async def create_mapping_index(
     index_prefix: Path,
     parent_id: str,
     extra_params: dict[str, str] | None = None,
-    prepare_index: Callable[[], Awaitable[None]] | None = None,
 ) -> None:
     index_dir = index_prefix.parent
     params = await get_mapping_index_cache_params(
@@ -114,9 +112,6 @@ async def create_mapping_index(
     log.info("building mapping index", outcome="miss")
 
     await asyncio.to_thread(index_dir.mkdir, parents=True, exist_ok=True)
-
-    if prepare_index is not None:
-        await prepare_index()
 
     await build_bowtie2_index(
         fasta_path,

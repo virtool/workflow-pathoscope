@@ -3,6 +3,7 @@ import os
 import shlex
 import shutil
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import Any
 
@@ -33,6 +34,13 @@ from workflow_pathoscope.rust import (
 init_logging("info")
 
 
+def get_subtraction_index_path(
+    subtraction_indexes_path: Path,
+    subtraction_id: str,
+) -> Path:
+    return subtraction_indexes_path / subtraction_id / "subtraction"
+
+
 @hooks.on_failure
 async def delete_analysis_document(analysis: WFAnalysis):
     await analysis.delete()
@@ -48,10 +56,10 @@ async def create_reference_index(
     reference_index_path: Path,
 ) -> Path:
     """Ensure the reference Bowtie2 index exists locally."""
-    reference_fasta_path = reference_index_path.parent / "reference.fa"
+    with TemporaryDirectory(prefix="pathoscope-reference-") as temp_dir:
+        reference_fasta_path = Path(temp_dir) / "reference.fa"
 
-    async def prepare_index() -> None:
-        lengths = await asyncio.to_thread(
+        await asyncio.to_thread(
             write_default_isolate_fasta,
             index.json_path,
             reference_fasta_path,
@@ -59,25 +67,23 @@ async def create_reference_index(
 
         logger.info(
             "assembled default reference fasta",
-            count=len(lengths),
             source=str(index.json_path),
         )
 
-    await create_mapping_index(
-        cache,
-        logger,
-        proc,
-        run_subprocess,
-        fasta_path=reference_fasta_path,
-        index_kind="reference_mapping_index",
-        index_prefix=reference_index_path,
-        parent_id=index.id,
-        extra_params={
-            "source": "index.json_path",
-            "selection": "default_isolates",
-        },
-        prepare_index=prepare_index,
-    )
+        await create_mapping_index(
+            cache,
+            logger,
+            proc,
+            run_subprocess,
+            fasta_path=reference_fasta_path,
+            index_kind="reference_mapping_index",
+            index_prefix=reference_index_path,
+            parent_id=index.id,
+            extra_params={
+                "source": "index.json_path",
+                "selection": "default_isolates",
+            },
+        )
 
     return reference_index_path
 
@@ -89,13 +95,13 @@ async def create_subtraction_index(
     proc: int,
     run_subprocess: RunSubprocess,
     subtractions: list[WFSubtraction],
-    subtraction_index_paths: dict[str, Path],
-    work_path: Path,
-) -> dict[str, Path]:
+    subtraction_indexes_path: Path,
+) -> Path:
     """Ensure subtraction Bowtie2 indexes exist locally."""
     for subtraction in subtractions:
-        subtraction_index_path = (
-            work_path / "subtraction_indexes" / subtraction.id / "subtraction"
+        subtraction_index_path = get_subtraction_index_path(
+            subtraction_indexes_path,
+            subtraction.id,
         )
 
         await create_mapping_index(
@@ -109,9 +115,7 @@ async def create_subtraction_index(
             parent_id=subtraction.id,
         )
 
-        subtraction_index_paths[subtraction.id] = subtraction_index_path
-
-    return subtraction_index_paths
+    return subtraction_indexes_path
 
 
 @step
@@ -207,7 +211,7 @@ async def eliminate_subtraction(
     proc: int,
     results: dict[str, Any],
     run_subprocess: RunSubprocess,
-    subtraction_index_paths: dict[str, Path],
+    subtraction_indexes_path: Path,
     subtractions: list[WFSubtraction],
     subtracted_bam_path: Path,
     work_path: Path,
@@ -228,7 +232,7 @@ async def eliminate_subtraction(
     :param proc: number of processors to use
     :param results: the results to send to the api when the workflow is complete
     :param run_subprocess: runs a subprocess with error handling
-    :param subtraction_index_paths: Bowtie2 index paths keyed by subtraction ID
+    :param subtraction_indexes_path: path containing Bowtie2 indexes keyed by subtraction ID
     :param subtractions: the subtraction to align and eliminate reads against
     :param subtracted_bam_path: path to the BAM file with subtraction-mapped reads removed
     :param work_path: path to the workflow working directory
@@ -261,7 +265,10 @@ async def eliminate_subtraction(
             name=subtraction.name,
         )
 
-        subtraction_index_path = subtraction_index_paths[subtraction.id]
+        subtraction_index_path = get_subtraction_index_path(
+            subtraction_indexes_path,
+            subtraction.id,
+        )
 
         bowtie_cmd = (
             f"bowtie2 --local --no-unal -N 0 -p {proc} "

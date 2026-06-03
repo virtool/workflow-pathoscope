@@ -26,8 +26,8 @@ def reference_index_path(work_path: Path):
 
 
 @fixture
-def subtraction_index_paths() -> dict[str, Path]:
-    return {}
+def subtraction_indexes_path(work_path: Path) -> Path:
+    return work_path / "subtraction_indexes"
 
 
 @fixture
