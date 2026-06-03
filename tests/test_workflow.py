@@ -19,7 +19,6 @@ from virtool.workflow.data.subtractions import WFSubtraction
 from virtool.workflow.pytest_plugin import WorkflowData
 
 from workflow import (
-    BOWTIE2_INDEX_SUFFIXES,
     create_reference_index,
     create_subtraction_index,
     eliminate_subtraction,
@@ -29,6 +28,16 @@ from workflow import (
     reassignment,
 )
 from workflow_pathoscope.utils import write_default_isolate_fasta
+
+
+BOWTIE2_INDEX_SUFFIXES = (
+    "1.bt2",
+    "2.bt2",
+    "3.bt2",
+    "4.bt2",
+    "rev.1.bt2",
+    "rev.2.bt2",
+)
 
 
 @pytest.fixture()
@@ -42,6 +51,14 @@ def work_path(tmpdir):
 @pytest.fixture()
 def reference_index_path(work_path: Path) -> Path:
     return work_path / "reference_index" / "reference"
+
+
+@pytest.fixture()
+def subtraction_index_path(
+    subtractions: list[WFSubtraction],
+    work_path: Path,
+) -> Path:
+    return work_path / "subtraction_indexes" / subtractions[0].id / "subtraction"
 
 
 class FakeWorkflowCache:
@@ -100,11 +117,30 @@ class FakeRunSubprocess:
         raise AssertionError(f"Unexpected subprocess command: {command}")
 
 
-def write_bowtie2_bundle(path: Path, prefix: str, content: bytes = b"cached"):
+def read_directory_bytes(path: Path) -> dict[str, bytes]:
+    return {child.name: child.read_bytes() for child in sorted(path.iterdir())}
+
+
+def bowtie2_bundle_bytes(prefix: str, content: bytes | None = None) -> dict[str, bytes]:
+    return {
+        f"{prefix}.{suffix}": content or f"{prefix}.{suffix}".encode()
+        for suffix in BOWTIE2_INDEX_SUFFIXES
+    }
+
+
+def write_bowtie2_bundle(
+    path: Path,
+    prefix: str,
+    content: bytes = b"cached",
+    extra_files: dict[str, bytes] | None = None,
+):
     path.mkdir(parents=True)
 
-    for suffix in BOWTIE2_INDEX_SUFFIXES:
-        (path / f"{prefix}.{suffix}").write_bytes(content)
+    for name, file_content in bowtie2_bundle_bytes(prefix, content).items():
+        (path / name).write_bytes(file_content)
+
+    for name, file_content in (extra_files or {}).items():
+        (path / name).write_bytes(file_content)
 
 
 def write_reference_json(path: Path):
@@ -253,12 +289,17 @@ async def test_create_reference_index_hit(
     tmp_path: Path,
 ):
     source = tmp_path / "cached-reference"
-    write_bowtie2_bundle(source, "reference", b"cached-reference")
+    write_bowtie2_bundle(
+        source,
+        "reference",
+        b"cached-reference",
+        {"reference.fa": b"cached-fasta", "cache-manifest.json": b"cached-manifest"},
+    )
     cache = FakeWorkflowCache(source)
     run_subprocess = FakeRunSubprocess()
     logger = get_logger("test")
 
-    await create_reference_index(
+    result_index_path = await create_reference_index(
         cache,
         index,
         logger,
@@ -284,13 +325,11 @@ async def test_create_reference_index_hit(
         ),
     ]
     assert cache.puts == []
+    assert result_index_path == reference_index_path
     assert run_subprocess.commands == [["bowtie2-build", "--version"]]
-
-    for path in (
-        reference_index_path.parent / f"reference.{suffix}"
-        for suffix in BOWTIE2_INDEX_SUFFIXES
-    ):
-        assert path.read_bytes() == b"cached-reference"
+    assert read_directory_bytes(reference_index_path.parent) == read_directory_bytes(
+        source
+    )
 
 
 async def test_create_reference_index_miss(
@@ -302,7 +341,7 @@ async def test_create_reference_index_miss(
     run_subprocess = FakeRunSubprocess()
     logger = get_logger("test")
 
-    await create_reference_index(
+    result_index_path = await create_reference_index(
         cache,
         index,
         logger,
@@ -323,6 +362,7 @@ async def test_create_reference_index_miss(
     key = derive_key(params)
     assert cache.gets == [(key, reference_index_path.parent)]
     assert cache.puts == [(key, reference_index_path.parent, params)]
+    assert result_index_path == reference_index_path
     assert params == {
         "index_kind": "reference_mapping_index",
         "workflow": "pathoscope",
@@ -345,12 +385,10 @@ async def test_create_reference_index_miss(
             str(reference_index_path),
         ],
     ]
-
-    for path in (
-        reference_index_path.parent / f"reference.{suffix}"
-        for suffix in BOWTIE2_INDEX_SUFFIXES
-    ):
-        assert path.read_bytes() == path.name.encode()
+    assert read_directory_bytes(reference_index_path.parent) == {
+        "reference.fa": b">default-a\nACGT\n>default-b\nTTA\n",
+        **bowtie2_bundle_bytes("reference"),
+    }
 
 
 def test_write_default_isolate_fasta(tmp_path: Path):
@@ -368,26 +406,31 @@ def test_write_default_isolate_fasta(tmp_path: Path):
 
 async def test_create_subtraction_index_hit(
     subtractions: list[WFSubtraction],
+    subtraction_index_path: Path,
     tmp_path: Path,
     work_path: Path,
 ):
     source = tmp_path / "cached-subtraction"
-    write_bowtie2_bundle(source, "subtraction", b"cached-subtraction")
+    write_bowtie2_bundle(
+        source,
+        "subtraction",
+        b"cached-subtraction",
+        {"cache-manifest.json": b"cached-manifest"},
+    )
     cache = FakeWorkflowCache(source)
     run_subprocess = FakeRunSubprocess()
     logger = get_logger("test")
     subtraction = subtractions[0]
+    subtraction_index_paths = {}
 
-    subtraction_index_path = await create_subtraction_index(
+    result_index_paths = await create_subtraction_index(
         cache,
         logger,
         4,
         run_subprocess,
-        subtraction,
+        subtractions,
+        subtraction_index_paths,
         work_path,
-    )
-    expected_index_path = (
-        work_path / "subtraction_indexes" / subtraction.id / "subtraction"
     )
 
     params = await get_mapping_index_cache_params(
@@ -399,39 +442,37 @@ async def test_create_subtraction_index_hit(
     assert cache.gets == [
         (
             derive_key(params),
-            expected_index_path.parent,
+            subtraction_index_path.parent,
         ),
     ]
     assert cache.puts == []
-    assert subtraction_index_path == expected_index_path
+    assert result_index_paths == {subtraction.id: subtraction_index_path}
+    assert subtraction_index_paths == {subtraction.id: subtraction_index_path}
     assert run_subprocess.commands == [["bowtie2-build", "--version"]]
-
-    for path in (
-        expected_index_path.parent / f"subtraction.{suffix}"
-        for suffix in BOWTIE2_INDEX_SUFFIXES
-    ):
-        assert path.read_bytes() == b"cached-subtraction"
+    assert read_directory_bytes(subtraction_index_path.parent) == read_directory_bytes(
+        source
+    )
 
 
 async def test_create_subtraction_index_miss(
     subtractions: list[WFSubtraction],
+    subtraction_index_path: Path,
     work_path: Path,
 ):
     cache = FakeWorkflowCache()
     run_subprocess = FakeRunSubprocess()
     logger = get_logger("test")
     subtraction = subtractions[0]
+    subtraction_index_paths = {}
 
-    subtraction_index_path = await create_subtraction_index(
+    result_index_paths = await create_subtraction_index(
         cache,
         logger,
         4,
         run_subprocess,
-        subtraction,
+        subtractions,
+        subtraction_index_paths,
         work_path,
-    )
-    expected_index_path = (
-        work_path / "subtraction_indexes" / subtraction.id / "subtraction"
     )
 
     params = await get_mapping_index_cache_params(
@@ -440,9 +481,10 @@ async def test_create_subtraction_index_miss(
         FakeRunSubprocess(),
     )
     key = derive_key(params)
-    assert cache.gets == [(key, expected_index_path.parent)]
-    assert cache.puts == [(key, expected_index_path.parent, params)]
-    assert subtraction_index_path == expected_index_path
+    assert cache.gets == [(key, subtraction_index_path.parent)]
+    assert cache.puts == [(key, subtraction_index_path.parent, params)]
+    assert result_index_paths == {subtraction.id: subtraction_index_path}
+    assert subtraction_index_paths == {subtraction.id: subtraction_index_path}
     assert params == {
         "index_kind": "subtraction_mapping_index",
         "workflow": "pathoscope",
@@ -457,15 +499,12 @@ async def test_create_subtraction_index_miss(
             "--threads",
             "4",
             str(subtraction.fasta_path),
-            str(expected_index_path),
+            str(subtraction_index_path),
         ],
     ]
-
-    for path in (
-        expected_index_path.parent / f"subtraction.{suffix}"
-        for suffix in BOWTIE2_INDEX_SUFFIXES
-    ):
-        assert path.read_bytes() == path.name.encode()
+    assert read_directory_bytes(subtraction_index_path.parent) == bowtie2_bundle_bytes(
+        "subtraction"
+    )
 
 
 async def test_map_default_isolates(
@@ -569,10 +608,20 @@ async def test_eliminate_subtraction(
         subtractions = []
 
     intermediate = SimpleNamespace()
-    cache = FakeWorkflowCache(subtractions[0].path if subtractions else None)
+    subtraction_index_paths = {}
+
+    if subtractions:
+        await create_subtraction_index(
+            FakeWorkflowCache(subtractions[0].path),
+            logger,
+            proc,
+            FakeRunSubprocess(),
+            subtractions,
+            subtraction_index_paths,
+            work_path,
+        )
 
     await eliminate_subtraction(
-        cache,
         intermediate,
         isolate_fastq_path,
         isolate_bam_path,
@@ -581,6 +630,7 @@ async def test_eliminate_subtraction(
         proc,
         results,
         run_subprocess,
+        subtraction_index_paths,
         subtractions,
         subtracted_path,
         work_path,

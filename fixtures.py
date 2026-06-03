@@ -26,6 +26,11 @@ def reference_index_path(work_path: Path):
 
 
 @fixture
+def subtraction_index_paths() -> dict[str, Path]:
+    return {}
+
+
+@fixture
 def isolate_fasta_path(isolate_path: Path):
     return isolate_path / "isolate_index.fa"
 

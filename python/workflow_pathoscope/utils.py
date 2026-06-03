@@ -3,7 +3,7 @@ import gzip
 import json
 from pathlib import Path
 
-from workflow_pathoscope.rust import run_expectation_maximization, PathoscopeResults
+from workflow_pathoscope.rust import PathoscopeResults, run_expectation_maximization
 
 
 def _open_json(path: Path):
