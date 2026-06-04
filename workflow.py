@@ -3,16 +3,25 @@ import os
 import shlex
 import shutil
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import Any
 
 from virtool.workflow import hooks, step
 from virtool.workflow.data.analyses import WFAnalysis
+from virtool.workflow.data.cache import WorkflowCache
 from virtool.workflow.data.indexes import WFIndex
 from virtool.workflow.data.samples import WFSample
 from virtool.workflow.data.subtractions import WFSubtraction
 from virtool.workflow.runtime.run_subprocess import RunSubprocess
-from workflow_pathoscope.utils import run_pathoscope, write_isolate_fasta, write_report
+from workflow_pathoscope.utils import (
+    build_bowtie2_index,
+    create_mapping_index,
+    run_pathoscope,
+    write_default_isolate_fasta,
+    write_isolate_fasta,
+    write_report,
+)
 
 from workflow_pathoscope.rust import (
     find_candidate_otus_with_bowtie2,
@@ -25,9 +34,88 @@ from workflow_pathoscope.rust import (
 init_logging("info")
 
 
+def get_subtraction_index_path(
+    subtraction_indexes_path: Path,
+    subtraction_id: str,
+) -> Path:
+    return subtraction_indexes_path / subtraction_id / "subtraction"
+
+
 @hooks.on_failure
 async def delete_analysis_document(analysis: WFAnalysis):
     await analysis.delete()
+
+
+@step
+async def create_reference_index(
+    cache: WorkflowCache,
+    index: WFIndex,
+    logger,
+    proc: int,
+    run_subprocess: RunSubprocess,
+    reference_index_path: Path,
+) -> Path:
+    """Ensure the reference Bowtie2 index exists locally."""
+    with TemporaryDirectory(prefix="pathoscope-reference-") as temp_dir:
+        reference_fasta_path = Path(temp_dir) / "reference.fa"
+
+        await asyncio.to_thread(
+            write_default_isolate_fasta,
+            index.json_path,
+            reference_fasta_path,
+        )
+
+        logger.info(
+            "assembled default reference fasta",
+            source=str(index.json_path),
+        )
+
+        await create_mapping_index(
+            cache,
+            logger,
+            proc,
+            run_subprocess,
+            fasta_path=reference_fasta_path,
+            index_kind="reference_mapping_index",
+            index_prefix=reference_index_path,
+            parent_id=index.id,
+            extra_params={
+                "source": "index_json",
+                "selection": "default_isolates",
+            },
+        )
+
+    return reference_index_path
+
+
+@step
+async def create_subtraction_index(
+    cache: WorkflowCache,
+    logger,
+    proc: int,
+    run_subprocess: RunSubprocess,
+    subtractions: list[WFSubtraction],
+    subtraction_indexes_path: Path,
+) -> Path:
+    """Ensure subtraction Bowtie2 indexes exist locally."""
+    for subtraction in subtractions:
+        subtraction_index_path = get_subtraction_index_path(
+            subtraction_indexes_path,
+            subtraction.id,
+        )
+
+        await create_mapping_index(
+            cache,
+            logger,
+            proc,
+            run_subprocess,
+            fasta_path=subtraction.fasta_path,
+            index_kind="subtraction_mapping_index",
+            index_prefix=subtraction_index_path,
+            parent_id=subtraction.id,
+        )
+
+    return subtraction_indexes_path
 
 
 @step
@@ -37,6 +125,7 @@ async def map_default_isolates(
     index: WFIndex,
     proc: int,
     p_score_cutoff: float,
+    reference_index_path: Path,
     sample: WFSample,
 ):
     """Map sample reads to all default isolates to identify candidate OTUs.
@@ -47,7 +136,7 @@ async def map_default_isolates(
 
     candidate_otus = await asyncio.to_thread(
         find_candidate_otus_with_bowtie2,
-        str(index.bowtie_path),
+        str(reference_index_path),
         [str(path) for path in sample.read_paths],
         proc,
         p_score_cutoff,
@@ -76,14 +165,11 @@ async def build_isolate_index(
         isolate_fasta_path,
     )
 
-    await run_subprocess(
-        [
-            "bowtie2-build",
-            "--threads",
-            str(proc),
-            str(isolate_fasta_path),
-            str(isolate_index_path),
-        ],
+    await build_bowtie2_index(
+        isolate_fasta_path,
+        isolate_index_path,
+        proc,
+        run_subprocess,
     )
 
 
@@ -125,6 +211,7 @@ async def eliminate_subtraction(
     proc: int,
     results: dict[str, Any],
     run_subprocess: RunSubprocess,
+    subtraction_indexes_path: Path,
     subtractions: list[WFSubtraction],
     subtracted_bam_path: Path,
     work_path: Path,
@@ -145,6 +232,7 @@ async def eliminate_subtraction(
     :param proc: number of processors to use
     :param results: the results to send to the api when the workflow is complete
     :param run_subprocess: runs a subprocess with error handling
+    :param subtraction_indexes_path: path containing Bowtie2 indexes keyed by subtraction ID
     :param subtractions: the subtraction to align and eliminate reads against
     :param subtracted_bam_path: path to the BAM file with subtraction-mapped reads removed
     :param work_path: path to the workflow working directory
@@ -177,9 +265,14 @@ async def eliminate_subtraction(
             name=subtraction.name,
         )
 
+        subtraction_index_path = get_subtraction_index_path(
+            subtraction_indexes_path,
+            subtraction.id,
+        )
+
         bowtie_cmd = (
             f"bowtie2 --local --no-unal -N 0 -p {proc} "
-            f"-x {shlex.quote(str(subtraction.bowtie2_index_path))} "
+            f"-x {shlex.quote(str(subtraction_index_path))} "
             f"-U {current_fastq_path}"
         )
 

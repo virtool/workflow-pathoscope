@@ -21,6 +21,16 @@ def isolate_path(work_path: Path):
 
 
 @fixture
+def reference_index_path(work_path: Path):
+    return work_path / "reference_index" / "reference"
+
+
+@fixture
+def subtraction_indexes_path(work_path: Path) -> Path:
+    return work_path / "subtraction_indexes"
+
+
+@fixture
 def isolate_fasta_path(isolate_path: Path):
     return isolate_path / "isolate_index.fa"
 
