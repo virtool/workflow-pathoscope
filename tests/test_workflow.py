@@ -333,7 +333,7 @@ async def test_create_reference_index_hit(
         index.id,
         FakeRunSubprocess(),
         {
-            "source": "index.json_path",
+            "source": "index_json",
             "selection": "default_isolates",
         },
     )
@@ -375,7 +375,7 @@ async def test_create_reference_index_miss(
         index.id,
         FakeRunSubprocess(),
         {
-            "source": "index.json_path",
+            "source": "index_json",
             "selection": "default_isolates",
         },
     )
@@ -388,7 +388,7 @@ async def test_create_reference_index_miss(
         "workflow": "pathoscope",
         "workflow_version": "UNKNOWN",
         "parent_id": index.id,
-        "source": "index.json_path",
+        "source": "index_json",
         "selection": "default_isolates",
         "tool_name": "bowtie2-build",
         "tool_version": "2.5.4",
@@ -430,7 +430,7 @@ async def test_create_reference_index_continues_when_cache_put_is_skipped(
         index.id,
         FakeRunSubprocess(),
         {
-            "source": "index.json_path",
+            "source": "index_json",
             "selection": "default_isolates",
         },
     )

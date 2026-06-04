@@ -80,7 +80,7 @@ async def create_reference_index(
             index_prefix=reference_index_path,
             parent_id=index.id,
             extra_params={
-                "source": "index.json_path",
+                "source": "index_json",
                 "selection": "default_isolates",
             },
         )
