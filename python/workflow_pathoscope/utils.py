@@ -14,17 +14,11 @@ from workflow_pathoscope.rust import PathoscopeResults, run_expectation_maximiza
 
 
 BOWTIE2_BUILD_TOOL = "bowtie2-build"
-BOWTIE2_BUILD_VERSION_ATTR = "_bowtie2_build_version"
 WORKFLOW_NAME = "pathoscope"
 WORKFLOW_VERSION = get_workflow_version()
 
 
 async def get_bowtie2_build_version(run_subprocess: RunSubprocess) -> str:
-    cached_version = getattr(run_subprocess, BOWTIE2_BUILD_VERSION_ATTR, None)
-
-    if cached_version is not None:
-        return cached_version
-
     output = []
 
     async def collect_stdout(line: bytes) -> None:
@@ -40,10 +34,7 @@ async def get_bowtie2_build_version(run_subprocess: RunSubprocess) -> str:
     if match is None:
         raise ValueError("Could not parse bowtie2-build version")
 
-    version = match.group(1)
-    setattr(run_subprocess, BOWTIE2_BUILD_VERSION_ATTR, version)
-
-    return version
+    return match.group(1)
 
 
 async def get_mapping_index_cache_params(
