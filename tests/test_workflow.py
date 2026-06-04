@@ -83,10 +83,10 @@ class FakeWorkflowCache:
 
         target.mkdir(parents=True, exist_ok=True)
 
-        for path in self.hit_source.iterdir():
-            shutil.copyfile(path, target / path.name)
+        restored_path = target / self.hit_source.name
+        shutil.copytree(self.hit_source, restored_path)
 
-        return CacheHit(key, target)
+        return CacheHit(key, restored_path)
 
     async def put(self, key: str, source: Path, params: dict | None = None):
         self.puts.append((key, source, params))
@@ -297,7 +297,7 @@ async def test_create_reference_index_hit(
     tmp_path: Path,
 ):
     write_reference_json(index.json_path)
-    source = tmp_path / "cached-reference"
+    source = tmp_path / reference_index_path.parent.name
     write_bowtie2_bundle(
         source,
         "reference",
@@ -330,7 +330,7 @@ async def test_create_reference_index_hit(
     assert cache.gets == [
         (
             derive_key(params),
-            reference_index_path.parent,
+            reference_index_path.parent.parent,
         ),
     ]
     assert cache.puts == []
@@ -369,7 +369,7 @@ async def test_create_reference_index_miss(
         },
     )
     key = derive_key(params)
-    assert cache.gets == [(key, reference_index_path.parent)]
+    assert cache.gets == [(key, reference_index_path.parent.parent)]
     assert cache.puts == [(key, reference_index_path.parent, params)]
     assert result_index_path == reference_index_path
     assert params == {
@@ -414,7 +414,7 @@ async def test_create_subtraction_index_hit(
     subtraction_indexes_path: Path,
     tmp_path: Path,
 ):
-    source = tmp_path / "cached-subtraction"
+    source = tmp_path / subtraction_index_path.parent.name
     write_bowtie2_bundle(
         source,
         "subtraction",
@@ -444,7 +444,7 @@ async def test_create_subtraction_index_hit(
     assert cache.gets == [
         (
             derive_key(params),
-            subtraction_index_path.parent,
+            subtraction_index_path.parent.parent,
         ),
     ]
     assert cache.puts == []
@@ -480,7 +480,7 @@ async def test_create_subtraction_index_miss(
         FakeRunSubprocess(),
     )
     key = derive_key(params)
-    assert cache.gets == [(key, subtraction_index_path.parent)]
+    assert cache.gets == [(key, subtraction_index_path.parent.parent)]
     assert cache.puts == [(key, subtraction_index_path.parent, params)]
     assert result_indexes_path == subtraction_indexes_path
     assert params == {
@@ -590,6 +590,7 @@ async def test_eliminate_subtraction(
     subtraction_indexes_path: Path,
     run_subprocess: RunSubprocess,
     snapshot: SnapshotAssertion,
+    tmp_path: Path,
     work_path: Path,
 ):
     isolate_fastq_path = work_path / "to_isolates.fq"
@@ -609,8 +610,11 @@ async def test_eliminate_subtraction(
     intermediate = SimpleNamespace()
 
     if subtractions:
+        cached_subtraction_path = tmp_path / subtractions[0].id
+        shutil.copytree(subtractions[0].path, cached_subtraction_path)
+
         await create_subtraction_index(
-            FakeWorkflowCache(subtractions[0].path),
+            FakeWorkflowCache(cached_subtraction_path),
             logger,
             proc,
             FakeRunSubprocess(),

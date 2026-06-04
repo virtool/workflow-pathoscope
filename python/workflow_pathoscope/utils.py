@@ -87,6 +87,7 @@ async def create_mapping_index(
     extra_params: dict[str, str] | None = None,
 ) -> None:
     index_dir = index_prefix.parent
+    cache_restore_parent = index_dir.parent
     params = await get_mapping_index_cache_params(
         index_kind,
         parent_id,
@@ -103,7 +104,7 @@ async def create_mapping_index(
 
     log.info("checking workflow cache")
 
-    result = await cache.get(key, index_dir)
+    result = await cache.get(key, cache_restore_parent)
 
     if isinstance(result, CacheHit):
         log.info("restored cached mapping index", outcome="hit")
