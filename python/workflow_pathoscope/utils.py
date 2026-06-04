@@ -8,12 +8,14 @@ from pathlib import Path
 from virtool.caches.utils import derive_key
 from virtool.workflow.data.cache import CacheHit, WorkflowCache
 from virtool.workflow.runtime.run_subprocess import RunSubprocess
+from virtool.workflow.utils import get_workflow_version
 
 from workflow_pathoscope.rust import PathoscopeResults, run_expectation_maximization
 
 
 BOWTIE2_BUILD_TOOL = "bowtie2-build"
 WORKFLOW_NAME = "pathoscope"
+WORKFLOW_VERSION = get_workflow_version()
 
 
 async def get_bowtie2_build_version(run_subprocess: RunSubprocess) -> str:
@@ -46,6 +48,7 @@ async def get_mapping_index_cache_params(
     params = {
         "index_kind": index_kind,
         "workflow": WORKFLOW_NAME,
+        "workflow_version": WORKFLOW_VERSION,
         "parent_id": parent_id,
         "tool_name": BOWTIE2_BUILD_TOOL,
         "tool_version": tool_version,
@@ -121,9 +124,12 @@ async def create_mapping_index(
         run_subprocess,
     )
 
-    await cache.put(key, index_dir, params=params)
+    created = await cache.put(key, index_dir, params=params)
 
-    log.info("cached built mapping index", outcome="put")
+    if created:
+        log.info("cached built mapping index", outcome="put")
+    else:
+        log.info("mapping index cache already exists", outcome="put_skipped")
 
 
 def _open_json(path: Path):

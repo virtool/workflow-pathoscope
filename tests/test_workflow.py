@@ -70,8 +70,15 @@ def subtraction_index_path(
 
 
 class FakeWorkflowCache:
-    def __init__(self, hit_source: Path | None = None):
+    def __init__(
+        self,
+        hit_source: Path | None = None,
+        put_exception: Exception | None = None,
+        put_created: bool = True,
+    ):
         self.hit_source = hit_source
+        self.put_exception = put_exception
+        self.put_created = put_created
         self.gets = []
         self.puts = []
 
@@ -90,7 +97,11 @@ class FakeWorkflowCache:
 
     async def put(self, key: str, source: Path, params: dict | None = None):
         self.puts.append((key, source, params))
-        return True
+
+        if self.put_exception is not None:
+            raise self.put_exception
+
+        return self.put_created
 
 
 class FakeRunSubprocess:
@@ -375,6 +386,7 @@ async def test_create_reference_index_miss(
     assert params == {
         "index_kind": "reference_mapping_index",
         "workflow": "pathoscope",
+        "workflow_version": "UNKNOWN",
         "parent_id": index.id,
         "source": "index.json_path",
         "selection": "default_isolates",
@@ -393,6 +405,62 @@ async def test_create_reference_index_miss(
     assert read_directory_bytes(reference_index_path.parent) == {
         **bowtie2_bundle_bytes("reference"),
     }
+
+
+async def test_create_reference_index_continues_when_cache_put_is_skipped(
+    index: WFIndex,
+    reference_index_path: Path,
+):
+    write_reference_json(index.json_path)
+    cache = FakeWorkflowCache(put_created=False)
+    run_subprocess = FakeRunSubprocess()
+    logger = get_logger("test")
+
+    result_index_path = await create_reference_index(
+        cache,
+        index,
+        logger,
+        4,
+        run_subprocess,
+        reference_index_path,
+    )
+
+    params = await get_mapping_index_cache_params(
+        "reference_mapping_index",
+        index.id,
+        FakeRunSubprocess(),
+        {
+            "source": "index.json_path",
+            "selection": "default_isolates",
+        },
+    )
+    key = derive_key(params)
+    assert cache.gets == [(key, reference_index_path.parent.parent)]
+    assert cache.puts == [(key, reference_index_path.parent, params)]
+    assert result_index_path == reference_index_path
+    assert read_directory_bytes(reference_index_path.parent) == {
+        **bowtie2_bundle_bytes("reference"),
+    }
+
+
+async def test_create_reference_index_raises_unexpected_cache_put_failure(
+    index: WFIndex,
+    reference_index_path: Path,
+):
+    write_reference_json(index.json_path)
+    cache = FakeWorkflowCache(put_exception=RuntimeError("cache upload failed"))
+    run_subprocess = FakeRunSubprocess()
+    logger = get_logger("test")
+
+    with pytest.raises(RuntimeError, match="cache upload failed"):
+        await create_reference_index(
+            cache,
+            index,
+            logger,
+            4,
+            run_subprocess,
+            reference_index_path,
+        )
 
 
 def test_write_default_isolate_fasta(tmp_path: Path):
@@ -486,6 +554,7 @@ async def test_create_subtraction_index_miss(
     assert params == {
         "index_kind": "subtraction_mapping_index",
         "workflow": "pathoscope",
+        "workflow_version": "UNKNOWN",
         "parent_id": subtraction.id,
         "tool_name": "bowtie2-build",
         "tool_version": "2.5.4",
