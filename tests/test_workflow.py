@@ -60,7 +60,7 @@ BOWTIE2_INDEX_SUFFIXES = (
     "rev.2.bt2",
 )
 REDUNDANT_REFERENCE_JSON_PATH = (
-    Path(__file__).parent / "assests" / "redundant_reference.json"
+    Path(__file__).parent / "assets" / "redundant_reference.json"
 )
 TOOL_VERSION_PATTERN = re.compile(r"\d+(?:\.\d+)+(?:[-+._A-Za-z0-9]*)?")
 
@@ -451,7 +451,7 @@ async def test_collapse_reference_json_outputs_collapsed_reference_fasta(
         isolate_fasta_path,
     ) == {
         "default-a": 20,
-        "default-b ": 20,
+        "default-b": 20,
         "representative-1-a": 20,
         "representative-1-b": 20,
         "representative-2-a": 20,
