@@ -4,9 +4,11 @@ import gzip
 import json
 import re
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from virtool.caches.utils import derive_key
 from virtool.workflow.data.cache import CacheHit, WorkflowCache
+from virtool.workflow.errors import SubprocessFailedError
 from virtool.workflow.runtime.run_subprocess import RunSubprocess
 from virtool.workflow.utils import get_workflow_version
 
@@ -14,6 +16,8 @@ from workflow_pathoscope.rust import PathoscopeResults, run_expectation_maximiza
 
 
 BOWTIE2_BUILD_TOOL = "bowtie2-build"
+CD_HIT_EST_TOOL = "cd-hit-est"
+CD_HIT_EST_IDENTITY = "0.99"
 WORKFLOW_NAME = "pathoscope"
 WORKFLOW_VERSION = get_workflow_version()
 
@@ -35,6 +39,48 @@ async def get_bowtie2_build_version(run_subprocess: RunSubprocess) -> str:
         raise ValueError("Could not parse bowtie2-build version")
 
     return match.group(1)
+
+
+async def get_cd_hit_est_version(run_subprocess: RunSubprocess) -> str:
+    output = []
+
+    async def collect_output(line: bytes) -> None:
+        output.append(line.decode())
+
+    try:
+        await run_subprocess(
+            [CD_HIT_EST_TOOL, "-h"],
+            stderr_handler=collect_output,
+            stdout_handler=collect_output,
+        )
+    except SubprocessFailedError:
+        # cd-hit-est -h prints help/version text and exits with code 1.
+        pass
+
+    match = re.search(r"\bCD-HIT\s+version\s+([^\s]+)", "".join(output))
+
+    if match is None:
+        raise ValueError("Could not parse cd-hit-est version")
+
+    return match.group(1)
+
+
+async def get_reference_collapse_cache_params(
+    parent_id: str,
+    run_subprocess: RunSubprocess,
+) -> dict[str, str]:
+    tool_version = await get_cd_hit_est_version(run_subprocess)
+
+    return {
+        "index_kind": "collapsed_reference",
+        "workflow": WORKFLOW_NAME,
+        "workflow_version": WORKFLOW_VERSION,
+        "parent_id": parent_id,
+        "source": "index_json",
+        "tool_name": CD_HIT_EST_TOOL,
+        "tool_version": tool_version,
+        "identity": CD_HIT_EST_IDENTITY,
+    }
 
 
 async def get_mapping_index_cache_params(
@@ -144,6 +190,193 @@ def _get_reference_otus(reference_data):
         return reference_data["otus"]
 
     return reference_data
+
+
+def _get_otu_schema_segment_names(otu: dict) -> set[str]:
+    return {str(segment["name"]) for segment in otu["schema"]}
+
+
+def _get_schema_sequence_segment_key(
+    otu: dict,
+    sequence: dict,
+    valid_schema_segments: set[str],
+) -> str:
+    segment_key = sequence["segment"]
+
+    if segment_key not in valid_schema_segments:
+        raise ValueError(
+            f"Sequence {sequence['_id']} uses segment {segment_key!r}, which is not "
+            f"defined in OTU {otu['_id']} schema"
+        )
+
+    return segment_key
+
+
+def _write_fasta(sequences: list[dict], path: Path) -> None:
+    with open(path, "w") as handle:
+        for sequence in sequences:
+            handle.write(f">{sequence['_id']}\n{sequence['sequence']}\n")
+
+
+def _parse_cd_hit_clusters(cluster_path: Path) -> dict[str, str]:
+    representatives_by_sequence_id = {}
+    cluster_sequence_ids = []
+    representative_id = None
+
+    def flush_cluster() -> None:
+        if representative_id is None:
+            return
+
+        for sequence_id in cluster_sequence_ids:
+            representatives_by_sequence_id[sequence_id] = representative_id
+
+    with open(cluster_path) as handle:
+        for line in handle:
+            line = line.strip()
+
+            if line.startswith(">Cluster"):
+                flush_cluster()
+                cluster_sequence_ids = []
+                representative_id = None
+                continue
+
+            match = re.search(r">(.+?)\.\.\.", line)
+
+            if match is None:
+                continue
+
+            sequence_id = match.group(1)
+            cluster_sequence_ids.append(sequence_id)
+
+            if line.endswith("*"):
+                representative_id = sequence_id
+
+    flush_cluster()
+
+    return representatives_by_sequence_id
+
+
+def _build_representative_set(
+    isolate: dict,
+    representatives_by_sequence_id: dict[str, str],
+) -> frozenset[str]:
+    return frozenset(
+        representatives_by_sequence_id[sequence["_id"]]
+        for sequence in isolate["sequences"]
+    )
+
+
+async def collapse_reference_json(
+    json_path: Path,
+    target_path: Path,
+    proc: int,
+    run_subprocess: RunSubprocess,
+) -> dict[str, int]:
+    """Collapse redundant isolates in a reference JSON using cd-hit-est clusters."""
+    with _open_json(json_path) as handle:
+        reference_data = json.load(handle)
+
+    otus = _get_reference_otus(reference_data)
+    before_count = 0
+    after_count = 0
+
+    with TemporaryDirectory(prefix="pathoscope-collapse-") as temp_dir:
+        temp_path = Path(temp_dir)
+
+        for otu in otus:
+            sequences_by_segment = {}
+            valid_schema_segments = _get_otu_schema_segment_names(otu)
+            before_count += len(otu["isolates"])
+            for isolate in otu["isolates"]:
+                for sequence in isolate["sequences"]:
+                    segment_key = _get_schema_sequence_segment_key(
+                        otu,
+                        sequence,
+                        valid_schema_segments,
+                    )
+
+                    sequences_by_segment.setdefault(segment_key, []).append(sequence)
+
+            representatives_by_sequence_id = {}
+
+            sorted_segment_sequences = sorted(
+                sequences_by_segment.items(),
+                key=lambda item: item[0],
+            )
+
+            for segment_name, sequences in sorted_segment_sequences:
+                segment_input_path = (
+                    temp_path / f"otu-{otu['_id']}-segment-{segment_name}.fa"
+                )
+                segment_output_path = (
+                    temp_path / f"otu-{otu['_id']}-segment-{segment_name}.cdhit"
+                )
+
+                await asyncio.to_thread(_write_fasta, sequences, segment_input_path)
+
+                await run_subprocess(
+                    [
+                        CD_HIT_EST_TOOL,
+                        "-i",
+                        str(segment_input_path),
+                        "-o",
+                        str(segment_output_path),
+                        "-c",
+                        CD_HIT_EST_IDENTITY,
+                        "-T",
+                        str(proc),
+                        "-M",
+                        "0",
+                        "-d",
+                        "0",
+                    ],
+                )
+
+                representatives_by_sequence_id.update(
+                    _parse_cd_hit_clusters(
+                        segment_output_path.with_suffix(".cdhit.clstr")
+                    )
+                )
+
+            default_sequence_ids = {
+                sequence["_id"]
+                for isolate in otu["isolates"]
+                if isolate["default"]
+                for sequence in isolate["sequences"]
+            }
+            seen_representative_sets = set()
+            collapsed_isolates = []
+
+            for isolate in otu["isolates"]:
+                representative_set = _build_representative_set(
+                    isolate,
+                    representatives_by_sequence_id,
+                )
+
+                first_for_set = representative_set not in seen_representative_sets
+                seen_representative_sets.add(representative_set)
+
+                contains_default_sequence = any(
+                    sequence["_id"] in default_sequence_ids
+                    for sequence in isolate["sequences"]
+                )
+
+                if isolate["default"] or contains_default_sequence or first_for_set:
+                    collapsed_isolates.append(isolate)
+
+            otu["isolates"] = collapsed_isolates
+            after_count += len(collapsed_isolates)
+
+    await asyncio.to_thread(target_path.parent.mkdir, parents=True, exist_ok=True)
+
+    with open(target_path, "w") as handle:
+        json.dump(reference_data, handle)
+
+    return {
+        "isolate_count_before": before_count,
+        "isolate_count_after": after_count,
+        "isolate_count_removed": before_count - after_count,
+    }
 
 
 def write_default_isolate_fasta(

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import shlex
 import shutil
@@ -7,16 +8,20 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import Any
 
+from virtool.caches.utils import derive_key
 from virtool.workflow import hooks, step
 from virtool.workflow.data.analyses import WFAnalysis
-from virtool.workflow.data.cache import WorkflowCache
+from virtool.workflow.data.cache import CacheHit, WorkflowCache
 from virtool.workflow.data.indexes import WFIndex
 from virtool.workflow.data.samples import WFSample
 from virtool.workflow.data.subtractions import WFSubtraction
 from virtool.workflow.runtime.run_subprocess import RunSubprocess
 from workflow_pathoscope.utils import (
+    CD_HIT_EST_IDENTITY,
     build_bowtie2_index,
+    collapse_reference_json,
     create_mapping_index,
+    get_reference_collapse_cache_params,
     run_pathoscope,
     write_default_isolate_fasta,
     write_isolate_fasta,
@@ -47,8 +52,66 @@ async def delete_analysis_document(analysis: WFAnalysis):
 
 
 @step
+async def collapse_reference(
+    cache: WorkflowCache,
+    collapsed_reference_path: Path,
+    index: WFIndex,
+    logger,
+    proc: int,
+    run_subprocess: RunSubprocess,
+) -> Path:
+    """Ensure a cd-hit-est collapsed reference JSON exists locally."""
+    params = await get_reference_collapse_cache_params(index.id, run_subprocess)
+    key = derive_key(params)
+    collapsed_reference_dir = collapsed_reference_path.parent
+    log = logger.bind(
+        identity=CD_HIT_EST_IDENTITY,
+        index_kind="collapsed_reference",
+        key=key,
+        parent_id=index.id,
+    )
+
+    log.info("checking workflow cache")
+
+    result = await cache.get(key, collapsed_reference_dir.parent)
+
+    if isinstance(result, CacheHit):
+        log.info("restored cached collapsed reference", outcome="hit")
+        manifest_path = collapsed_reference_dir / "collapse-manifest.json"
+
+        with open(manifest_path) as handle:
+            log.info("reference collapse restored", **json.load(handle))
+
+        return collapsed_reference_path
+
+    log.info("collapsing reference", outcome="miss", source=str(index.json_path))
+
+    stats = await collapse_reference_json(
+        index.json_path,
+        collapsed_reference_path,
+        proc,
+        run_subprocess,
+    )
+
+    with open(collapsed_reference_dir / "collapse-manifest.json", "w") as handle:
+        json.dump(stats, handle)
+
+    log.info("reference collapse complete", **stats)
+
+    created = await cache.put(key, collapsed_reference_dir, params=params)
+
+    if created:
+        log.info("cached collapsed reference", outcome="put")
+    else:
+        log.info("collapsed reference cache already exists", outcome="put_skipped")
+
+    return collapsed_reference_path
+
+
+@step
 async def create_reference_index(
     cache: WorkflowCache,
+    collapsed_reference_path: Path,
     index: WFIndex,
     logger,
     proc: int,
@@ -61,13 +124,13 @@ async def create_reference_index(
 
         await asyncio.to_thread(
             write_default_isolate_fasta,
-            index.json_path,
+            collapsed_reference_path,
             reference_fasta_path,
         )
 
         logger.info(
             "assembled default reference fasta",
-            source=str(index.json_path),
+            source=str(collapsed_reference_path),
         )
 
         await create_mapping_index(
@@ -80,7 +143,8 @@ async def create_reference_index(
             index_prefix=reference_index_path,
             parent_id=index.id,
             extra_params={
-                "source": "index_json",
+                "collapse_identity": CD_HIT_EST_IDENTITY,
+                "source": "collapsed_reference",
                 "selection": "default_isolates",
             },
         )
@@ -149,6 +213,7 @@ async def map_default_isolates(
 
 @step
 async def build_isolate_index(
+    collapsed_reference_path: Path,
     index: WFIndex,
     intermediate: SimpleNamespace,
     isolate_fasta_path: Path,
@@ -161,7 +226,7 @@ async def build_isolate_index(
     intermediate.lengths = await asyncio.to_thread(
         write_isolate_fasta,
         {index.get_otu_id_by_sequence_id(id_) for id_ in intermediate.to_otus},
-        index.json_path,
+        collapsed_reference_path,
         isolate_fasta_path,
     )
 

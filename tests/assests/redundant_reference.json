@@ -1,0 +1,97 @@
+{
+  "otus": [
+    {
+      "_id": "collapse-otu",
+      "schema": [
+        {
+          "name": "a"
+        },
+        {
+          "name": "b"
+        }
+      ],
+      "isolates": [
+        {
+          "_id": "default",
+          "default": true,
+          "sequences": [
+            {
+              "_id": "default-a",
+              "segment": "a",
+              "sequence": "ACGTACGTACGTACGTACGT"
+            },
+            {
+              "_id": "default-b",
+              "segment": "b",
+              "sequence": "TGCATGCATGCATGCATGCA"
+            }
+          ]
+        },
+        {
+          "_id": "representative-1",
+          "default": false,
+          "sequences": [
+            {
+              "_id": "representative-1-a",
+              "segment": "a",
+              "sequence": "ACGTACGTACGTACGTACGT"
+            },
+            {
+              "_id": "representative-1-b",
+              "segment": "b",
+              "sequence": "TGCAGGATCGTTTAACGTAG"
+            }
+          ]
+        },
+        {
+          "_id": "representative-2",
+          "default": false,
+          "sequences": [
+            {
+              "_id": "representative-2-a",
+              "segment": "a",
+              "sequence": "CCCCAAAAGGGGTTTTCCCC"
+            },
+            {
+              "_id": "representative-2-b",
+              "segment": "b",
+              "sequence": "AAAACCCCGGGGTTTTAAAA"
+            }
+          ]
+        },
+        {
+          "_id": "unique-combo",
+          "default": false,
+          "sequences": [
+            {
+              "_id": "unique-combo-a",
+              "segment": "a",
+              "sequence": "CCCCAAAAGGGGTTTTCCCC"
+            },
+            {
+              "_id": "unique-combo-b",
+              "segment": "b",
+              "sequence": "TGCAGGATCGTTTAACGTAG"
+            }
+          ]
+        },
+        {
+          "_id": "duplicate",
+          "default": false,
+          "sequences": [
+            {
+              "_id": "duplicate-a",
+              "segment": "a",
+              "sequence": "CCCCAAAAGGGGTTTTCCCC"
+            },
+            {
+              "_id": "duplicate-b",
+              "segment": "b",
+              "sequence": "AAAACCCCGGGGTTTTAAAA"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
