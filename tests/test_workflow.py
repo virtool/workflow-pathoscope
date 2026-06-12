@@ -479,6 +479,91 @@ async def test_collapse_reference_json_outputs_collapsed_reference_fasta(
     assert "duplicate-b" not in isolate_fasta_path.read_text()
 
 
+async def test_collapse_reference_json_allows_isolates_missing_schema_segments(
+    run_subprocess: RunSubprocess,
+    tmp_path: Path,
+):
+    source_path = tmp_path / "reference.json"
+    collapsed_path = tmp_path / "collapsed" / "reference.json"
+
+    write_redundant_reference_json(source_path)
+
+    with open(source_path) as handle:
+        reference_data = json.load(handle)
+
+    reference_data["otus"][0]["isolates"][0]["sequences"] = [
+        reference_data["otus"][0]["isolates"][0]["sequences"][1],
+    ]
+
+    with open(source_path, "w") as handle:
+        json.dump(reference_data, handle)
+
+    assert await collapse_reference_json(
+        source_path,
+        collapsed_path,
+        2,
+        run_subprocess,
+    ) == {
+        "isolate_count_before": 5,
+        "isolate_count_after": 4,
+        "isolate_count_removed": 1,
+    }
+
+    with open(collapsed_path) as handle:
+        collapsed_reference = json.load(handle)
+
+    assert collapsed_reference["otus"][0]["isolates"][0]["sequences"] == [
+        {
+            "_id": "default-b",
+            "segment": "b",
+            "sequence": "TGCATGCATGCATGCATGCA",
+        },
+    ]
+
+
+async def test_collapse_reference_json_allows_unsegmented_isolates(
+    run_subprocess: RunSubprocess,
+    tmp_path: Path,
+):
+    source_path = tmp_path / "reference.json"
+    collapsed_path = tmp_path / "collapsed" / "reference.json"
+
+    write_redundant_reference_json(source_path)
+
+    with open(source_path) as handle:
+        reference_data = json.load(handle)
+
+    reference_data["otus"][0]["schema"] = []
+
+    for isolate in reference_data["otus"][0]["isolates"]:
+        for sequence in isolate["sequences"]:
+            sequence["segment"] = ""
+
+    with open(source_path, "w") as handle:
+        json.dump(reference_data, handle)
+
+    assert await collapse_reference_json(
+        source_path,
+        collapsed_path,
+        2,
+        run_subprocess,
+    ) == {
+        "isolate_count_before": 5,
+        "isolate_count_after": 4,
+        "isolate_count_removed": 1,
+    }
+
+    with open(collapsed_path) as handle:
+        collapsed_reference = json.load(handle)
+
+    assert collapsed_reference["otus"][0]["schema"] == []
+    assert {
+        sequence["segment"]
+        for isolate in collapsed_reference["otus"][0]["isolates"]
+        for sequence in isolate["sequences"]
+    } == {""}
+
+
 async def test_collapse_reference_json_rejects_isolate_segments_that_do_not_match_schema(
     run_subprocess: RunSubprocess,
     tmp_path: Path,
@@ -491,7 +576,7 @@ async def test_collapse_reference_json_rejects_isolate_segments_that_do_not_matc
     with open(source_path) as handle:
         reference_data = json.load(handle)
 
-    reference_data["otus"][0]["isolates"][0]["sequences"][0]["segment"] = "b"
+    reference_data["otus"][0]["isolates"][0]["sequences"][0]["segment"] = "c"
 
     with open(source_path, "w") as handle:
         json.dump(reference_data, handle)
@@ -499,7 +584,7 @@ async def test_collapse_reference_json_rejects_isolate_segments_that_do_not_matc
     with pytest.raises(
         ValueError,
         match=re.escape(
-            "Isolate default sequence segments ['b'] do not match OTU collapse-otu "
+            "Isolate default sequence segments ['c'] are not defined in OTU collapse-otu "
             "schema segments ['a', 'b']"
         ),
     ):

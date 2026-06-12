@@ -199,11 +199,16 @@ def _validate_isolate_sequence_segments_match_schema(
     schema_segments: set[str],
 ) -> None:
     sequence_segments = {str(sequence["segment"]) for sequence in isolate["sequences"]}
+    unknown_segments = (
+        sequence_segments - schema_segments
+        if schema_segments
+        else {segment for segment in sequence_segments if segment}
+    )
 
-    if sequence_segments != schema_segments:
+    if unknown_segments:
         raise ValueError(
             f"Isolate {isolate['id']} sequence segments "
-            f"{sorted(sequence_segments)!r} do not match OTU {otu['_id']} schema "
+            f"{sorted(unknown_segments)!r} are not defined in OTU {otu['_id']} schema "
             f"segments {sorted(schema_segments)!r}"
         )
 
