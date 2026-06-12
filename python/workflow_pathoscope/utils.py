@@ -266,6 +266,35 @@ def _build_representative_set(
     )
 
 
+async def _collapse_reference_segment(
+    segment_input_path: Path,
+    segment_output_path: Path,
+    sequences: list[dict],
+    run_subprocess: RunSubprocess,
+) -> dict[str, str]:
+    await asyncio.to_thread(_write_fasta, sequences, segment_input_path)
+
+    await run_subprocess(
+        [
+            CD_HIT_EST_TOOL,
+            "-i",
+            str(segment_input_path),
+            "-o",
+            str(segment_output_path),
+            "-c",
+            CD_HIT_EST_IDENTITY,
+            "-T",
+            "1",
+            "-M",
+            "0",
+            "-d",
+            "0",
+        ],
+    )
+
+    return _parse_cd_hit_clusters(segment_output_path.with_suffix(".cdhit.clstr"))
+
+
 async def collapse_reference_json(
     json_path: Path,
     target_path: Path,
@@ -282,6 +311,20 @@ async def collapse_reference_json(
 
     with TemporaryDirectory(prefix="pathoscope-collapse-") as temp_dir:
         temp_path = Path(temp_dir)
+        semaphore = asyncio.Semaphore(proc)
+
+        async def collapse_segment(
+            segment_input_path: Path,
+            segment_output_path: Path,
+            sequences: list[dict],
+        ) -> dict[str, str]:
+            async with semaphore:
+                return await _collapse_reference_segment(
+                    segment_input_path,
+                    segment_output_path,
+                    sequences,
+                    run_subprocess,
+                )
 
         for otu in otus:
             sequences_by_segment = {}
@@ -303,6 +346,7 @@ async def collapse_reference_json(
                 sequences_by_segment.items(),
                 key=lambda item: item[0],
             )
+            segment_tasks = []
 
             for segment_name, sequences in sorted_segment_sequences:
                 segment_input_path = (
@@ -312,31 +356,16 @@ async def collapse_reference_json(
                     temp_path / f"otu-{otu['_id']}-segment-{segment_name}.cdhit"
                 )
 
-                await asyncio.to_thread(_write_fasta, sequences, segment_input_path)
-
-                await run_subprocess(
-                    [
-                        CD_HIT_EST_TOOL,
-                        "-i",
-                        str(segment_input_path),
-                        "-o",
-                        str(segment_output_path),
-                        "-c",
-                        CD_HIT_EST_IDENTITY,
-                        "-T",
-                        str(proc),
-                        "-M",
-                        "0",
-                        "-d",
-                        "0",
-                    ],
-                )
-
-                representatives_by_sequence_id.update(
-                    _parse_cd_hit_clusters(
-                        segment_output_path.with_suffix(".cdhit.clstr")
+                segment_tasks.append(
+                    collapse_segment(
+                        segment_input_path,
+                        segment_output_path,
+                        sequences,
                     )
                 )
+
+            for representatives in await asyncio.gather(*segment_tasks):
+                representatives_by_sequence_id.update(representatives)
 
             default_sequence_ids = {
                 sequence["_id"]
