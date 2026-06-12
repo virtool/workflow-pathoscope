@@ -202,7 +202,7 @@ def _validate_isolate_sequence_segments_match_schema(
 
     if sequence_segments != schema_segments:
         raise ValueError(
-            f"Isolate {isolate['_id']} sequence segments "
+            f"Isolate {isolate['id']} sequence segments "
             f"{sorted(sequence_segments)!r} do not match OTU {otu['_id']} schema "
             f"segments {sorted(schema_segments)!r}"
         )

@@ -236,6 +236,7 @@ def write_reference_json(path: Path):
                         "_id": "default-otu",
                         "isolates": [
                             {
+                                "id": "default",
                                 "default": True,
                                 "sequences": [
                                     {"_id": "default-a", "sequence": "ACGT"},
@@ -243,6 +244,7 @@ def write_reference_json(path: Path):
                                 ],
                             },
                             {
+                                "id": "non-default",
                                 "default": False,
                                 "sequences": [
                                     {"_id": "non-default", "sequence": "GGGG"},
@@ -254,6 +256,7 @@ def write_reference_json(path: Path):
                         "_id": "non-default-otu",
                         "isolates": [
                             {
+                                "id": "non-default-only",
                                 "default": False,
                                 "sequences": [
                                     {"_id": "non-default-only", "sequence": "CCCC"},
@@ -406,6 +409,14 @@ async def test_collapse_reference_miss_retains_required_isolates(
     with open(collapsed_reference_path) as handle:
         collapsed_reference = json.load(handle)
 
+    assert [
+        isolate["id"] for isolate in collapsed_reference["otus"][0]["isolates"]
+    ] == [
+        "default",
+        "representative-1",
+        "representative-2",
+        "unique-combo",
+    ]
     assert [
         (isolate["sequences"][0]["_id"], isolate["sequences"][1]["_id"])
         for isolate in collapsed_reference["otus"][0]["isolates"]
