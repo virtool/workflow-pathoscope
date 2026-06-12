@@ -36,9 +36,9 @@ init_logging("info")
 
 def get_subtraction_index_path(
     subtraction_indexes_path: Path,
-    subtraction_id: str,
+    subtraction_id: int,
 ) -> Path:
-    return subtraction_indexes_path / subtraction_id / "subtraction"
+    return subtraction_indexes_path / str(subtraction_id) / "subtraction"
 
 
 @hooks.on_failure

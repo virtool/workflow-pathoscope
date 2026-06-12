@@ -679,7 +679,7 @@ async def test_eliminate_subtraction(
     intermediate = SimpleNamespace()
 
     if subtractions:
-        cached_subtraction_path = tmp_path / subtractions[0].id
+        cached_subtraction_path = tmp_path / str(subtractions[0].id)
         shutil.copytree(subtractions[0].path, cached_subtraction_path)
 
         await create_subtraction_index(
