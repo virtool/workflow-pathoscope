@@ -409,7 +409,12 @@ async def test_collapse_reference_miss_retains_required_isolates(
     assert [
         (isolate["sequences"][0]["_id"], isolate["sequences"][1]["_id"])
         for isolate in collapsed_reference["otus"][0]["isolates"]
-    ] == [("default-a", "default-b"), ("representative-1-a", "representative-1-b"), ("representative-2-a", "representative-2-b"), ("unique-combo-a", "unique-combo-b")]
+    ] == [
+        ("default-a", "default-b"),
+        ("representative-1-a", "representative-1-b"),
+        ("representative-2-a", "representative-2-b"),
+        ("unique-combo-a", "unique-combo-b"),
+    ]
     assert json.loads(
         (collapsed_reference_path.parent / "collapse-manifest.json").read_text()
     ) == {
@@ -463,7 +468,7 @@ async def test_collapse_reference_json_outputs_collapsed_reference_fasta(
     assert "duplicate-b" not in isolate_fasta_path.read_text()
 
 
-async def test_collapse_reference_json_rejects_sequences_outside_otu_schema(
+async def test_collapse_reference_json_rejects_isolate_segments_that_do_not_match_schema(
     run_subprocess: RunSubprocess,
     tmp_path: Path,
 ):
@@ -475,16 +480,16 @@ async def test_collapse_reference_json_rejects_sequences_outside_otu_schema(
     with open(source_path) as handle:
         reference_data = json.load(handle)
 
-    reference_data["otus"][0]["isolates"][0]["sequences"][0]["segment"] = "c"
+    reference_data["otus"][0]["isolates"][0]["sequences"][0]["segment"] = "b"
 
     with open(source_path, "w") as handle:
         json.dump(reference_data, handle)
 
     with pytest.raises(
         ValueError,
-        match=(
-            "Sequence default-a uses segment 'c', which is not defined in "
-            "OTU collapse-otu schema"
+        match=re.escape(
+            "Isolate default sequence segments ['b'] do not match OTU collapse-otu "
+            "schema segments ['a', 'b']"
         ),
     ):
         await collapse_reference_json(

@@ -3,6 +3,7 @@ import csv
 import gzip
 import json
 import re
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -192,24 +193,19 @@ def _get_reference_otus(reference_data):
     return reference_data
 
 
-def _get_otu_schema_segment_names(otu: dict) -> set[str]:
-    return {str(segment["name"]) for segment in otu["schema"]}
-
-
-def _get_schema_sequence_segment_key(
+def _validate_isolate_sequence_segments_match_schema(
     otu: dict,
-    sequence: dict,
-    valid_schema_segments: set[str],
-) -> str:
-    segment_key = sequence["segment"]
+    isolate: dict,
+    schema_segments: set[str],
+) -> None:
+    sequence_segments = {str(sequence["segment"]) for sequence in isolate["sequences"]}
 
-    if segment_key not in valid_schema_segments:
+    if sequence_segments != schema_segments:
         raise ValueError(
-            f"Sequence {sequence['_id']} uses segment {segment_key!r}, which is not "
-            f"defined in OTU {otu['_id']} schema"
+            f"Isolate {isolate['_id']} sequence segments "
+            f"{sorted(sequence_segments)!r} do not match OTU {otu['_id']} schema "
+            f"segments {sorted(schema_segments)!r}"
         )
-
-    return segment_key
 
 
 def _write_fasta(sequences: list[dict], path: Path) -> None:
@@ -266,6 +262,22 @@ def _build_representative_set(
     )
 
 
+def _validate_and_group_otu_sequences_by_segment(otu: dict) -> dict[str, list[dict]]:
+    sequences_by_segment = {}
+    schema_segments = {str(segment["name"]) for segment in otu["schema"]}
+
+    for isolate in otu["isolates"]:
+        _validate_isolate_sequence_segments_match_schema(
+            otu,
+            isolate,
+            schema_segments,
+        )
+        for sequence in isolate["sequences"]:
+            sequences_by_segment.setdefault(sequence["segment"], []).append(sequence)
+
+    return sequences_by_segment
+
+
 async def _collapse_reference_segment(
     segment_input_path: Path,
     segment_output_path: Path,
@@ -293,6 +305,79 @@ async def _collapse_reference_segment(
     )
 
     return _parse_cd_hit_clusters(segment_output_path.with_suffix(".cdhit.clstr"))
+
+
+async def _collapse_otu_segments(
+    otu: dict,
+    temp_path: Path,
+    collapse_segment: Callable[[Path, Path, list[dict]], Awaitable[dict[str, str]]],
+) -> dict[str, str]:
+    representatives_by_sequence_id = {}
+    sequences_by_segment = _validate_and_group_otu_sequences_by_segment(otu)
+
+    segment_tasks = []
+    sorted_segment_sequences = sorted(
+        sequences_by_segment.items(),
+        key=lambda item: item[0],
+    )
+
+    for segment_name, sequences in sorted_segment_sequences:
+        segment_input_path = temp_path / f"otu-{otu['_id']}-segment-{segment_name}.fa"
+        segment_output_path = (
+            temp_path / f"otu-{otu['_id']}-segment-{segment_name}.cdhit"
+        )
+
+        segment_tasks.append(
+            collapse_segment(
+                segment_input_path,
+                segment_output_path,
+                sequences,
+            )
+        )
+
+    for representatives in await asyncio.gather(*segment_tasks):
+        representatives_by_sequence_id.update(representatives)
+
+    return representatives_by_sequence_id
+
+
+async def _collapse_otu_reference(
+    otu: dict,
+    temp_path: Path,
+    collapse_segment: Callable[[Path, Path, list[dict]], Awaitable[dict[str, str]]],
+) -> dict:
+    representatives_by_sequence_id = await _collapse_otu_segments(
+        otu,
+        temp_path,
+        collapse_segment,
+    )
+
+    default_sequence_ids = {
+        sequence["_id"]
+        for isolate in otu["isolates"]
+        if isolate["default"]
+        for sequence in isolate["sequences"]
+    }
+    seen_representative_sets = set()
+    collapsed_isolates = []
+
+    for isolate in otu["isolates"]:
+        representative_set = _build_representative_set(
+            isolate,
+            representatives_by_sequence_id,
+        )
+
+        first_for_set = representative_set not in seen_representative_sets
+        seen_representative_sets.add(representative_set)
+
+        contains_default_sequence = any(
+            sequence["_id"] in default_sequence_ids for sequence in isolate["sequences"]
+        )
+
+        if isolate["default"] or contains_default_sequence or first_for_set:
+            collapsed_isolates.append(isolate)
+
+    return {**otu, "isolates": collapsed_isolates}
 
 
 async def collapse_reference_json(
@@ -326,80 +411,27 @@ async def collapse_reference_json(
                     run_subprocess,
                 )
 
+        collapsed_otus = []
+
         for otu in otus:
-            sequences_by_segment = {}
-            valid_schema_segments = _get_otu_schema_segment_names(otu)
-            before_count += len(otu["isolates"])
-            for isolate in otu["isolates"]:
-                for sequence in isolate["sequences"]:
-                    segment_key = _get_schema_sequence_segment_key(
-                        otu,
-                        sequence,
-                        valid_schema_segments,
-                    )
-
-                    sequences_by_segment.setdefault(segment_key, []).append(sequence)
-
-            representatives_by_sequence_id = {}
-
-            sorted_segment_sequences = sorted(
-                sequences_by_segment.items(),
-                key=lambda item: item[0],
+            collapsed_otu = await _collapse_otu_reference(
+                otu,
+                temp_path,
+                collapse_segment,
             )
-            segment_tasks = []
+            collapsed_otus.append(collapsed_otu)
+            before_count += len(otu["isolates"])
+            after_count += len(collapsed_otu["isolates"])
 
-            for segment_name, sequences in sorted_segment_sequences:
-                segment_input_path = (
-                    temp_path / f"otu-{otu['_id']}-segment-{segment_name}.fa"
-                )
-                segment_output_path = (
-                    temp_path / f"otu-{otu['_id']}-segment-{segment_name}.cdhit"
-                )
-
-                segment_tasks.append(
-                    collapse_segment(
-                        segment_input_path,
-                        segment_output_path,
-                        sequences,
-                    )
-                )
-
-            for representatives in await asyncio.gather(*segment_tasks):
-                representatives_by_sequence_id.update(representatives)
-
-            default_sequence_ids = {
-                sequence["_id"]
-                for isolate in otu["isolates"]
-                if isolate["default"]
-                for sequence in isolate["sequences"]
-            }
-            seen_representative_sets = set()
-            collapsed_isolates = []
-
-            for isolate in otu["isolates"]:
-                representative_set = _build_representative_set(
-                    isolate,
-                    representatives_by_sequence_id,
-                )
-
-                first_for_set = representative_set not in seen_representative_sets
-                seen_representative_sets.add(representative_set)
-
-                contains_default_sequence = any(
-                    sequence["_id"] in default_sequence_ids
-                    for sequence in isolate["sequences"]
-                )
-
-                if isolate["default"] or contains_default_sequence or first_for_set:
-                    collapsed_isolates.append(isolate)
-
-            otu["isolates"] = collapsed_isolates
-            after_count += len(collapsed_isolates)
+        if isinstance(reference_data, dict):
+            collapsed_reference_data = {**reference_data, "otus": collapsed_otus}
+        else:
+            collapsed_reference_data = collapsed_otus
 
     await asyncio.to_thread(target_path.parent.mkdir, parents=True, exist_ok=True)
 
     with open(target_path, "w") as handle:
-        json.dump(reference_data, handle)
+        json.dump(collapsed_reference_data, handle)
 
     return {
         "isolate_count_before": before_count,
