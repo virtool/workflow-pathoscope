@@ -40,5 +40,5 @@ asyncio_mode = "auto"
 virtool = { git = "https://github.com/virtool/virtool", tag = "38.48.0" }
 
 [build-system]
-requires = ["maturin>=1.14.0,<2.0"]
+requires = ["maturin>=1.14.1,<2.0"]
 build-backend = "maturin"
