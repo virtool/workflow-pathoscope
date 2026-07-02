@@ -165,6 +165,14 @@ async def build_isolate_index(
         isolate_fasta_path,
     )
 
+    if not intermediate.lengths:
+        # A sample can have zero reads mapping to any candidate OTU, producing an
+        # empty isolate FASTA. bowtie2-build exits 1 on empty input (VIR-2569), so
+        # skip building the index. The remaining mapping and reassignment steps
+        # short-circuit on the empty ``intermediate.lengths`` and the analysis is
+        # finished with an empty result.
+        return
+
     await build_bowtie2_index(
         isolate_fasta_path,
         isolate_index_path,
@@ -175,6 +183,7 @@ async def build_isolate_index(
 
 @step
 async def map_isolates(
+    intermediate: SimpleNamespace,
     isolate_fastq_path: Path,
     isolate_index_path: Path,
     isolate_bam_path: Path,
@@ -183,6 +192,11 @@ async def map_isolates(
     sample: WFSample,
 ):
     """Map sample reads to the all isolate index."""
+    if not intermediate.lengths:
+        # No candidate OTUs were found, so no isolate index was built. There is
+        # nothing to map against.
+        return
+
     read_paths = ",".join(str(path) for path in sample.read_paths)
 
     bowtie_cmd = (
@@ -237,6 +251,12 @@ async def eliminate_subtraction(
     :param subtracted_bam_path: path to the BAM file with subtraction-mapped reads removed
     :param work_path: path to the workflow working directory
     """
+
+    if not intermediate.lengths:
+        # No candidate OTUs were found, so no reads were mapped to isolates and
+        # there is nothing to subtract.
+        results["subtracted_count"] = 0
+        return
 
     if len(subtractions) == 0:
         logger.info("no subtractions to eliminate reads against")
@@ -333,6 +353,16 @@ async def reassignment(
     Tab-separated output is written to ``pathoscope.tsv``. The results are also parsed
     and saved to `intermediate.coverage`.
     """
+    if not intermediate.lengths:
+        # No candidate OTUs were found, so no isolate index was built and no reads
+        # were mapped. Finish the analysis with an empty result instead of running
+        # Pathoscope on a non-existent alignment.
+        logger.info("no candidate otus found; uploading empty result")
+
+        await analysis.upload_result({**results, "read_count": 0, "hits": []})
+
+        return
+
     logger.info(
         "running pathoscope",
         subtracted_path=subtracted_bam_path,
