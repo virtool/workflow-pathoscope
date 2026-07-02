@@ -19,6 +19,7 @@ from virtool.workflow.data.subtractions import WFSubtraction
 from virtool.workflow.pytest_plugin import WorkflowData
 
 from workflow import (
+    build_isolate_index,
     create_reference_index,
     create_subtraction_index,
     eliminate_subtraction,
@@ -626,7 +627,10 @@ async def test_map_isolates(
 
     proc = 1
 
+    intermediate = SimpleNamespace(lengths={"foo": 100})
+
     await map_isolates(
+        intermediate,
         isolate_fastq_path,
         isolate_index_path,
         isolate_bam_path,
@@ -676,7 +680,7 @@ async def test_eliminate_subtraction(
     if no_subtractions:
         subtractions = []
 
-    intermediate = SimpleNamespace()
+    intermediate = SimpleNamespace(lengths={"foo": 100})
 
     if subtractions:
         cached_subtraction_path = tmp_path / str(subtractions[0].id)
@@ -829,3 +833,93 @@ async def test_pathoscope(
             report[split[0]] = [float(f"{float(n):.5g}") for n in split[1:]]
 
     assert report == snapshot
+
+
+async def test_build_isolate_index_no_candidates(
+    index: WFIndex,
+    work_path: Path,
+):
+    """When no candidate OTUs are found the isolate FASTA is empty.
+
+    ``bowtie2-build`` exits 1 on an empty FASTA, so the index build must be skipped
+    entirely (VIR-2569) rather than invoking the subprocess.
+    """
+    write_reference_json(index.json_path)
+
+    isolate_path = work_path / "isolates"
+    isolate_path.mkdir()
+
+    run_subprocess = FakeRunSubprocess()
+    intermediate = SimpleNamespace(to_otus=set())
+
+    await build_isolate_index(
+        index,
+        intermediate,
+        isolate_path / "isolate_index.fa",
+        isolate_path / "isolates",
+        run_subprocess,
+        2,
+    )
+
+    assert intermediate.lengths == {}
+    assert run_subprocess.commands == []
+
+
+async def test_no_candidates_uploads_empty_result(
+    analysis: WFAnalysis,
+    index: WFIndex,
+    sample: WFSample,
+    work_path: Path,
+):
+    """With no candidate OTUs the downstream steps short-circuit.
+
+    ``map_isolates``, ``eliminate_subtraction`` and ``reassignment`` must not run any
+    subprocess and the analysis is finished with an empty result (VIR-2569).
+    """
+    run_subprocess = FakeRunSubprocess()
+    intermediate = SimpleNamespace(lengths={})
+    logger = get_logger("test")
+    results = {}
+
+    await map_isolates(
+        intermediate,
+        work_path / "isolate_mapped.fq",
+        work_path / "isolates",
+        work_path / "to_isolates.bam",
+        2,
+        run_subprocess,
+        sample,
+    )
+
+    await eliminate_subtraction(
+        intermediate,
+        work_path / "isolate_mapped.fq",
+        work_path / "to_isolates.bam",
+        logger,
+        0.01,
+        2,
+        results,
+        run_subprocess,
+        work_path / "subtraction_indexes",
+        [],
+        work_path / "subtracted.bam",
+        work_path,
+    )
+
+    assert results["subtracted_count"] == 0
+
+    await reassignment(
+        analysis,
+        index,
+        intermediate,
+        logger,
+        0.01,
+        results,
+        work_path / "subtracted.bam",
+        work_path,
+    )
+
+    assert run_subprocess.commands == []
+    analysis.upload_result.assert_called_once_with(
+        {"subtracted_count": 0, "read_count": 0, "hits": []},
+    )
