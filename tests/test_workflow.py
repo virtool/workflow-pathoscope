@@ -42,14 +42,14 @@ from workflow import (
     map_isolates,
     reassignment,
 )
-from workflow_pathoscope.utils import (
+from workflow_pathoscope.reference import (
     CD_HIT_EST_IDENTITY,
     collapse_reference_json,
-    get_mapping_index_cache_params,
     get_reference_collapse_cache_params,
     write_default_isolate_fasta,
     write_isolate_fasta,
 )
+from workflow_pathoscope.utils import get_mapping_index_cache_params
 
 
 BOWTIE2_INDEX_SUFFIXES = (
@@ -343,15 +343,6 @@ async def test_collapse_reference_hit(
     source = tmp_path / collapsed_reference_path.parent.name
     source.mkdir()
     write_reference_json(source / collapsed_reference_path.name)
-    (source / "collapse-manifest.json").write_text(
-        json.dumps(
-            {
-                "isolate_count_before": 4,
-                "isolate_count_after": 3,
-                "isolate_count_removed": 1,
-            }
-        )
-    )
     params = await get_reference_collapse_cache_params(index.id, run_subprocess)
     key = derive_key(params)
     assert await workflow_cache.put(key, source, params)
@@ -427,13 +418,7 @@ async def test_collapse_reference_miss_retains_required_isolates(
         ("representative-2-a", "representative-2-b"),
         ("unique-combo-a", "unique-combo-b"),
     ]
-    assert json.loads(
-        (collapsed_reference_path.parent / "collapse-manifest.json").read_text()
-    ) == {
-        "isolate_count_before": 5,
-        "isolate_count_after": 4,
-        "isolate_count_removed": 1,
-    }
+    assert not (collapsed_reference_path.parent / "collapse-manifest.json").exists()
 
 
 async def test_collapse_reference_json_outputs_collapsed_reference_fasta(

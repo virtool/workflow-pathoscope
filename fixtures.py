@@ -20,10 +20,6 @@ def get_isolate_path(work_path: Path) -> Path:
     return work_path / "isolates"
 
 
-def get_isolate_fasta_path(isolate_path: Path) -> Path:
-    return isolate_path / "isolate_index.fa"
-
-
 def get_isolate_fastq_path(isolate_path: Path) -> Path:
     return isolate_path / "isolate_mapped.fq"
 
@@ -73,7 +69,7 @@ def subtraction_indexes_path(work_path: Path) -> Path:
 
 @fixture
 def isolate_fasta_path(isolate_path: Path):
-    return get_isolate_fasta_path(isolate_path)
+    return isolate_path / "isolate_index.fa"
 
 
 @fixture

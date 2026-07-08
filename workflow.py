@@ -1,5 +1,4 @@
 import asyncio
-import json
 import os
 import shlex
 import shutil
@@ -16,15 +15,17 @@ from virtool.workflow.data.indexes import WFIndex
 from virtool.workflow.data.samples import WFSample
 from virtool.workflow.data.subtractions import WFSubtraction
 from virtool.workflow.runtime.run_subprocess import RunSubprocess
-from workflow_pathoscope.utils import (
+from workflow_pathoscope.reference import (
     CD_HIT_EST_IDENTITY,
-    build_bowtie2_index,
     collapse_reference_json,
-    create_mapping_index,
     get_reference_collapse_cache_params,
-    run_pathoscope,
     write_default_isolate_fasta,
     write_isolate_fasta,
+)
+from workflow_pathoscope.utils import (
+    build_bowtie2_index,
+    create_mapping_index,
+    run_pathoscope,
     write_report,
 )
 
@@ -77,30 +78,21 @@ async def collapse_reference(
 
     if isinstance(result, CacheHit):
         log.info("restored cached collapsed reference", outcome="hit")
-        manifest_path = collapsed_reference_dir / "collapse-manifest.json"
-
-        with open(manifest_path) as handle:
-            log.info("reference collapse restored", **json.load(handle))
 
         return collapsed_reference_path
 
     log.info("collapsing reference", outcome="miss", source=str(index.json_path))
 
-    stats = await collapse_reference_json(
+    collapse_counts = await collapse_reference_json(
         index.json_path,
         collapsed_reference_path,
         proc,
         run_subprocess,
     )
 
-    with open(collapsed_reference_dir / "collapse-manifest.json", "w") as handle:
-        json.dump(stats, handle)
+    log.info("reference collapse complete", **collapse_counts)
 
-    log.info("reference collapse complete", **stats)
-
-    created = await cache.put(key, collapsed_reference_dir, params=params)
-
-    if created:
+    if await cache.put(key, collapsed_reference_dir, params=params):
         log.info("cached collapsed reference", outcome="put")
     else:
         log.info("collapsed reference cache already exists", outcome="put_skipped")
