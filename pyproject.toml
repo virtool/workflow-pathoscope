@@ -18,13 +18,13 @@ authors = [
 
 [dependency-groups]
 dev = [
-    "maturin[patchelf]>=1.13.3",
+    "maturin[patchelf]>=1.14.1",
     "pysam>=0.24.0",
-    "pytest>=9.0.3,<10.0.0",
+    "pytest>=9.1.1,<10.0.0",
     "pytest-asyncio<=1.4.0,<2.0.0",
     "pytest-mock<=3.15.1,<4.0.0",
     "pytest-structlog>=1.1",
-    "ruff>=0.15.16",
+    "ruff>=0.15.20",
     "syrupy>=4.9.1",
 ]
 
@@ -37,8 +37,8 @@ features = ["pyo3/extension-module"]
 asyncio_mode = "auto"
 
 [tool.uv.sources]
-virtool = { git = "https://github.com/virtool/virtool", tag = "38.17.0" }
+virtool = { git = "https://github.com/virtool/virtool", tag = "38.48.0" }
 
 [build-system]
-requires = ["maturin>=1.13.3,<2.0"]
+requires = ["maturin>=1.14.1,<2.0"]
 build-backend = "maturin"
