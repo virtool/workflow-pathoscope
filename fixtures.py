@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from pyfixtures import fixture
+from virtool.workflow.data.index_sqlite import INDEX_SQLITE_FILE_NAME
 
 
 def get_reference_index_path(work_path: Path) -> Path:
@@ -9,7 +10,7 @@ def get_reference_index_path(work_path: Path) -> Path:
 
 
 def get_collapsed_reference_path(work_path: Path) -> Path:
-    return work_path / "collapsed_reference" / "reference.json"
+    return work_path / "collapsed_reference" / INDEX_SQLITE_FILE_NAME
 
 
 def get_subtraction_indexes_path(work_path: Path) -> Path:
@@ -40,7 +41,7 @@ def get_subtracted_bam_path(work_path: Path) -> Path:
 def intermediate():
     """A namespace for storing intermediate values."""
     return SimpleNamespace(
-        to_otus=set(),
+        candidate_sequence_ids=set(),
     )
 
 

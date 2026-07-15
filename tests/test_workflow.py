@@ -1,5 +1,4 @@
 import asyncio
-import gzip
 import json
 import re
 import shutil
@@ -44,10 +43,8 @@ from workflow import (
 )
 from workflow_pathoscope.reference import (
     CD_HIT_EST_IDENTITY,
-    collapse_reference_json,
+    collapse_reference_index,
     get_reference_collapse_cache_params,
-    write_default_isolate_fasta,
-    write_isolate_fasta,
 )
 from workflow_pathoscope.utils import get_mapping_index_cache_params
 
@@ -224,57 +221,71 @@ def assert_cache_params(
     assert TOOL_VERSION_PATTERN.fullmatch(params["tool_version"])
 
 
-def write_reference_json(path: Path):
-    path.parent.mkdir(parents=True, exist_ok=True)
+async def create_test_index(path: Path) -> WFIndex:
+    def sequence(id_: str, value: str) -> dict:
+        return {
+            "id": id_,
+            "accession": id_,
+            "definition": id_,
+            "host": "",
+            "segment": None,
+            "sequence": value,
+        }
 
-    opener = gzip.open if path.suffix == ".gz" else open
+    def isolate(id_: str, default: bool, sequences: list[dict]) -> dict:
+        return {
+            "id": id_,
+            "default": default,
+            "sequences": sequences,
+            "source_name": id_,
+            "source_type": "isolate",
+        }
 
-    with opener(path, "wt") as f:
-        json.dump(
+    return await WFIndex.create(
+        "test-index",
+        path,
+        None,
+        [
             {
-                "otus": [
-                    {
-                        "_id": "default-otu",
-                        "isolates": [
-                            {
-                                "id": "default",
-                                "default": True,
-                                "sequences": [
-                                    {"_id": "default-a", "sequence": "ACGT"},
-                                    {"_id": "default-b", "sequence": "TTA"},
-                                ],
-                            },
-                            {
-                                "id": "non-default",
-                                "default": False,
-                                "sequences": [
-                                    {"_id": "non-default", "sequence": "GGGG"},
-                                ],
-                            },
+                "id": "default-otu",
+                "abbreviation": "DEFAULT",
+                "isolates": [
+                    isolate(
+                        "default",
+                        True,
+                        [
+                            sequence("default-a", "ACGT"),
+                            sequence("default-b", "TTA"),
                         ],
-                    },
-                    {
-                        "_id": "non-default-otu",
-                        "isolates": [
-                            {
-                                "id": "non-default-only",
-                                "default": False,
-                                "sequences": [
-                                    {"_id": "non-default-only", "sequence": "CCCC"},
-                                ],
-                            },
-                        ],
-                    },
+                    ),
+                    isolate(
+                        "non-default",
+                        False,
+                        [sequence("non-default", "GGGG")],
+                    ),
                 ],
+                "name": "Default OTU",
+                "schema": [],
+                "taxid": None,
+                "version": 1,
             },
-            f,
-        )
-
-
-def write_redundant_reference_json(path: Path):
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    shutil.copyfile(REDUNDANT_REFERENCE_JSON_PATH, path)
+            {
+                "id": "non-default-otu",
+                "abbreviation": "NONDEFAULT",
+                "isolates": [
+                    isolate(
+                        "non-default-only",
+                        False,
+                        [sequence("non-default-only", "CCCC")],
+                    ),
+                ],
+                "name": "Non-default OTU",
+                "schema": [],
+                "taxid": None,
+                "version": 1,
+            },
+        ],
+    )
 
 
 @pytest.fixture()
@@ -290,46 +301,112 @@ def analysis(workflow_data: WorkflowData, mocker):
 
 
 @pytest.fixture()
-def index(workflow_data: WorkflowData, example_path: Path, work_path: Path):
-    workflow_data.index.manifest = {"foobar": 10, "reo": 5, "baz": 6}
+async def index(workflow_data: WorkflowData, work_path: Path):
+    sequence_otu_map = {
+        "NC_016509": "foobar",
+        "NC_001948": "foobar",
+        "13TF149_Reovirus_TF1_Seg06": "reo",
+        "13TF149_Reovirus_TF1_Seg03": "reo",
+        "13TF149_Reovirus_TF1_Seg07": "reo",
+        "13TF149_Reovirus_TF1_Seg02": "reo",
+        "13TF149_Reovirus_TF1_Seg08": "reo",
+        "13TF149_Reovirus_TF1_Seg11": "reo",
+        "13TF149_Reovirus_TF1_Seg04": "reo",
+        "NC_004667": "foobar",
+        "NC_003347": "foobar",
+        "NC_003615": "foobar",
+        "NC_003689": "foobar",
+        "NC_011552": "foobar",
+        "KX109927": "baz",
+        "NC_008039": "foobar",
+        "NC_015782": "foobar",
+        "NC_016416": "foobar",
+        "NC_003623": "foobar",
+        "NC_008038": "foobar",
+        "NC_001836": "foobar",
+        "JQ080272": "baz",
+        "NC_017938": "foobar",
+        "NC_008037": "foobar",
+        "NC_007448": "foobar",
+    }
+    manifest = {"foobar": 10, "reo": 5, "baz": 6}
+    otus = []
 
-    index_path = work_path / "indexes" / workflow_data.index.id
+    for otu_id, version in manifest.items():
+        otus.append(
+            {
+                "id": otu_id,
+                "abbreviation": otu_id.upper(),
+                "isolates": [
+                    {
+                        "default": True,
+                        "id": f"{otu_id}-isolate",
+                        "sequences": [
+                            {
+                                "id": sequence_id,
+                                "accession": sequence_id,
+                                "definition": sequence_id,
+                                "host": "",
+                                "segment": None,
+                                "sequence": "ACGT",
+                            }
+                            for sequence_id, sequence_otu_id in sequence_otu_map.items()
+                            if sequence_otu_id == otu_id
+                        ],
+                        "source_name": otu_id,
+                        "source_type": "isolate",
+                    },
+                ],
+                "name": otu_id,
+                "schema": [],
+                "taxid": None,
+                "version": version,
+            },
+        )
 
-    shutil.copytree(example_path / "index", index_path)
+    return await WFIndex.create(
+        workflow_data.index.id,
+        work_path / "indexes" / workflow_data.index.id / "index.sqlite",
+        None,
+        otus,
+    )
 
-    return WFIndex(
-        id=workflow_data.index.id,
-        path=index_path,
-        manifest=workflow_data.index.manifest,
-        reference=workflow_data.index.reference,
-        sequence_lengths={},
-        sequence_otu_map={
-            "NC_016509": "foobar",
-            "NC_001948": "foobar",
-            "13TF149_Reovirus_TF1_Seg06": "reo",
-            "13TF149_Reovirus_TF1_Seg03": "reo",
-            "13TF149_Reovirus_TF1_Seg07": "reo",
-            "13TF149_Reovirus_TF1_Seg02": "reo",
-            "13TF149_Reovirus_TF1_Seg08": "reo",
-            "13TF149_Reovirus_TF1_Seg11": "reo",
-            "13TF149_Reovirus_TF1_Seg04": "reo",
-            "NC_004667": "foobar",
-            "NC_003347": "foobar",
-            "NC_003615": "foobar",
-            "NC_003689": "foobar",
-            "NC_011552": "foobar",
-            "KX109927": "baz",
-            "NC_008039": "foobar",
-            "NC_015782": "foobar",
-            "NC_016416": "foobar",
-            "NC_003623": "foobar",
-            "NC_008038": "foobar",
-            "NC_001836": "foobar",
-            "JQ080272": "baz",
-            "NC_017938": "foobar",
-            "NC_008037": "foobar",
-            "NC_007448": "foobar",
-        },
+
+def get_redundant_index_otus() -> list[dict]:
+    with open(REDUNDANT_REFERENCE_JSON_PATH) as handle:
+        otus = json.load(handle)["otus"]
+
+    for otu in otus:
+        otu.update(
+            abbreviation="COLLAPSE",
+            name="Collapse OTU",
+            taxid=None,
+            version=1,
+        )
+
+        for isolate in otu["isolates"]:
+            isolate.update(
+                source_name=isolate["id"],
+                source_type="isolate",
+            )
+
+            for sequence in isolate["sequences"]:
+                sequence.update(
+                    accession=sequence["id"],
+                    definition=sequence["id"],
+                    host="",
+                )
+
+    return otus
+
+
+@pytest.fixture()
+async def redundant_index(workflow_data: WorkflowData, tmp_path: Path) -> WFIndex:
+    return await WFIndex.create(
+        workflow_data.index.id,
+        tmp_path / "redundant-index.sqlite",
+        None,
+        get_redundant_index_otus(),
     )
 
 
@@ -342,7 +419,7 @@ async def test_collapse_reference_hit(
 ):
     source = tmp_path / collapsed_reference_path.parent.name
     source.mkdir()
-    write_reference_json(source / collapsed_reference_path.name)
+    await create_test_index(source / collapsed_reference_path.name)
     params = await get_reference_collapse_cache_params(index.id, run_subprocess)
     key = derive_key(params)
     assert await workflow_cache.put(key, source, params)
@@ -366,23 +443,25 @@ async def test_collapse_reference_hit(
 
 async def test_collapse_reference_miss_retains_required_isolates(
     collapsed_reference_path: Path,
-    index: WFIndex,
+    redundant_index: WFIndex,
     run_subprocess: RunSubprocess,
     workflow_cache: WorkflowCache,
 ):
-    write_redundant_reference_json(index.json_path)
     logger = get_logger("test")
 
     result_path = await collapse_reference(
         workflow_cache,
         collapsed_reference_path,
-        index,
+        redundant_index,
         logger,
         4,
         run_subprocess,
     )
 
-    params = await get_reference_collapse_cache_params(index.id, run_subprocess)
+    params = await get_reference_collapse_cache_params(
+        redundant_index.id,
+        run_subprocess,
+    )
 
     assert result_path == collapsed_reference_path
     assert_cache_params(
@@ -391,27 +470,25 @@ async def test_collapse_reference_miss_retains_required_isolates(
             "index_kind": "collapsed_reference",
             "workflow": "pathoscope",
             "workflow_version": "UNKNOWN",
-            "parent_id": index.id,
-            "source": "index_json",
+            "parent_id": redundant_index.id,
+            "source": "index_sqlite",
             "tool_name": "cd-hit-est",
             "identity": "0.99",
         },
     )
 
-    with open(collapsed_reference_path) as handle:
-        collapsed_reference = json.load(handle)
+    collapsed_index = WFIndex.load(redundant_index.id, collapsed_reference_path)
+    collapsed_otus = [otu async for otu in collapsed_index.iter_otus()]
 
-    assert [
-        isolate["id"] for isolate in collapsed_reference["otus"][0]["isolates"]
-    ] == [
+    assert [isolate["id"] for isolate in collapsed_otus[0]["isolates"]] == [
         "default",
         "representative-1",
         "representative-2",
         "unique-combo",
     ]
     assert [
-        (isolate["sequences"][0]["_id"], isolate["sequences"][1]["_id"])
-        for isolate in collapsed_reference["otus"][0]["isolates"]
+        (isolate["sequences"][0]["id"], isolate["sequences"][1]["id"])
+        for isolate in collapsed_otus[0]["isolates"]
     ] == [
         ("default-a", "default-b"),
         ("representative-1-a", "representative-1-b"),
@@ -421,19 +498,17 @@ async def test_collapse_reference_miss_retains_required_isolates(
     assert not (collapsed_reference_path.parent / "collapse-manifest.json").exists()
 
 
-async def test_collapse_reference_json_outputs_collapsed_reference_fasta(
+async def test_collapse_reference_index_outputs_collapsed_reference_fasta(
+    redundant_index: WFIndex,
     run_subprocess: RunSubprocess,
     tmp_path: Path,
 ):
-    source_path = tmp_path / "reference.json"
-    collapsed_path = tmp_path / "collapsed" / "reference.json"
+    collapsed_path = tmp_path / "collapsed" / "index.sqlite"
     default_fasta_path = tmp_path / "default.fa"
     isolate_fasta_path = tmp_path / "isolates.fa"
 
-    write_redundant_reference_json(source_path)
-
-    assert await collapse_reference_json(
-        source_path,
+    assert await collapse_reference_index(
+        redundant_index,
         collapsed_path,
         2,
         run_subprocess,
@@ -443,49 +518,42 @@ async def test_collapse_reference_json_outputs_collapsed_reference_fasta(
         "isolate_count_removed": 1,
     }
 
-    assert write_default_isolate_fasta(collapsed_path, default_fasta_path) == {
-        "default-a": 20,
-        "default-b": 20,
-    }
-    assert write_isolate_fasta(
-        {"collapse-otu"},
-        collapsed_path,
+    collapsed_index = WFIndex.load(redundant_index.id, collapsed_path)
+
+    await collapsed_index.write_fasta(
+        default_fasta_path,
+        collapsed_index.iter_default_sequences(),
+    )
+    await collapsed_index.write_fasta(
         isolate_fasta_path,
-    ) == {
-        "default-a": 20,
-        "default-b": 20,
-        "representative-1-a": 20,
-        "representative-1-b": 20,
-        "representative-2-a": 20,
-        "representative-2-b": 20,
-        "unique-combo-a": 20,
-        "unique-combo-b": 20,
-    }
+        collapsed_index.iter_otu_sequences("collapse-otu"),
+    )
+
+    assert default_fasta_path.read_text() == (
+        ">default-a\nACGTACGTACGTACGTACGT\n>default-b\nTGCATGCATGCATGCATGCA\n"
+    )
     assert "duplicate-a" not in isolate_fasta_path.read_text()
     assert "duplicate-b" not in isolate_fasta_path.read_text()
 
 
-async def test_collapse_reference_json_allows_isolates_missing_schema_segments(
+async def test_collapse_reference_index_allows_isolates_missing_schema_segments(
     run_subprocess: RunSubprocess,
     tmp_path: Path,
 ):
-    source_path = tmp_path / "reference.json"
-    collapsed_path = tmp_path / "collapsed" / "reference.json"
-
-    write_redundant_reference_json(source_path)
-
-    with open(source_path) as handle:
-        reference_data = json.load(handle)
-
-    reference_data["otus"][0]["isolates"][0]["sequences"] = [
-        reference_data["otus"][0]["isolates"][0]["sequences"][1],
+    otus = get_redundant_index_otus()
+    otus[0]["isolates"][0]["sequences"] = [
+        otus[0]["isolates"][0]["sequences"][1],
     ]
+    source_index = await WFIndex.create(
+        "test-index",
+        tmp_path / "source.sqlite",
+        None,
+        otus,
+    )
+    collapsed_path = tmp_path / "collapsed" / "index.sqlite"
 
-    with open(source_path, "w") as handle:
-        json.dump(reference_data, handle)
-
-    assert await collapse_reference_json(
-        source_path,
+    assert await collapse_reference_index(
+        source_index,
         collapsed_path,
         2,
         run_subprocess,
@@ -495,77 +563,164 @@ async def test_collapse_reference_json_allows_isolates_missing_schema_segments(
         "isolate_count_removed": 1,
     }
 
-    with open(collapsed_path) as handle:
-        collapsed_reference = json.load(handle)
+    collapsed_index = WFIndex.load(source_index.id, collapsed_path)
+    collapsed_otus = [otu async for otu in collapsed_index.iter_otus()]
 
-    assert collapsed_reference["otus"][0]["isolates"][0]["sequences"] == [
-        {
-            "_id": "default-b",
-            "segment": "b",
-            "sequence": "TGCATGCATGCATGCATGCA",
-        },
-    ]
+    assert [
+        sequence["id"] for sequence in collapsed_otus[0]["isolates"][0]["sequences"]
+    ] == ["default-b"]
 
 
-async def test_collapse_reference_json_allows_unsegmented_isolates(
+async def test_collapse_reference_index_allows_unsegmented_isolates(
     run_subprocess: RunSubprocess,
     tmp_path: Path,
 ):
-    source_path = tmp_path / "reference.json"
-    collapsed_path = tmp_path / "collapsed" / "reference.json"
+    otus = get_redundant_index_otus()
+    otus[0]["schema"] = []
 
-    write_redundant_reference_json(source_path)
+    for index, isolate in enumerate(otus[0]["isolates"]):
+        isolate["sequences"] = isolate["sequences"][:1]
+        isolate["sequences"][0]["segment"] = None if index == 0 else "ignored"
 
-    with open(source_path) as handle:
-        reference_data = json.load(handle)
+    source_index = await WFIndex.create(
+        "test-index",
+        tmp_path / "source.sqlite",
+        None,
+        otus,
+    )
+    collapsed_path = tmp_path / "collapsed" / "index.sqlite"
 
-    reference_data["otus"][0]["schema"] = []
+    assert await collapse_reference_index(
+        source_index,
+        collapsed_path,
+        2,
+        run_subprocess,
+    ) == {
+        "isolate_count_before": 5,
+        "isolate_count_after": 2,
+        "isolate_count_removed": 3,
+    }
 
-    for isolate in reference_data["otus"][0]["isolates"]:
+    collapsed_index = WFIndex.load(source_index.id, collapsed_path)
+    collapsed_otus = [otu async for otu in collapsed_index.iter_otus()]
+
+    assert collapsed_otus[0]["schema"] == []
+    assert [isolate["id"] for isolate in collapsed_otus[0]["isolates"]] == [
+        "default",
+        "representative-2",
+    ]
+
+
+async def test_collapse_reference_index_rejects_multiple_sequences_for_unsegmented_otu(
+    run_subprocess: RunSubprocess,
+    tmp_path: Path,
+):
+    otus = get_redundant_index_otus()
+    otus[0]["schema"] = []
+
+    for isolate in otus[0]["isolates"]:
         for sequence in isolate["sequences"]:
-            sequence["segment"] = ""
+            sequence["segment"] = None
 
-    with open(source_path, "w") as handle:
-        json.dump(reference_data, handle)
+    source_index = await WFIndex.create(
+        "test-index",
+        tmp_path / "source.sqlite",
+        None,
+        otus,
+    )
 
-    assert await collapse_reference_json(
-        source_path,
+    with pytest.raises(
+        ValueError,
+        match=(
+            "Schema-less OTU collapse-otu has multiple isolates, so isolate default "
+            "must contain exactly one sequence; found 2"
+        ),
+    ):
+        await collapse_reference_index(
+            source_index,
+            tmp_path / "collapsed" / "index.sqlite",
+            2,
+            run_subprocess,
+        )
+
+
+async def test_collapse_reference_index_preserves_single_unsegmented_isolate(
+    mocker,
+    tmp_path: Path,
+):
+    otus = get_redundant_index_otus()
+    otus[0]["schema"] = []
+    otus[0]["isolates"] = otus[0]["isolates"][:1]
+    otus[0]["isolates"][0]["sequences"][0]["segment"] = None
+    run_subprocess = mocker.AsyncMock()
+    source_index = await WFIndex.create(
+        "test-index",
+        tmp_path / "source.sqlite",
+        None,
+        otus,
+    )
+    collapsed_path = tmp_path / "collapsed" / "index.sqlite"
+
+    assert await collapse_reference_index(
+        source_index,
         collapsed_path,
         2,
         run_subprocess,
     ) == {
-        "isolate_count_before": 5,
-        "isolate_count_after": 4,
-        "isolate_count_removed": 1,
+        "isolate_count_before": 1,
+        "isolate_count_after": 1,
+        "isolate_count_removed": 0,
     }
 
-    with open(collapsed_path) as handle:
-        collapsed_reference = json.load(handle)
+    collapsed_index = WFIndex.load(source_index.id, collapsed_path)
+    collapsed_otus = [otu async for otu in collapsed_index.iter_otus()]
 
-    assert collapsed_reference["otus"][0]["schema"] == []
-    assert {
-        sequence["segment"]
-        for isolate in collapsed_reference["otus"][0]["isolates"]
-        for sequence in isolate["sequences"]
-    } == {""}
+    assert [
+        sequence["id"] for sequence in collapsed_otus[0]["isolates"][0]["sequences"]
+    ] == ["default-a", "default-b"]
+    run_subprocess.assert_not_awaited()
 
 
-async def test_collapse_reference_json_rejects_isolate_segments_that_do_not_match_schema(
+async def test_collapse_reference_index_rejects_duplicate_isolate_segments(
     run_subprocess: RunSubprocess,
     tmp_path: Path,
 ):
-    source_path = tmp_path / "reference.json"
-    collapsed_path = tmp_path / "collapsed" / "reference.json"
+    otus = get_redundant_index_otus()
+    otus[0]["isolates"][0]["sequences"][1]["segment"] = "a"
+    source_index = await WFIndex.create(
+        "test-index",
+        tmp_path / "source.sqlite",
+        None,
+        otus,
+    )
 
-    write_redundant_reference_json(source_path)
+    with pytest.raises(
+        ValueError,
+        match=(
+            "Isolate default has multiple sequences for OTU collapse-otu schema "
+            "segments \\['a'\\]"
+        ),
+    ):
+        await collapse_reference_index(
+            source_index,
+            tmp_path / "collapsed" / "index.sqlite",
+            2,
+            run_subprocess,
+        )
 
-    with open(source_path) as handle:
-        reference_data = json.load(handle)
 
-    reference_data["otus"][0]["isolates"][0]["sequences"][0]["segment"] = "c"
-
-    with open(source_path, "w") as handle:
-        json.dump(reference_data, handle)
+async def test_collapse_reference_index_rejects_unknown_isolate_segments(
+    run_subprocess: RunSubprocess,
+    tmp_path: Path,
+):
+    otus = get_redundant_index_otus()
+    otus[0]["isolates"][0]["sequences"][0]["segment"] = "c"
+    source_index = await WFIndex.create(
+        "test-index",
+        tmp_path / "source.sqlite",
+        None,
+        otus,
+    )
 
     with pytest.raises(
         ValueError,
@@ -574,9 +729,9 @@ async def test_collapse_reference_json_rejects_isolate_segments_that_do_not_matc
             "schema segments ['a', 'b']"
         ),
     ):
-        await collapse_reference_json(
-            source_path,
-            collapsed_path,
+        await collapse_reference_index(
+            source_index,
+            tmp_path / "collapsed" / "index.sqlite",
             2,
             run_subprocess,
         )
@@ -586,7 +741,7 @@ async def test_collapse_reference_json_rejects_isolate_segments_that_do_not_matc
 def sample(workflow_data: WorkflowData, example_path: Path, work_path: Path):
     workflow_data.sample.library_type = "normal"
 
-    path = work_path / "samples" / workflow_data.sample.id
+    path = work_path / "samples" / str(workflow_data.sample.id)
     path.mkdir(parents=True)
 
     shutil.copyfile(example_path / "sample" / "reads_1.fq.gz", path / "reads_1.fq.gz")
@@ -630,7 +785,7 @@ async def test_create_reference_index_hit(
     tmp_path: Path,
     workflow_cache: WorkflowCache,
 ):
-    write_reference_json(collapsed_reference_path)
+    await create_test_index(collapsed_reference_path)
     source = tmp_path / reference_index_path.parent.name
     write_bowtie2_bundle(
         source,
@@ -676,7 +831,7 @@ async def test_create_reference_index_miss(
     run_subprocess: RunSubprocess,
     workflow_cache: WorkflowCache,
 ):
-    write_reference_json(collapsed_reference_path)
+    await create_test_index(collapsed_reference_path)
     logger = get_logger("test")
 
     result_index_path = await create_reference_index(
@@ -723,7 +878,7 @@ async def test_create_reference_index_continues_when_cache_put_is_skipped(
     run_subprocess: RunSubprocess,
     tmp_path: Path,
 ):
-    write_reference_json(collapsed_reference_path)
+    await create_test_index(collapsed_reference_path)
     cache = WorkflowCache(
         _FakeWorkflowCacheAPI(
             tmp_path / "fake_workflow_cache_api",
@@ -754,7 +909,7 @@ async def test_create_reference_index_raises_unexpected_cache_put_failure(
     run_subprocess: RunSubprocess,
     tmp_path: Path,
 ):
-    write_reference_json(collapsed_reference_path)
+    await create_test_index(collapsed_reference_path)
     cache = WorkflowCache(
         _FakeWorkflowCacheAPI(
             tmp_path / "fake_workflow_cache_api",
@@ -774,19 +929,6 @@ async def test_create_reference_index_raises_unexpected_cache_put_failure(
             run_subprocess,
             reference_index_path,
         )
-
-
-def test_write_default_isolate_fasta(tmp_path: Path):
-    json_path = tmp_path / "reference.json.gz"
-    target_path = tmp_path / "reference.fa"
-
-    write_reference_json(json_path)
-
-    assert write_default_isolate_fasta(json_path, target_path) == {
-        "default-a": 4,
-        "default-b": 3,
-    }
-    assert target_path.read_text() == ">default-a\nACGT\n>default-b\nTTA\n"
 
 
 async def test_create_subtraction_index_hit(
@@ -882,7 +1024,7 @@ async def test_map_default_isolates(
         if "reference" in path.name:
             shutil.copyfile(path, reference_index_path.parent / path.name)
 
-    intermediate = SimpleNamespace(to_otus=set())
+    intermediate = SimpleNamespace(candidate_sequence_ids=set())
 
     logger = get_logger("test")
 
@@ -896,7 +1038,7 @@ async def test_map_default_isolates(
         sample,
     )
 
-    assert sorted(intermediate.to_otus) == snapshot
+    assert sorted(intermediate.candidate_sequence_ids) == snapshot
 
 
 async def test_map_isolates(
@@ -918,7 +1060,7 @@ async def test_map_isolates(
 
     proc = 1
 
-    intermediate = SimpleNamespace(lengths={"foo": 100})
+    intermediate = SimpleNamespace(candidate_sequence_ids={"candidate"})
 
     await map_isolates(
         intermediate,
@@ -971,7 +1113,7 @@ async def test_eliminate_subtraction(
     if no_subtractions:
         subtractions = []
 
-    intermediate = SimpleNamespace(lengths={"foo": 100})
+    intermediate = SimpleNamespace(candidate_sequence_ids={"candidate"})
 
     if subtractions:
         cached_subtraction_path = tmp_path / str(subtractions[0].id)
@@ -1063,14 +1205,13 @@ async def test_pathoscope(
     example_path: Path,
     index: WFIndex,
     mocker,
-    ref_lengths,
     snapshot: SnapshotAssertion,
     subtracted_bam_path: Path,
     work_path: Path,
 ):
     shutil.copyfile(example_path / "to_isolates.bam", subtracted_bam_path)
 
-    intermediate = SimpleNamespace(lengths=ref_lengths)
+    intermediate = SimpleNamespace(candidate_sequence_ids={"candidate"})
     p_score_cutoff = 0.01
     results = {}
 
@@ -1133,7 +1274,9 @@ async def test_pathoscope(
 
 
 async def test_build_isolate_index_no_candidates(
+    collapsed_reference_path: Path,
     index: WFIndex,
+    mocker,
     work_path: Path,
 ):
     """When no candidate OTUs are found the isolate FASTA is empty.
@@ -1141,15 +1284,14 @@ async def test_build_isolate_index_no_candidates(
     ``bowtie2-build`` exits 1 on an empty FASTA, so the index build must be skipped
     entirely (VIR-2569) rather than invoking the subprocess.
     """
-    write_reference_json(index.json_path)
-
     isolate_path = work_path / "isolates"
     isolate_path.mkdir()
 
-    run_subprocess = FakeRunSubprocess()
-    intermediate = SimpleNamespace(to_otus=set())
+    run_subprocess = mocker.AsyncMock()
+    intermediate = SimpleNamespace(candidate_sequence_ids=set())
 
     await build_isolate_index(
+        collapsed_reference_path,
         index,
         intermediate,
         isolate_path / "isolate_index.fa",
@@ -1158,13 +1300,13 @@ async def test_build_isolate_index_no_candidates(
         2,
     )
 
-    assert intermediate.lengths == {}
-    assert run_subprocess.commands == []
+    run_subprocess.assert_not_awaited()
 
 
 async def test_no_candidates_uploads_empty_result(
     analysis: WFAnalysis,
     index: WFIndex,
+    mocker,
     sample: WFSample,
     work_path: Path,
 ):
@@ -1173,8 +1315,8 @@ async def test_no_candidates_uploads_empty_result(
     ``map_isolates``, ``eliminate_subtraction`` and ``reassignment`` must not run any
     subprocess and the analysis is finished with an empty result (VIR-2569).
     """
-    run_subprocess = FakeRunSubprocess()
-    intermediate = SimpleNamespace(lengths={})
+    run_subprocess = mocker.AsyncMock()
+    intermediate = SimpleNamespace(candidate_sequence_ids=set())
     logger = get_logger("test")
     results = {}
 
@@ -1216,7 +1358,7 @@ async def test_no_candidates_uploads_empty_result(
         work_path,
     )
 
-    assert run_subprocess.commands == []
+    run_subprocess.assert_not_awaited()
     analysis.upload_result.assert_called_once_with(
         {"subtracted_count": 0, "read_count": 0, "hits": []},
     )

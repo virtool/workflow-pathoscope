@@ -1,7 +1,7 @@
 {
   "otus": [
     {
-      "_id": "collapse-otu",
+      "id": "collapse-otu",
       "schema": [
         {
           "name": "a"
@@ -16,12 +16,12 @@
           "default": true,
           "sequences": [
             {
-              "_id": "default-a",
+              "id": "default-a",
               "segment": "a",
               "sequence": "ACGTACGTACGTACGTACGT"
             },
             {
-              "_id": "default-b",
+              "id": "default-b",
               "segment": "b",
               "sequence": "TGCATGCATGCATGCATGCA"
             }
@@ -32,12 +32,12 @@
           "default": false,
           "sequences": [
             {
-              "_id": "representative-1-a",
+              "id": "representative-1-a",
               "segment": "a",
               "sequence": "ACGTACGTACGTACGTACGT"
             },
             {
-              "_id": "representative-1-b",
+              "id": "representative-1-b",
               "segment": "b",
               "sequence": "TGCAGGATCGTTTAACGTAG"
             }
@@ -48,12 +48,12 @@
           "default": false,
           "sequences": [
             {
-              "_id": "representative-2-a",
+              "id": "representative-2-a",
               "segment": "a",
               "sequence": "CCCCAAAAGGGGTTTTCCCC"
             },
             {
-              "_id": "representative-2-b",
+              "id": "representative-2-b",
               "segment": "b",
               "sequence": "AAAACCCCGGGGTTTTAAAA"
             }
@@ -64,12 +64,12 @@
           "default": false,
           "sequences": [
             {
-              "_id": "unique-combo-a",
+              "id": "unique-combo-a",
               "segment": "a",
               "sequence": "CCCCAAAAGGGGTTTTCCCC"
             },
             {
-              "_id": "unique-combo-b",
+              "id": "unique-combo-b",
               "segment": "b",
               "sequence": "TGCAGGATCGTTTAACGTAG"
             }
@@ -80,12 +80,12 @@
           "default": false,
           "sequences": [
             {
-              "_id": "duplicate-a",
+              "id": "duplicate-a",
               "segment": "a",
               "sequence": "CCCCAAAAGGGGTTTTCCCC"
             },
             {
-              "_id": "duplicate-b",
+              "id": "duplicate-b",
               "segment": "b",
               "sequence": "AAAACCCCGGGGTTTTAAAA"
             }
