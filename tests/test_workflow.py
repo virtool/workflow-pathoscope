@@ -1,5 +1,4 @@
 import asyncio
-import json
 import re
 import shutil
 
@@ -43,6 +42,7 @@ from workflow import (
 )
 from workflow_pathoscope.reference import (
     CD_HIT_EST_IDENTITY,
+    _prepare_otu_collapse,
     collapse_reference_index,
     get_reference_collapse_cache_params,
 )
@@ -56,9 +56,6 @@ BOWTIE2_INDEX_SUFFIXES = (
     "4.bt2",
     "rev.1.bt2",
     "rev.2.bt2",
-)
-REDUNDANT_REFERENCE_JSON_PATH = (
-    Path(__file__).parent / "assets" / "redundant_reference.json"
 )
 TOOL_VERSION_PATTERN = re.compile(r"\d+(?:\.\d+)+(?:[-+._A-Za-z0-9]*)?")
 
@@ -372,32 +369,101 @@ async def index(workflow_data: WorkflowData, work_path: Path):
     )
 
 
-def get_redundant_index_otus() -> list[dict]:
-    with open(REDUNDANT_REFERENCE_JSON_PATH) as handle:
-        otus = json.load(handle)["otus"]
+def make_index_sequence(
+    sequence_id: str,
+    *,
+    segment: object,
+    sequence: str = "ACGT",
+) -> dict:
+    return {
+        "id": sequence_id,
+        "accession": sequence_id,
+        "definition": sequence_id,
+        "host": "",
+        "segment": segment,
+        "sequence": sequence,
+    }
 
-    for otu in otus:
-        otu.update(
-            abbreviation="COLLAPSE",
-            name="Collapse OTU",
-            taxid=None,
-            version=1,
-        )
 
-        for isolate in otu["isolates"]:
-            isolate.update(
-                source_name=isolate["id"],
-                source_type="isolate",
+def make_index_isolate(
+    isolate_id: str,
+    *,
+    sequences: list[dict],
+    default: bool = False,
+) -> dict:
+    return {
+        "id": isolate_id,
+        "default": default,
+        "sequences": sequences,
+        "source_name": isolate_id,
+        "source_type": "isolate",
+    }
+
+
+def make_index_otu(
+    otu_id: str,
+    *,
+    isolates: list[dict],
+    schema: list[str],
+) -> dict:
+    return {
+        "id": otu_id,
+        "abbreviation": "COLLAPSE",
+        "name": "Collapse OTU",
+        "taxid": None,
+        "version": 1,
+        "schema": [{"name": segment} for segment in schema],
+        "isolates": isolates,
+    }
+
+
+def make_redundant_index_otu() -> dict:
+    sequence_data = {
+        "default": (
+            "ACGTACGTACGTACGTACGT",
+            "TGCATGCATGCATGCATGCA",
+        ),
+        "representative-1": (
+            "ACGTACGTACGTACGTACGT",
+            "TGCAGGATCGTTTAACGTAG",
+        ),
+        "representative-2": (
+            "CCCCAAAAGGGGTTTTCCCC",
+            "AAAACCCCGGGGTTTTAAAA",
+        ),
+        "unique-combo": (
+            "CCCCAAAAGGGGTTTTCCCC",
+            "TGCAGGATCGTTTAACGTAG",
+        ),
+        "duplicate": (
+            "CCCCAAAAGGGGTTTTCCCC",
+            "AAAACCCCGGGGTTTTAAAA",
+        ),
+    }
+
+    return make_index_otu(
+        "collapse-otu",
+        schema=["a", "b"],
+        isolates=[
+            make_index_isolate(
+                isolate_id,
+                default=isolate_id == "default",
+                sequences=[
+                    make_index_sequence(
+                        f"{isolate_id}-a",
+                        segment="a",
+                        sequence=sequences[0],
+                    ),
+                    make_index_sequence(
+                        f"{isolate_id}-b",
+                        segment="b",
+                        sequence=sequences[1],
+                    ),
+                ],
             )
-
-            for sequence in isolate["sequences"]:
-                sequence.update(
-                    accession=sequence["id"],
-                    definition=sequence["id"],
-                    host="",
-                )
-
-    return otus
+            for isolate_id, sequences in sequence_data.items()
+        ],
+    )
 
 
 @pytest.fixture()
@@ -406,7 +472,7 @@ async def redundant_index(workflow_data: WorkflowData, tmp_path: Path) -> WFInde
         workflow_data.index.id,
         tmp_path / "redundant-index.sqlite",
         None,
-        get_redundant_index_otus(),
+        [make_redundant_index_otu()],
     )
 
 
@@ -516,6 +582,9 @@ async def test_collapse_reference_index_outputs_collapsed_reference_fasta(
         "isolate_count_before": 5,
         "isolate_count_after": 4,
         "isolate_count_removed": 1,
+        "otu_count_collapsed": 1,
+        "otu_count_unchanged": 0,
+        "otu_count_skipped": 0,
     }
 
     collapsed_index = WFIndex.load(redundant_index.id, collapsed_path)
@@ -540,15 +609,20 @@ async def test_collapse_reference_index_allows_isolates_missing_schema_segments(
     run_subprocess: RunSubprocess,
     tmp_path: Path,
 ):
-    otus = get_redundant_index_otus()
-    otus[0]["isolates"][0]["sequences"] = [
-        otus[0]["isolates"][0]["sequences"][1],
+    otu = make_redundant_index_otu()
+    default_isolate = next(
+        isolate for isolate in otu["isolates"] if isolate["id"] == "default"
+    )
+    default_isolate["sequences"] = [
+        sequence
+        for sequence in default_isolate["sequences"]
+        if sequence["segment"] == "b"
     ]
     source_index = await WFIndex.create(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        otus,
+        [otu],
     )
     collapsed_path = tmp_path / "collapsed" / "index.sqlite"
 
@@ -561,6 +635,9 @@ async def test_collapse_reference_index_allows_isolates_missing_schema_segments(
         "isolate_count_before": 5,
         "isolate_count_after": 4,
         "isolate_count_removed": 1,
+        "otu_count_collapsed": 1,
+        "otu_count_unchanged": 0,
+        "otu_count_skipped": 0,
     }
 
     collapsed_index = WFIndex.load(source_index.id, collapsed_path)
@@ -575,18 +652,69 @@ async def test_collapse_reference_index_allows_unsegmented_isolates(
     run_subprocess: RunSubprocess,
     tmp_path: Path,
 ):
-    otus = get_redundant_index_otus()
-    otus[0]["schema"] = []
-
-    for index, isolate in enumerate(otus[0]["isolates"]):
-        isolate["sequences"] = isolate["sequences"][:1]
-        isolate["sequences"][0]["segment"] = None if index == 0 else "ignored"
+    otu = make_index_otu(
+        "collapse-otu",
+        schema=[],
+        isolates=[
+            make_index_isolate(
+                "default",
+                default=True,
+                sequences=[
+                    make_index_sequence(
+                        "default",
+                        segment=None,
+                        sequence="ACGTACGTACGTACGTACGT",
+                    ),
+                ],
+            ),
+            make_index_isolate(
+                "representative-1",
+                sequences=[
+                    make_index_sequence(
+                        "representative-1",
+                        segment="ignored",
+                        sequence="ACGTACGTACGTACGTACGT",
+                    ),
+                ],
+            ),
+            make_index_isolate(
+                "representative-2",
+                sequences=[
+                    make_index_sequence(
+                        "representative-2",
+                        segment="ignored",
+                        sequence="CCCCAAAAGGGGTTTTCCCC",
+                    ),
+                ],
+            ),
+            make_index_isolate(
+                "unique-combo",
+                sequences=[
+                    make_index_sequence(
+                        "unique-combo",
+                        segment="ignored",
+                        sequence="CCCCAAAAGGGGTTTTCCCC",
+                    ),
+                ],
+            ),
+            make_index_isolate(
+                "duplicate",
+                sequences=[
+                    make_index_sequence(
+                        "duplicate",
+                        segment="ignored",
+                        sequence="CCCCAAAAGGGGTTTTCCCC",
+                    ),
+                ],
+            ),
+        ],
+    )
 
     source_index = await WFIndex.create(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        otus,
+        [otu],
     )
     collapsed_path = tmp_path / "collapsed" / "index.sqlite"
 
@@ -599,6 +727,9 @@ async def test_collapse_reference_index_allows_unsegmented_isolates(
         "isolate_count_before": 5,
         "isolate_count_after": 2,
         "isolate_count_removed": 3,
+        "otu_count_collapsed": 1,
+        "otu_count_unchanged": 0,
+        "otu_count_skipped": 0,
     }
 
     collapsed_index = WFIndex.load(source_index.id, collapsed_path)
@@ -612,52 +743,82 @@ async def test_collapse_reference_index_allows_unsegmented_isolates(
 
 
 async def test_collapse_reference_index_rejects_multiple_sequences_for_unsegmented_otu(
-    run_subprocess: RunSubprocess,
+    mocker,
     tmp_path: Path,
 ):
-    otus = get_redundant_index_otus()
-    otus[0]["schema"] = []
-
-    for isolate in otus[0]["isolates"]:
-        for sequence in isolate["sequences"]:
-            sequence["segment"] = None
+    otu = make_index_otu(
+        "unsegmented",
+        schema=[],
+        isolates=[
+            make_index_isolate(
+                "multiple-sequences",
+                default=True,
+                sequences=[
+                    make_index_sequence("sequence-1", segment=None),
+                    make_index_sequence("sequence-2", segment=None),
+                ],
+            ),
+            make_index_isolate(
+                "single-sequence",
+                sequences=[make_index_sequence("sequence-3", segment=None)],
+            ),
+        ],
+    )
 
     source_index = await WFIndex.create(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        otus,
+        [otu],
     )
+    run_subprocess = mocker.AsyncMock()
+    collapsed_path = tmp_path / "collapsed" / "index.sqlite"
 
-    with pytest.raises(
-        ValueError,
-        match=(
-            "Schema-less OTU collapse-otu has multiple isolates, so isolate default "
-            "must contain exactly one sequence; found 2"
-        ),
-    ):
-        await collapse_reference_index(
-            source_index,
-            tmp_path / "collapsed" / "index.sqlite",
-            2,
-            run_subprocess,
-        )
+    assert await collapse_reference_index(
+        source_index,
+        collapsed_path,
+        2,
+        run_subprocess,
+    ) == {
+        "isolate_count_before": 2,
+        "isolate_count_after": 2,
+        "isolate_count_removed": 0,
+        "otu_count_collapsed": 0,
+        "otu_count_unchanged": 0,
+        "otu_count_skipped": 1,
+    }
+
+    collapsed_index = WFIndex.load(source_index.id, collapsed_path)
+    assert [otu async for otu in collapsed_index.iter_otus()] == [
+        otu async for otu in source_index.iter_otus()
+    ]
+    run_subprocess.assert_not_awaited()
 
 
 async def test_collapse_reference_index_preserves_single_unsegmented_isolate(
     mocker,
     tmp_path: Path,
 ):
-    otus = get_redundant_index_otus()
-    otus[0]["schema"] = []
-    otus[0]["isolates"] = otus[0]["isolates"][:1]
-    otus[0]["isolates"][0]["sequences"][0]["segment"] = None
+    otu = make_index_otu(
+        "unsegmented",
+        schema=[],
+        isolates=[
+            make_index_isolate(
+                "only-isolate",
+                default=True,
+                sequences=[
+                    make_index_sequence("sequence-1", segment=None),
+                    make_index_sequence("sequence-2", segment=None),
+                ],
+            ),
+        ],
+    )
     run_subprocess = mocker.AsyncMock()
     source_index = await WFIndex.create(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        otus,
+        [otu],
     )
     collapsed_path = tmp_path / "collapsed" / "index.sqlite"
 
@@ -670,6 +831,9 @@ async def test_collapse_reference_index_preserves_single_unsegmented_isolate(
         "isolate_count_before": 1,
         "isolate_count_after": 1,
         "isolate_count_removed": 0,
+        "otu_count_collapsed": 0,
+        "otu_count_unchanged": 1,
+        "otu_count_skipped": 0,
     }
 
     collapsed_index = WFIndex.load(source_index.id, collapsed_path)
@@ -677,58 +841,331 @@ async def test_collapse_reference_index_preserves_single_unsegmented_isolate(
 
     assert [
         sequence["id"] for sequence in collapsed_otus[0]["isolates"][0]["sequences"]
-    ] == ["default-a", "default-b"]
+    ] == ["sequence-1", "sequence-2"]
     run_subprocess.assert_not_awaited()
 
 
-async def test_collapse_reference_index_rejects_duplicate_isolate_segments(
-    run_subprocess: RunSubprocess,
+async def test_collapse_reference_index_preserves_single_schema_isolate_without_validation(
+    mocker,
     tmp_path: Path,
 ):
-    otus = get_redundant_index_otus()
-    otus[0]["isolates"][0]["sequences"][1]["segment"] = "a"
+    otu = make_index_otu(
+        "segmented",
+        schema=["a", "b"],
+        isolates=[
+            make_index_isolate(
+                "only-isolate",
+                default=True,
+                sequences=[
+                    make_index_sequence("sequence-a", segment=None),
+                    make_index_sequence("sequence-b", segment="b"),
+                ],
+            ),
+        ],
+    )
+    run_subprocess = mocker.AsyncMock()
     source_index = await WFIndex.create(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        otus,
+        [otu],
+    )
+    collapsed_path = tmp_path / "collapsed" / "index.sqlite"
+
+    assert await collapse_reference_index(
+        source_index,
+        collapsed_path,
+        2,
+        run_subprocess,
+    ) == {
+        "isolate_count_before": 1,
+        "isolate_count_after": 1,
+        "isolate_count_removed": 0,
+        "otu_count_collapsed": 0,
+        "otu_count_unchanged": 1,
+        "otu_count_skipped": 0,
+    }
+
+    collapsed_index = WFIndex.load(source_index.id, collapsed_path)
+    assert [otu async for otu in collapsed_index.iter_otus()] == [
+        otu async for otu in source_index.iter_otus()
+    ]
+    run_subprocess.assert_not_awaited()
+
+
+@pytest.mark.parametrize("segment", [None, ""])
+async def test_collapse_reference_index_skips_invalid_schema_segment_names(
+    mocker,
+    segment,
+    tmp_path: Path,
+):
+    otu = make_index_otu(
+        "segmented",
+        schema=["a", "b"],
+        isolates=[
+            make_index_isolate(
+                "invalid",
+                default=True,
+                sequences=[
+                    make_index_sequence("invalid-a", segment=segment),
+                    make_index_sequence("invalid-b", segment="b"),
+                ],
+            ),
+            make_index_isolate(
+                "valid",
+                sequences=[
+                    make_index_sequence("valid-a", segment="a"),
+                    make_index_sequence("valid-b", segment="b"),
+                ],
+            ),
+        ],
+    )
+    run_subprocess = mocker.AsyncMock()
+    source_index = await WFIndex.create(
+        "test-index",
+        tmp_path / "source.sqlite",
+        None,
+        [otu],
+    )
+    collapsed_path = tmp_path / "collapsed" / "index.sqlite"
+
+    summary = await collapse_reference_index(
+        source_index,
+        collapsed_path,
+        2,
+        run_subprocess,
     )
 
-    with pytest.raises(
-        ValueError,
-        match=(
-            "Isolate default has multiple sequences for OTU collapse-otu schema "
-            "segments \\['a'\\]"
-        ),
-    ):
-        await collapse_reference_index(
-            source_index,
-            tmp_path / "collapsed" / "index.sqlite",
-            2,
-            run_subprocess,
-        )
+    assert summary["otu_count_skipped"] == 1
+    collapsed_index = WFIndex.load(source_index.id, collapsed_path)
+    assert [otu async for otu in collapsed_index.iter_otus()] == [
+        otu async for otu in source_index.iter_otus()
+    ]
+    run_subprocess.assert_not_awaited()
+
+
+def test_otu_collapse_preparation_rejects_non_string_schema_segment():
+    otu = make_index_otu(
+        "segmented",
+        schema=["a"],
+        isolates=[
+            make_index_isolate(
+                "invalid",
+                sequences=[make_index_sequence("invalid-a", segment=42)],
+            ),
+        ],
+    )
+
+    preparation = _prepare_otu_collapse(otu)
+
+    assert preparation.eligible is False
+    assert preparation.sequences_by_segment == {}
+
+
+def test_otu_collapse_preparation_rejects_empty_schemaless_isolate():
+    otu = make_index_otu(
+        "unsegmented",
+        schema=[],
+        isolates=[
+            make_index_isolate("empty", sequences=[]),
+            make_index_isolate(
+                "valid",
+                sequences=[make_index_sequence("valid", segment=None)],
+            ),
+        ],
+    )
+
+    preparation = _prepare_otu_collapse(otu)
+
+    assert preparation.eligible is False
+    assert preparation.sequences_by_segment == {}
+
+
+async def test_collapse_reference_index_rejects_duplicate_isolate_segments(
+    mocker,
+    tmp_path: Path,
+):
+    otu = make_index_otu(
+        "segmented",
+        schema=["a", "b"],
+        isolates=[
+            make_index_isolate(
+                "duplicate",
+                default=True,
+                sequences=[
+                    make_index_sequence("duplicate-a-1", segment="a"),
+                    make_index_sequence("duplicate-a-2", segment="a"),
+                ],
+            ),
+            make_index_isolate(
+                "valid",
+                sequences=[
+                    make_index_sequence("valid-a", segment="a"),
+                    make_index_sequence("valid-b", segment="b"),
+                ],
+            ),
+        ],
+    )
+    source_index = await WFIndex.create(
+        "test-index",
+        tmp_path / "source.sqlite",
+        None,
+        [otu],
+    )
+    run_subprocess = mocker.AsyncMock()
+    collapsed_path = tmp_path / "collapsed" / "index.sqlite"
+
+    summary = await collapse_reference_index(
+        source_index,
+        collapsed_path,
+        2,
+        run_subprocess,
+    )
+
+    assert summary["otu_count_skipped"] == 1
+    collapsed_index = WFIndex.load(source_index.id, collapsed_path)
+    assert [otu async for otu in collapsed_index.iter_otus()] == [
+        otu async for otu in source_index.iter_otus()
+    ]
+    run_subprocess.assert_not_awaited()
 
 
 async def test_collapse_reference_index_rejects_unknown_isolate_segments(
-    run_subprocess: RunSubprocess,
+    mocker,
     tmp_path: Path,
 ):
-    otus = get_redundant_index_otus()
-    otus[0]["isolates"][0]["sequences"][0]["segment"] = "c"
+    otu = make_index_otu(
+        "segmented",
+        schema=["a", "b"],
+        isolates=[
+            make_index_isolate(
+                "unknown",
+                default=True,
+                sequences=[
+                    make_index_sequence("unknown-c", segment="c"),
+                    make_index_sequence("unknown-b", segment="b"),
+                ],
+            ),
+            make_index_isolate(
+                "valid",
+                sequences=[
+                    make_index_sequence("valid-a", segment="a"),
+                    make_index_sequence("valid-b", segment="b"),
+                ],
+            ),
+        ],
+    )
     source_index = await WFIndex.create(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        otus,
+        [otu],
+    )
+    run_subprocess = mocker.AsyncMock()
+    collapsed_path = tmp_path / "collapsed" / "index.sqlite"
+
+    summary = await collapse_reference_index(
+        source_index,
+        collapsed_path,
+        2,
+        run_subprocess,
     )
 
-    with pytest.raises(
-        ValueError,
-        match=re.escape(
-            "Isolate default sequence segments ['c'] are not defined in OTU collapse-otu "
-            "schema segments ['a', 'b']"
-        ),
-    ):
+    assert summary["otu_count_skipped"] == 1
+    collapsed_index = WFIndex.load(source_index.id, collapsed_path)
+    assert [otu async for otu in collapsed_index.iter_otus()] == [
+        otu async for otu in source_index.iter_otus()
+    ]
+    run_subprocess.assert_not_awaited()
+
+
+async def test_collapse_reference_index_handles_mixed_otu_outcomes(
+    run_subprocess: RunSubprocess,
+    tmp_path: Path,
+):
+    eligible_otu = make_redundant_index_otu()
+    skipped_otu = make_index_otu(
+        "skipped",
+        schema=["a"],
+        isolates=[
+            make_index_isolate(
+                "skipped-invalid",
+                default=True,
+                sequences=[
+                    make_index_sequence("skipped-invalid", segment=None),
+                ],
+            ),
+            make_index_isolate(
+                "skipped-valid",
+                sequences=[
+                    make_index_sequence("skipped-valid", segment="a"),
+                ],
+            ),
+        ],
+    )
+    unchanged_otu = make_index_otu(
+        "unchanged",
+        schema=["a"],
+        isolates=[
+            make_index_isolate(
+                "unchanged-invalid",
+                default=True,
+                sequences=[
+                    make_index_sequence("unchanged-invalid", segment=None),
+                ],
+            ),
+        ],
+    )
+    source_index = await WFIndex.create(
+        "test-index",
+        tmp_path / "source.sqlite",
+        None,
+        [eligible_otu, skipped_otu, unchanged_otu],
+    )
+    collapsed_path = tmp_path / "collapsed" / "index.sqlite"
+    subprocess_commands: list[list[str]] = []
+
+    async def tracked_run_subprocess(command, **kwargs):
+        subprocess_commands.append(command)
+        return await run_subprocess(command, **kwargs)
+
+    assert await collapse_reference_index(
+        source_index,
+        collapsed_path,
+        2,
+        tracked_run_subprocess,
+    ) == {
+        "isolate_count_before": 8,
+        "isolate_count_after": 7,
+        "isolate_count_removed": 1,
+        "otu_count_collapsed": 1,
+        "otu_count_unchanged": 1,
+        "otu_count_skipped": 1,
+    }
+
+    collapsed_index = WFIndex.load(source_index.id, collapsed_path)
+    collapsed_otus = {otu["id"]: otu async for otu in collapsed_index.iter_otus()}
+    source_otus = {otu["id"]: otu async for otu in source_index.iter_otus()}
+
+    assert len(collapsed_otus["collapse-otu"]["isolates"]) == 4
+    assert collapsed_otus["skipped"] == source_otus["skipped"]
+    assert collapsed_otus["unchanged"] == source_otus["unchanged"]
+    assert len(subprocess_commands) == 2
+
+
+async def test_collapse_reference_index_propagates_subprocess_failures(
+    mocker,
+    tmp_path: Path,
+):
+    source_index = await WFIndex.create(
+        "test-index",
+        tmp_path / "source.sqlite",
+        None,
+        [make_redundant_index_otu()],
+    )
+    run_subprocess = mocker.AsyncMock(side_effect=RuntimeError("cd-hit-est failed"))
+
+    with pytest.raises(RuntimeError, match="cd-hit-est failed"):
         await collapse_reference_index(
             source_index,
             tmp_path / "collapsed" / "index.sqlite",

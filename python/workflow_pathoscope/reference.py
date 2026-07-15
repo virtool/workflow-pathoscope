@@ -1,9 +1,11 @@
 import asyncio
 import re
-from collections import Counter
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import TypedDict
 
 from virtool.workflow.data.indexes import WFIndex
 from virtool.workflow.errors import SubprocessFailedError
@@ -15,6 +17,33 @@ CD_HIT_EST_TOOL = "cd-hit-est"
 CD_HIT_EST_IDENTITY = "0.99"
 WORKFLOW_NAME = "pathoscope"
 WORKFLOW_VERSION = get_workflow_version()
+
+
+class OtuCollapseOutcome(StrEnum):
+    COLLAPSED = "collapsed"
+    UNCHANGED = "unchanged"
+    SKIPPED = "skipped"
+
+
+@dataclass(frozen=True)
+class OtuCollapsePreparation:
+    eligible: bool
+    sequences_by_segment: dict[str, list[dict]]
+
+
+@dataclass(frozen=True)
+class OtuCollapseResult:
+    otu: dict
+    outcome: OtuCollapseOutcome
+
+
+class ReferenceCollapseSummary(TypedDict):
+    isolate_count_before: int
+    isolate_count_after: int
+    isolate_count_removed: int
+    otu_count_collapsed: int
+    otu_count_unchanged: int
+    otu_count_skipped: int
 
 
 async def get_cd_hit_est_version(run_subprocess: RunSubprocess) -> str:
@@ -59,41 +88,46 @@ async def get_reference_collapse_cache_params(
     }
 
 
-def _validate_isolate_sequence_segments_match_schema(
-    otu: dict,
-    isolate: dict,
-    schema_segments: set[str],
-) -> None:
-    sequence_segments = [sequence["segment"] for sequence in isolate["sequences"]]
-    unknown_segments = set(sequence_segments) - schema_segments
+def _prepare_otu_collapse(otu: dict) -> OtuCollapsePreparation:
+    """Group an OTU's sequences when its structure is safe to collapse."""
+    sequences_by_segment: dict[str, list[dict]] = {}
 
-    if unknown_segments:
-        raise ValueError(
-            f"Isolate {isolate['id']} sequence segments "
-            f"{sorted(unknown_segments, key=lambda segment: (segment is not None, segment or ''))!r} "
-            f"are not defined in OTU {otu['id']} schema "
-            f"segments {sorted(schema_segments)!r}"
+    if not otu["schema"]:
+        for isolate in otu["isolates"]:
+            if len(isolate["sequences"]) != 1:
+                return OtuCollapsePreparation(eligible=False, sequences_by_segment={})
+
+            sequences_by_segment.setdefault("", []).extend(isolate["sequences"])
+
+        return OtuCollapsePreparation(
+            eligible=True,
+            sequences_by_segment=sequences_by_segment,
         )
 
-    duplicate_segments = {
-        segment for segment, count in Counter(sequence_segments).items() if count > 1
-    }
+    schema_segments = {segment["name"] for segment in otu["schema"]}
 
-    if duplicate_segments:
-        raise ValueError(
-            f"Isolate {isolate['id']} has multiple sequences for OTU {otu['id']} "
-            f"schema segments {sorted(duplicate_segments)!r}"
-        )
+    for isolate in otu["isolates"]:
+        isolate_segments: set[str] = set()
 
+        for sequence in isolate["sequences"]:
+            segment = sequence.get("segment")
 
-def _validate_unsegmented_isolate(otu: dict, isolate: dict) -> None:
-    sequence_count = len(isolate["sequences"])
+            if not isinstance(segment, str) or not segment:
+                return OtuCollapsePreparation(eligible=False, sequences_by_segment={})
 
-    if sequence_count != 1:
-        raise ValueError(
-            f"Schema-less OTU {otu['id']} has multiple isolates, so isolate "
-            f"{isolate['id']} must contain exactly one sequence; found {sequence_count}"
-        )
+            if segment not in schema_segments:
+                return OtuCollapsePreparation(eligible=False, sequences_by_segment={})
+
+            if segment in isolate_segments:
+                return OtuCollapsePreparation(eligible=False, sequences_by_segment={})
+
+            isolate_segments.add(segment)
+            sequences_by_segment.setdefault(segment, []).append(sequence)
+
+    return OtuCollapsePreparation(
+        eligible=True,
+        sequences_by_segment=sequences_by_segment,
+    )
 
 
 def _write_fasta(sequences: list[dict], path: Path) -> None:
@@ -150,28 +184,6 @@ def _build_representative_set(
     )
 
 
-def _validate_and_group_otu_sequences_by_segment(otu: dict) -> dict[str, list[dict]]:
-    sequences_by_segment: dict[str, list[dict]] = {}
-    schema_segments = {segment["name"] for segment in otu["schema"]}
-
-    for isolate in otu["isolates"]:
-        if schema_segments:
-            _validate_isolate_sequence_segments_match_schema(
-                otu,
-                isolate,
-                schema_segments,
-            )
-            for sequence in isolate["sequences"]:
-                sequences_by_segment.setdefault(sequence["segment"], []).append(
-                    sequence,
-                )
-        else:
-            _validate_unsegmented_isolate(otu, isolate)
-            sequences_by_segment.setdefault("", []).extend(isolate["sequences"])
-
-    return sequences_by_segment
-
-
 async def _collapse_reference_segment(
     segment_input_path: Path,
     segment_output_path: Path,
@@ -203,11 +215,11 @@ async def _collapse_reference_segment(
 
 async def _collapse_otu_segments(
     otu: dict,
+    sequences_by_segment: dict[str, list[dict]],
     temp_path: Path,
     collapse_segment: Callable[[Path, Path, list[dict]], Awaitable[dict[str, str]]],
 ) -> dict[str, str]:
     representatives_by_sequence_id: dict[str, str] = {}
-    sequences_by_segment = _validate_and_group_otu_sequences_by_segment(otu)
 
     segment_tasks: list[Awaitable[dict[str, str]]] = []
     sorted_segment_sequences = sorted(
@@ -238,12 +250,21 @@ async def _collapse_otu_reference(
     otu: dict,
     temp_path: Path,
     collapse_segment: Callable[[Path, Path, list[dict]], Awaitable[dict[str, str]]],
-) -> dict:
-    if not otu["schema"] and len(otu["isolates"]) == 1:
-        return otu
+) -> OtuCollapseResult:
+    if len(otu["isolates"]) == 1:
+        return OtuCollapseResult(otu, OtuCollapseOutcome.UNCHANGED)
+
+    preparation = _prepare_otu_collapse(otu)
+
+    if not preparation.eligible:
+        return OtuCollapseResult(
+            otu,
+            OtuCollapseOutcome.SKIPPED,
+        )
 
     representatives_by_sequence_id = await _collapse_otu_segments(
         otu,
+        preparation.sequences_by_segment,
         temp_path,
         collapse_segment,
     )
@@ -273,7 +294,10 @@ async def _collapse_otu_reference(
         if isolate["default"] or contains_default_sequence or first_for_set:
             collapsed_isolates.append(isolate)
 
-    return {**otu, "isolates": collapsed_isolates}
+    return OtuCollapseResult(
+        {**otu, "isolates": collapsed_isolates},
+        OtuCollapseOutcome.COLLAPSED,
+    )
 
 
 async def collapse_reference_index(
@@ -281,10 +305,11 @@ async def collapse_reference_index(
     target_path: Path,
     proc: int,
     run_subprocess: RunSubprocess,
-) -> dict[str, int]:
+) -> ReferenceCollapseSummary:
     """Collapse redundant isolates into a new workflow SQLite index."""
     before_count = 0
     after_count = 0
+    otu_counts = {outcome: 0 for outcome in OtuCollapseOutcome}
 
     with TemporaryDirectory(prefix="pathoscope-collapse-") as temp_dir:
         temp_path = Path(temp_dir)
@@ -306,14 +331,16 @@ async def collapse_reference_index(
         collapsed_otus: list[dict] = []
 
         async for otu in index.iter_otus():
-            collapsed_otu = await _collapse_otu_reference(
+            result = await _collapse_otu_reference(
                 otu,
                 temp_path,
                 collapse_segment,
             )
-            collapsed_otus.append(collapsed_otu)
+            collapsed_otus.append(result.otu)
+            otu_counts[result.outcome] += 1
+
             before_count += len(otu["isolates"])
-            after_count += len(collapsed_otu["isolates"])
+            after_count += len(result.otu["isolates"])
 
     try:
         reference = await index.get_reference_metadata()
@@ -326,4 +353,7 @@ async def collapse_reference_index(
         "isolate_count_before": before_count,
         "isolate_count_after": after_count,
         "isolate_count_removed": before_count - after_count,
+        "otu_count_collapsed": otu_counts[OtuCollapseOutcome.COLLAPSED],
+        "otu_count_unchanged": otu_counts[OtuCollapseOutcome.UNCHANGED],
+        "otu_count_skipped": otu_counts[OtuCollapseOutcome.SKIPPED],
     }
