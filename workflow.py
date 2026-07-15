@@ -59,7 +59,7 @@ async def collapse_reference(
     proc: int,
     run_subprocess: RunSubprocess,
 ) -> Path:
-    """Ensure a cd-hit-est collapsed reference JSON exists locally."""
+    """Ensure a cd-hit-est collapsed reference index exists locally."""
     params = await get_reference_collapse_cache_params(index.id, run_subprocess)
     key = derive_key(params)
     collapsed_reference_dir = collapsed_reference_path.parent
