@@ -7,19 +7,23 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import Any
 
+from virtool.caches.utils import derive_key
 from virtool.workflow import hooks, step
 from virtool.workflow.data.analyses import WFAnalysis
-from virtool.workflow.data.cache import WorkflowCache
+from virtool.workflow.data.cache import CacheHit, WorkflowCache
 from virtool.workflow.data.indexes import WFIndex
 from virtool.workflow.data.samples import WFSample
 from virtool.workflow.data.subtractions import WFSubtraction
 from virtool.workflow.runtime.run_subprocess import RunSubprocess
+from workflow_pathoscope.reference import (
+    CD_HIT_EST_IDENTITY,
+    collapse_reference_index,
+    get_reference_collapse_cache_params,
+)
 from workflow_pathoscope.utils import (
     build_bowtie2_index,
     create_mapping_index,
     run_pathoscope,
-    write_default_isolate_fasta,
-    write_isolate_fasta,
     write_report,
 )
 
@@ -47,8 +51,57 @@ async def delete_analysis_document(analysis: WFAnalysis):
 
 
 @step
+async def collapse_reference(
+    cache: WorkflowCache,
+    collapsed_reference_path: Path,
+    index: WFIndex,
+    logger,
+    proc: int,
+    run_subprocess: RunSubprocess,
+) -> Path:
+    """Ensure a cd-hit-est collapsed reference index exists locally."""
+    params = await get_reference_collapse_cache_params(index.id, run_subprocess)
+    key = derive_key(params)
+    collapsed_reference_dir = collapsed_reference_path.parent
+    log = logger.bind(
+        identity=CD_HIT_EST_IDENTITY,
+        index_kind="collapsed_reference",
+        key=key,
+        parent_id=index.id,
+    )
+
+    log.info("checking workflow cache")
+
+    result = await cache.get(key, collapsed_reference_dir.parent)
+
+    if isinstance(result, CacheHit):
+        log.info("restored cached collapsed reference", outcome="hit")
+
+        return collapsed_reference_path
+
+    log.info("collapsing reference", outcome="miss", source=str(index.path))
+
+    collapse_counts = await collapse_reference_index(
+        index,
+        collapsed_reference_path,
+        proc,
+        run_subprocess,
+    )
+
+    log.info("reference collapse complete", **collapse_counts)
+
+    if await cache.put(key, collapsed_reference_dir, params=params):
+        log.info("cached collapsed reference", outcome="put")
+    else:
+        log.info("collapsed reference cache already exists", outcome="put_skipped")
+
+    return collapsed_reference_path
+
+
+@step
 async def create_reference_index(
     cache: WorkflowCache,
+    collapsed_reference_path: Path,
     index: WFIndex,
     logger,
     proc: int,
@@ -58,16 +111,16 @@ async def create_reference_index(
     """Ensure the reference Bowtie2 index exists locally."""
     with TemporaryDirectory(prefix="pathoscope-reference-") as temp_dir:
         reference_fasta_path = Path(temp_dir) / "reference.fa"
+        collapsed_index = WFIndex.load(index.id, collapsed_reference_path)
 
-        await asyncio.to_thread(
-            write_default_isolate_fasta,
-            index.json_path,
+        await collapsed_index.write_fasta(
             reference_fasta_path,
+            collapsed_index.iter_default_sequences(),
         )
 
         logger.info(
             "assembled default reference fasta",
-            source=str(index.json_path),
+            source=str(collapsed_reference_path),
         )
 
         await create_mapping_index(
@@ -80,7 +133,8 @@ async def create_reference_index(
             index_prefix=reference_index_path,
             parent_id=index.id,
             extra_params={
-                "source": "index_json",
+                "collapse_identity": CD_HIT_EST_IDENTITY,
+                "source": "collapsed_reference",
                 "selection": "default_isolates",
             },
         )
@@ -134,7 +188,7 @@ async def map_default_isolates(
     """
     logger.info("running bowtie2 directly from rust with streaming")
 
-    candidate_otus = await asyncio.to_thread(
+    candidate_sequence_ids = await asyncio.to_thread(
         find_candidate_otus_with_bowtie2,
         str(reference_index_path),
         [str(path) for path in sample.read_paths],
@@ -142,13 +196,17 @@ async def map_default_isolates(
         p_score_cutoff,
     )
 
-    intermediate.to_otus = set(candidate_otus)
+    intermediate.candidate_sequence_ids = set(candidate_sequence_ids)
 
-    logger.info("found candidate otus", count=len(intermediate.to_otus))
+    logger.info(
+        "found candidate sequences",
+        count=len(intermediate.candidate_sequence_ids),
+    )
 
 
 @step
 async def build_isolate_index(
+    collapsed_reference_path: Path,
     index: WFIndex,
     intermediate: SimpleNamespace,
     isolate_fasta_path: Path,
@@ -158,20 +216,21 @@ async def build_isolate_index(
 ):
     """Build a mapping index containing all isolates of candidate OTUs."""
 
-    intermediate.lengths = await asyncio.to_thread(
-        write_isolate_fasta,
-        {index.get_otu_id_by_sequence_id(id_) for id_ in intermediate.to_otus},
-        index.json_path,
-        isolate_fasta_path,
-    )
-
-    if not intermediate.lengths:
-        # A sample can have zero reads mapping to any candidate OTU, producing an
-        # empty isolate FASTA. bowtie2-build exits 1 on empty input (VIR-2569), so
-        # skip building the index. The remaining mapping and reassignment steps
-        # short-circuit on the empty ``intermediate.lengths`` and the analysis is
-        # finished with an empty result.
+    if not intermediate.candidate_sequence_ids:
+        # bowtie2-build exits 1 on an empty FASTA. The remaining steps also
+        # short-circuit on the empty candidate set.
         return
+
+    collapsed_index = WFIndex.load(index.id, collapsed_reference_path)
+    otu_refs = await collapsed_index.get_otu_refs_by_sequence_ids(
+        intermediate.candidate_sequence_ids,
+    )
+    otu_ids = {otu_ref["id"] for otu_ref in otu_refs.values()}
+
+    await collapsed_index.write_fasta(
+        isolate_fasta_path,
+        collapsed_index.iter_otu_sequences(otu_ids),
+    )
 
     await build_bowtie2_index(
         isolate_fasta_path,
@@ -192,7 +251,7 @@ async def map_isolates(
     sample: WFSample,
 ):
     """Map sample reads to the all isolate index."""
-    if not intermediate.lengths:
+    if not intermediate.candidate_sequence_ids:
         # No candidate OTUs were found, so no isolate index was built. There is
         # nothing to map against.
         return
@@ -252,7 +311,7 @@ async def eliminate_subtraction(
     :param work_path: path to the workflow working directory
     """
 
-    if not intermediate.lengths:
+    if not intermediate.candidate_sequence_ids:
         # No candidate OTUs were found, so no reads were mapped to isolates and
         # there is nothing to subtract.
         results["subtracted_count"] = 0
@@ -353,7 +412,7 @@ async def reassignment(
     Tab-separated output is written to ``pathoscope.tsv``. The results are also parsed
     and saved to `intermediate.coverage`.
     """
-    if not intermediate.lengths:
+    if not intermediate.candidate_sequence_ids:
         # No candidate OTUs were found, so no isolate index was built and no reads
         # were mapped. Finish the analysis with an empty result instead of running
         # Pathoscope on a non-existent alignment.
@@ -387,14 +446,15 @@ async def reassignment(
     logger.info("preparing hits")
 
     hits = []
+    otu_refs = await index.get_otu_refs_by_sequence_ids(report)
 
     for sequence_id, hit in report.items():
-        otu_id = index.get_otu_id_by_sequence_id(sequence_id)
+        otu_ref = otu_refs[sequence_id]
 
         hit["id"] = sequence_id
 
         # Attach "otu" (id, version) to the hit.
-        hit["otu"] = {"id": otu_id, "version": index.manifest[otu_id]}
+        hit["otu"] = {"id": otu_ref["id"], "version": otu_ref["version"]}
 
         # Get the coverage for the sequence.
         hit_coverage = pathoscope_results.coverage[sequence_id]

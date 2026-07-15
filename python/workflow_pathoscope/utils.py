@@ -1,7 +1,5 @@
 import asyncio
 import csv
-import gzip
-import json
 import re
 from pathlib import Path
 
@@ -130,66 +128,6 @@ async def create_mapping_index(
         log.info("cached built mapping index", outcome="put")
     else:
         log.info("mapping index cache already exists", outcome="put_skipped")
-
-
-def _open_json(path: Path):
-    if path.suffix == ".gz":
-        return gzip.open(path, "rt")
-
-    return open(path)
-
-
-def _get_reference_otus(reference_data):
-    if isinstance(reference_data, dict):
-        return reference_data["otus"]
-
-    return reference_data
-
-
-def write_default_isolate_fasta(
-    json_path: Path,
-    target_path: Path,
-) -> dict[str, int]:
-    """Generate a FASTA file containing only default isolates from a reference JSON."""
-    lengths = {}
-
-    with _open_json(json_path) as f_json, open(target_path, "w") as f_target:
-        for otu in _get_reference_otus(json.load(f_json)):
-            for isolate in otu["isolates"]:
-                if not isolate["default"]:
-                    continue
-
-                for sequence in isolate["sequences"]:
-                    f_target.write(f">{sequence['_id']}\n{sequence['sequence']}\n")
-                    lengths[sequence["_id"]] = len(sequence["sequence"])
-
-    return lengths
-
-
-def write_isolate_fasta(
-    otu_ids: set[str],
-    json_path: Path,
-    target_path: Path,
-) -> dict[str, int]:
-    """Generate a FASTA file for all the isolates of the OTUs specified by ``otu_ids``.
-
-    :param otu_ids: the list of OTU IDs for which to generate and index
-    :param json_path: the path to the reference index json file
-    :param target_path: the path to write the fasta file to
-    :return: a dictionary of the lengths of all sequences keyed by their IDS
-
-    """
-    lengths = {}
-
-    with _open_json(json_path) as f_json, open(target_path, "w") as f_target:
-        for otu in _get_reference_otus(json.load(f_json)):
-            if otu["_id"] in otu_ids:
-                for isolate in otu["isolates"]:
-                    for sequence in isolate["sequences"]:
-                        f_target.write(f">{sequence['_id']}\n{sequence['sequence']}\n")
-                        lengths[sequence["_id"]] = len(sequence["sequence"])
-
-    return lengths
 
 
 def write_report(

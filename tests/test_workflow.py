@@ -1,5 +1,5 @@
-import gzip
-import json
+import asyncio
+import re
 import shutil
 
 import pysam
@@ -12,13 +12,25 @@ from syrupy import SnapshotAssertion
 from virtool.caches.utils import derive_key
 from virtool.workflow import RunSubprocess
 from virtool.workflow.data.analyses import WFAnalysis
-from virtool.workflow.data.cache import CacheHit, CacheMiss
+from virtool.workflow.data.cache import WorkflowCache
 from virtool.workflow.data.indexes import WFIndex
 from virtool.workflow.data.samples import WFSample
 from virtool.workflow.data.subtractions import WFSubtraction
+from virtool.workflow.errors import JobsAPINotFoundError
 from virtool.workflow.pytest_plugin import WorkflowData
 
+from fixtures import (
+    get_collapsed_reference_path,
+    get_isolate_bam_path,
+    get_isolate_fastq_path,
+    get_isolate_index_path,
+    get_isolate_path,
+    get_reference_index_path,
+    get_subtracted_bam_path,
+    get_subtraction_indexes_path,
+)
 from workflow import (
+    collapse_reference,
     build_isolate_index,
     create_reference_index,
     create_subtraction_index,
@@ -28,10 +40,13 @@ from workflow import (
     map_isolates,
     reassignment,
 )
-from workflow_pathoscope.utils import (
-    get_mapping_index_cache_params,
-    write_default_isolate_fasta,
+from workflow_pathoscope.reference import (
+    CD_HIT_EST_IDENTITY,
+    _prepare_otu_collapse,
+    collapse_reference_index,
+    get_reference_collapse_cache_params,
 )
+from workflow_pathoscope.utils import get_mapping_index_cache_params
 
 
 BOWTIE2_INDEX_SUFFIXES = (
@@ -42,6 +57,7 @@ BOWTIE2_INDEX_SUFFIXES = (
     "rev.1.bt2",
     "rev.2.bt2",
 )
+TOOL_VERSION_PATTERN = re.compile(r"\d+(?:\.\d+)+(?:[-+._A-Za-z0-9]*)?")
 
 
 @pytest.fixture()
@@ -54,12 +70,17 @@ def work_path(tmpdir):
 
 @pytest.fixture()
 def reference_index_path(work_path: Path) -> Path:
-    return work_path / "reference_index" / "reference"
+    return get_reference_index_path(work_path)
+
+
+@pytest.fixture()
+def collapsed_reference_path(work_path: Path) -> Path:
+    return get_collapsed_reference_path(work_path)
 
 
 @pytest.fixture()
 def subtraction_indexes_path(work_path: Path) -> Path:
-    return work_path / "subtraction_indexes"
+    return get_subtraction_indexes_path(work_path)
 
 
 @pytest.fixture()
@@ -70,71 +91,85 @@ def subtraction_index_path(
     return get_subtraction_index_path(subtraction_indexes_path, subtractions[0].id)
 
 
-class FakeWorkflowCache:
+@pytest.fixture()
+def isolate_path(work_path: Path) -> Path:
+    path = get_isolate_path(work_path)
+    path.mkdir()
+
+    return path
+
+
+@pytest.fixture()
+def isolate_fastq_path(isolate_path: Path) -> Path:
+    return get_isolate_fastq_path(isolate_path)
+
+
+@pytest.fixture()
+def isolate_index_path(isolate_path: Path) -> Path:
+    return get_isolate_index_path(isolate_path)
+
+
+@pytest.fixture()
+def isolate_bam_path(isolate_path: Path) -> Path:
+    return get_isolate_bam_path(isolate_path)
+
+
+@pytest.fixture()
+def subtracted_bam_path(work_path: Path) -> Path:
+    return get_subtracted_bam_path(work_path)
+
+
+class _FakeWorkflowCacheAPI:
+    """Fake only the API calls used by the real workflow cache."""
+
     def __init__(
         self,
-        hit_source: Path | None = None,
+        work_dir: Path,
+        *,
         put_exception: Exception | None = None,
-        put_created: bool = True,
-    ):
-        self.hit_source = hit_source
+        put_created: bool | None = None,
+    ) -> None:
+        self.work_dir = work_dir
         self.put_exception = put_exception
         self.put_created = put_created
-        self.gets = []
-        self.puts = []
+        self.stored: dict[str, tuple[Path, dict | None]] = {}
 
-    async def get(self, key: str, target: Path):
-        self.gets.append((key, target))
+    async def get_cache(self, key: str, dest: Path) -> None:
+        try:
+            source, _ = self.stored[key]
+        except KeyError:
+            raise JobsAPINotFoundError from None
 
-        if self.hit_source is None:
-            return CacheMiss(key)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(shutil.copyfile, source, dest)
 
-        target.mkdir(parents=True, exist_ok=True)
-
-        restored_path = target / self.hit_source.name
-        shutil.copytree(self.hit_source, restored_path)
-
-        return CacheHit(key, restored_path)
-
-    async def put(self, key: str, source: Path, params: dict | None = None):
-        self.puts.append((key, source, params))
-
-        if self.put_exception is not None:
+    async def put_cache(
+        self,
+        key: str,
+        path: Path,
+        params: dict | None = None,
+    ) -> bool:
+        if self.put_exception:
             raise self.put_exception
 
-        return self.put_created
+        if key in self.stored:
+            return False
+
+        stored_path = self.work_dir / "stored" / key / "cache.tar"
+        stored_path.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(shutil.copyfile, path, stored_path)
+        self.stored[key] = (stored_path, params)
+
+        if self.put_created is not None:
+            return self.put_created
+
+        return True
 
 
-class FakeRunSubprocess:
-    def __init__(self):
-        self.commands = []
-
-    async def __call__(
-        self,
-        command: list[str],
-        cwd: str | Path | None = None,
-        env: dict | None = None,
-        stderr_handler=None,
-        stdout_handler=None,
-    ):
-        self.commands.append(command)
-
-        if command == ["bowtie2-build", "--version"]:
-            await stdout_handler(b"/usr/bin/bowtie2-build-s version 2.5.4\n")
-            return SimpleNamespace(returncode=0)
-
-        if command[0] == "bowtie2-build":
-            prefix = Path(command[-1])
-            prefix.parent.mkdir(parents=True, exist_ok=True)
-
-            for suffix in BOWTIE2_INDEX_SUFFIXES:
-                (prefix.parent / f"{prefix.name}.{suffix}").write_bytes(
-                    f"{prefix.name}.{suffix}".encode(),
-                )
-
-            return SimpleNamespace(returncode=0)
-
-        raise AssertionError(f"Unexpected subprocess command: {command}")
+@pytest.fixture()
+def workflow_cache(tmp_path: Path) -> WorkflowCache:
+    api = _FakeWorkflowCacheAPI(tmp_path / "fake_workflow_cache_api")
+    return WorkflowCache(api, tmp_path / "workflow_cache")
 
 
 def read_directory_bytes(path: Path) -> dict[str, bytes]:
@@ -163,48 +198,91 @@ def write_bowtie2_bundle(
         (path / name).write_bytes(file_content)
 
 
-def write_reference_json(path: Path):
-    path.parent.mkdir(parents=True, exist_ok=True)
+def assert_bowtie2_index_exists(prefix: Path):
+    assert read_directory_bytes(prefix.parent).keys() == {
+        f"{prefix.name}.{suffix}" for suffix in BOWTIE2_INDEX_SUFFIXES
+    }
 
-    opener = gzip.open if path.suffix == ".gz" else open
+    for suffix in BOWTIE2_INDEX_SUFFIXES:
+        assert (prefix.parent / f"{prefix.name}.{suffix}").stat().st_size > 0
 
-    with opener(path, "wt") as f:
-        json.dump(
+
+def assert_cache_params(
+    params: dict[str, str],
+    expected: dict[str, str],
+) -> None:
+    assert params.keys() == {*expected.keys(), "tool_version"}
+    assert {
+        key: value for key, value in params.items() if key != "tool_version"
+    } == expected
+    assert TOOL_VERSION_PATTERN.fullmatch(params["tool_version"])
+
+
+async def create_test_index(path: Path) -> WFIndex:
+    def sequence(id_: str, value: str) -> dict:
+        return {
+            "id": id_,
+            "accession": id_,
+            "definition": id_,
+            "host": "",
+            "segment": None,
+            "sequence": value,
+        }
+
+    def isolate(id_: str, default: bool, sequences: list[dict]) -> dict:
+        return {
+            "id": id_,
+            "default": default,
+            "sequences": sequences,
+            "source_name": id_,
+            "source_type": "isolate",
+        }
+
+    return await WFIndex.create(
+        "test-index",
+        path,
+        None,
+        [
             {
-                "otus": [
-                    {
-                        "_id": "default-otu",
-                        "isolates": [
-                            {
-                                "default": True,
-                                "sequences": [
-                                    {"_id": "default-a", "sequence": "ACGT"},
-                                    {"_id": "default-b", "sequence": "TTA"},
-                                ],
-                            },
-                            {
-                                "default": False,
-                                "sequences": [
-                                    {"_id": "non-default", "sequence": "GGGG"},
-                                ],
-                            },
+                "id": "default-otu",
+                "abbreviation": "DEFAULT",
+                "isolates": [
+                    isolate(
+                        "default",
+                        True,
+                        [
+                            sequence("default-a", "ACGT"),
+                            sequence("default-b", "TTA"),
                         ],
-                    },
-                    {
-                        "_id": "non-default-otu",
-                        "isolates": [
-                            {
-                                "default": False,
-                                "sequences": [
-                                    {"_id": "non-default-only", "sequence": "CCCC"},
-                                ],
-                            },
-                        ],
-                    },
+                    ),
+                    isolate(
+                        "non-default",
+                        False,
+                        [sequence("non-default", "GGGG")],
+                    ),
                 ],
+                "name": "Default OTU",
+                "schema": [],
+                "taxid": None,
+                "version": 1,
             },
-            f,
-        )
+            {
+                "id": "non-default-otu",
+                "abbreviation": "NONDEFAULT",
+                "isolates": [
+                    isolate(
+                        "non-default-only",
+                        False,
+                        [sequence("non-default-only", "CCCC")],
+                    ),
+                ],
+                "name": "Non-default OTU",
+                "schema": [],
+                "taxid": None,
+                "version": 1,
+            },
+        ],
+    )
 
 
 @pytest.fixture()
@@ -220,54 +298,887 @@ def analysis(workflow_data: WorkflowData, mocker):
 
 
 @pytest.fixture()
-def index(workflow_data: WorkflowData, example_path: Path, work_path: Path):
-    workflow_data.index.manifest = {"foobar": 10, "reo": 5, "baz": 6}
+async def index(workflow_data: WorkflowData, work_path: Path):
+    sequence_otu_map = {
+        "NC_016509": "foobar",
+        "NC_001948": "foobar",
+        "13TF149_Reovirus_TF1_Seg06": "reo",
+        "13TF149_Reovirus_TF1_Seg03": "reo",
+        "13TF149_Reovirus_TF1_Seg07": "reo",
+        "13TF149_Reovirus_TF1_Seg02": "reo",
+        "13TF149_Reovirus_TF1_Seg08": "reo",
+        "13TF149_Reovirus_TF1_Seg11": "reo",
+        "13TF149_Reovirus_TF1_Seg04": "reo",
+        "NC_004667": "foobar",
+        "NC_003347": "foobar",
+        "NC_003615": "foobar",
+        "NC_003689": "foobar",
+        "NC_011552": "foobar",
+        "KX109927": "baz",
+        "NC_008039": "foobar",
+        "NC_015782": "foobar",
+        "NC_016416": "foobar",
+        "NC_003623": "foobar",
+        "NC_008038": "foobar",
+        "NC_001836": "foobar",
+        "JQ080272": "baz",
+        "NC_017938": "foobar",
+        "NC_008037": "foobar",
+        "NC_007448": "foobar",
+    }
+    manifest = {"foobar": 10, "reo": 5, "baz": 6}
+    otus = []
 
-    index_path = work_path / "indexes" / workflow_data.index.id
+    for otu_id, version in manifest.items():
+        otus.append(
+            {
+                "id": otu_id,
+                "abbreviation": otu_id.upper(),
+                "isolates": [
+                    {
+                        "default": True,
+                        "id": f"{otu_id}-isolate",
+                        "sequences": [
+                            {
+                                "id": sequence_id,
+                                "accession": sequence_id,
+                                "definition": sequence_id,
+                                "host": "",
+                                "segment": None,
+                                "sequence": "ACGT",
+                            }
+                            for sequence_id, sequence_otu_id in sequence_otu_map.items()
+                            if sequence_otu_id == otu_id
+                        ],
+                        "source_name": otu_id,
+                        "source_type": "isolate",
+                    },
+                ],
+                "name": otu_id,
+                "schema": [],
+                "taxid": None,
+                "version": version,
+            },
+        )
 
-    shutil.copytree(example_path / "index", index_path)
+    return await WFIndex.create(
+        workflow_data.index.id,
+        work_path / "indexes" / workflow_data.index.id / "index.sqlite",
+        None,
+        otus,
+    )
 
-    return WFIndex(
-        id=workflow_data.index.id,
-        path=index_path,
-        manifest=workflow_data.index.manifest,
-        reference=workflow_data.index.reference,
-        sequence_lengths={},
-        sequence_otu_map={
-            "NC_016509": "foobar",
-            "NC_001948": "foobar",
-            "13TF149_Reovirus_TF1_Seg06": "reo",
-            "13TF149_Reovirus_TF1_Seg03": "reo",
-            "13TF149_Reovirus_TF1_Seg07": "reo",
-            "13TF149_Reovirus_TF1_Seg02": "reo",
-            "13TF149_Reovirus_TF1_Seg08": "reo",
-            "13TF149_Reovirus_TF1_Seg11": "reo",
-            "13TF149_Reovirus_TF1_Seg04": "reo",
-            "NC_004667": "foobar",
-            "NC_003347": "foobar",
-            "NC_003615": "foobar",
-            "NC_003689": "foobar",
-            "NC_011552": "foobar",
-            "KX109927": "baz",
-            "NC_008039": "foobar",
-            "NC_015782": "foobar",
-            "NC_016416": "foobar",
-            "NC_003623": "foobar",
-            "NC_008038": "foobar",
-            "NC_001836": "foobar",
-            "JQ080272": "baz",
-            "NC_017938": "foobar",
-            "NC_008037": "foobar",
-            "NC_007448": "foobar",
+
+def make_index_sequence(
+    sequence_id: str,
+    *,
+    segment: object,
+    sequence: str = "ACGT",
+) -> dict:
+    return {
+        "id": sequence_id,
+        "accession": sequence_id,
+        "definition": sequence_id,
+        "host": "",
+        "segment": segment,
+        "sequence": sequence,
+    }
+
+
+def make_index_isolate(
+    isolate_id: str,
+    *,
+    sequences: list[dict],
+    default: bool = False,
+) -> dict:
+    return {
+        "id": isolate_id,
+        "default": default,
+        "sequences": sequences,
+        "source_name": isolate_id,
+        "source_type": "isolate",
+    }
+
+
+def make_index_otu(
+    otu_id: str,
+    *,
+    isolates: list[dict],
+    schema: list[str],
+) -> dict:
+    return {
+        "id": otu_id,
+        "abbreviation": "COLLAPSE",
+        "name": "Collapse OTU",
+        "taxid": None,
+        "version": 1,
+        "schema": [{"name": segment} for segment in schema],
+        "isolates": isolates,
+    }
+
+
+def make_redundant_index_otu() -> dict:
+    sequence_data = {
+        "default": (
+            "ACGTACGTACGTACGTACGT",
+            "TGCATGCATGCATGCATGCA",
+        ),
+        "representative-1": (
+            "ACGTACGTACGTACGTACGT",
+            "TGCAGGATCGTTTAACGTAG",
+        ),
+        "representative-2": (
+            "CCCCAAAAGGGGTTTTCCCC",
+            "AAAACCCCGGGGTTTTAAAA",
+        ),
+        "unique-combo": (
+            "CCCCAAAAGGGGTTTTCCCC",
+            "TGCAGGATCGTTTAACGTAG",
+        ),
+        "duplicate": (
+            "CCCCAAAAGGGGTTTTCCCC",
+            "AAAACCCCGGGGTTTTAAAA",
+        ),
+    }
+
+    return make_index_otu(
+        "collapse-otu",
+        schema=["a", "b"],
+        isolates=[
+            make_index_isolate(
+                isolate_id,
+                default=isolate_id == "default",
+                sequences=[
+                    make_index_sequence(
+                        f"{isolate_id}-a",
+                        segment="a",
+                        sequence=sequences[0],
+                    ),
+                    make_index_sequence(
+                        f"{isolate_id}-b",
+                        segment="b",
+                        sequence=sequences[1],
+                    ),
+                ],
+            )
+            for isolate_id, sequences in sequence_data.items()
+        ],
+    )
+
+
+@pytest.fixture()
+async def redundant_index(workflow_data: WorkflowData, tmp_path: Path) -> WFIndex:
+    return await WFIndex.create(
+        workflow_data.index.id,
+        tmp_path / "redundant-index.sqlite",
+        None,
+        [make_redundant_index_otu()],
+    )
+
+
+async def test_collapse_reference_hit(
+    collapsed_reference_path: Path,
+    index: WFIndex,
+    run_subprocess: RunSubprocess,
+    tmp_path: Path,
+    workflow_cache: WorkflowCache,
+):
+    source = tmp_path / collapsed_reference_path.parent.name
+    source.mkdir()
+    await create_test_index(source / collapsed_reference_path.name)
+    params = await get_reference_collapse_cache_params(index.id, run_subprocess)
+    key = derive_key(params)
+    assert await workflow_cache.put(key, source, params)
+
+    logger = get_logger("test")
+
+    result_path = await collapse_reference(
+        workflow_cache,
+        collapsed_reference_path,
+        index,
+        logger,
+        4,
+        run_subprocess,
+    )
+
+    assert result_path == collapsed_reference_path
+    assert read_directory_bytes(
+        collapsed_reference_path.parent
+    ) == read_directory_bytes(source)
+
+
+async def test_collapse_reference_miss_retains_required_isolates(
+    collapsed_reference_path: Path,
+    redundant_index: WFIndex,
+    run_subprocess: RunSubprocess,
+    workflow_cache: WorkflowCache,
+):
+    logger = get_logger("test")
+
+    result_path = await collapse_reference(
+        workflow_cache,
+        collapsed_reference_path,
+        redundant_index,
+        logger,
+        4,
+        run_subprocess,
+    )
+
+    params = await get_reference_collapse_cache_params(
+        redundant_index.id,
+        run_subprocess,
+    )
+
+    assert result_path == collapsed_reference_path
+    assert_cache_params(
+        params,
+        {
+            "index_kind": "collapsed_reference",
+            "workflow": "pathoscope",
+            "workflow_version": "UNKNOWN",
+            "parent_id": redundant_index.id,
+            "source": "index_sqlite",
+            "tool_name": "cd-hit-est",
+            "identity": "0.99",
         },
     )
+
+    collapsed_index = WFIndex.load(redundant_index.id, collapsed_reference_path)
+    collapsed_otus = [otu async for otu in collapsed_index.iter_otus()]
+
+    assert [isolate["id"] for isolate in collapsed_otus[0]["isolates"]] == [
+        "default",
+        "representative-1",
+        "representative-2",
+        "unique-combo",
+    ]
+    assert [
+        (isolate["sequences"][0]["id"], isolate["sequences"][1]["id"])
+        for isolate in collapsed_otus[0]["isolates"]
+    ] == [
+        ("default-a", "default-b"),
+        ("representative-1-a", "representative-1-b"),
+        ("representative-2-a", "representative-2-b"),
+        ("unique-combo-a", "unique-combo-b"),
+    ]
+    assert not (collapsed_reference_path.parent / "collapse-manifest.json").exists()
+
+
+async def test_collapse_reference_index_outputs_collapsed_reference_fasta(
+    redundant_index: WFIndex,
+    run_subprocess: RunSubprocess,
+    tmp_path: Path,
+):
+    collapsed_path = tmp_path / "collapsed" / "index.sqlite"
+    default_fasta_path = tmp_path / "default.fa"
+    isolate_fasta_path = tmp_path / "isolates.fa"
+
+    assert await collapse_reference_index(
+        redundant_index,
+        collapsed_path,
+        2,
+        run_subprocess,
+    ) == {
+        "isolate_count_before": 5,
+        "isolate_count_after": 4,
+        "isolate_count_removed": 1,
+        "otu_count_collapsed": 1,
+        "otu_count_unchanged": 0,
+        "otu_count_skipped": 0,
+    }
+
+    collapsed_index = WFIndex.load(redundant_index.id, collapsed_path)
+
+    await collapsed_index.write_fasta(
+        default_fasta_path,
+        collapsed_index.iter_default_sequences(),
+    )
+    await collapsed_index.write_fasta(
+        isolate_fasta_path,
+        collapsed_index.iter_otu_sequences("collapse-otu"),
+    )
+
+    assert default_fasta_path.read_text() == (
+        ">default-a\nACGTACGTACGTACGTACGT\n>default-b\nTGCATGCATGCATGCATGCA\n"
+    )
+    assert "duplicate-a" not in isolate_fasta_path.read_text()
+    assert "duplicate-b" not in isolate_fasta_path.read_text()
+
+
+async def test_collapse_reference_index_allows_isolates_missing_schema_segments(
+    run_subprocess: RunSubprocess,
+    tmp_path: Path,
+):
+    otu = make_redundant_index_otu()
+    default_isolate = next(
+        isolate for isolate in otu["isolates"] if isolate["id"] == "default"
+    )
+    default_isolate["sequences"] = [
+        sequence
+        for sequence in default_isolate["sequences"]
+        if sequence["segment"] == "b"
+    ]
+    source_index = await WFIndex.create(
+        "test-index",
+        tmp_path / "source.sqlite",
+        None,
+        [otu],
+    )
+    collapsed_path = tmp_path / "collapsed" / "index.sqlite"
+
+    assert await collapse_reference_index(
+        source_index,
+        collapsed_path,
+        2,
+        run_subprocess,
+    ) == {
+        "isolate_count_before": 5,
+        "isolate_count_after": 4,
+        "isolate_count_removed": 1,
+        "otu_count_collapsed": 1,
+        "otu_count_unchanged": 0,
+        "otu_count_skipped": 0,
+    }
+
+    collapsed_index = WFIndex.load(source_index.id, collapsed_path)
+    collapsed_otus = [otu async for otu in collapsed_index.iter_otus()]
+
+    assert [
+        sequence["id"] for sequence in collapsed_otus[0]["isolates"][0]["sequences"]
+    ] == ["default-b"]
+
+
+async def test_collapse_reference_index_allows_unsegmented_isolates(
+    run_subprocess: RunSubprocess,
+    tmp_path: Path,
+):
+    otu = make_index_otu(
+        "collapse-otu",
+        schema=[],
+        isolates=[
+            make_index_isolate(
+                "default",
+                default=True,
+                sequences=[
+                    make_index_sequence(
+                        "default",
+                        segment=None,
+                        sequence="ACGTACGTACGTACGTACGT",
+                    ),
+                ],
+            ),
+            make_index_isolate(
+                "representative-1",
+                sequences=[
+                    make_index_sequence(
+                        "representative-1",
+                        segment="ignored",
+                        sequence="ACGTACGTACGTACGTACGT",
+                    ),
+                ],
+            ),
+            make_index_isolate(
+                "representative-2",
+                sequences=[
+                    make_index_sequence(
+                        "representative-2",
+                        segment="ignored",
+                        sequence="CCCCAAAAGGGGTTTTCCCC",
+                    ),
+                ],
+            ),
+            make_index_isolate(
+                "unique-combo",
+                sequences=[
+                    make_index_sequence(
+                        "unique-combo",
+                        segment="ignored",
+                        sequence="CCCCAAAAGGGGTTTTCCCC",
+                    ),
+                ],
+            ),
+            make_index_isolate(
+                "duplicate",
+                sequences=[
+                    make_index_sequence(
+                        "duplicate",
+                        segment="ignored",
+                        sequence="CCCCAAAAGGGGTTTTCCCC",
+                    ),
+                ],
+            ),
+        ],
+    )
+
+    source_index = await WFIndex.create(
+        "test-index",
+        tmp_path / "source.sqlite",
+        None,
+        [otu],
+    )
+    collapsed_path = tmp_path / "collapsed" / "index.sqlite"
+
+    assert await collapse_reference_index(
+        source_index,
+        collapsed_path,
+        2,
+        run_subprocess,
+    ) == {
+        "isolate_count_before": 5,
+        "isolate_count_after": 2,
+        "isolate_count_removed": 3,
+        "otu_count_collapsed": 1,
+        "otu_count_unchanged": 0,
+        "otu_count_skipped": 0,
+    }
+
+    collapsed_index = WFIndex.load(source_index.id, collapsed_path)
+    collapsed_otus = [otu async for otu in collapsed_index.iter_otus()]
+
+    assert collapsed_otus[0]["schema"] == []
+    assert [isolate["id"] for isolate in collapsed_otus[0]["isolates"]] == [
+        "default",
+        "representative-2",
+    ]
+
+
+async def test_collapse_reference_index_rejects_multiple_sequences_for_unsegmented_otu(
+    mocker,
+    tmp_path: Path,
+):
+    otu = make_index_otu(
+        "unsegmented",
+        schema=[],
+        isolates=[
+            make_index_isolate(
+                "multiple-sequences",
+                default=True,
+                sequences=[
+                    make_index_sequence("sequence-1", segment=None),
+                    make_index_sequence("sequence-2", segment=None),
+                ],
+            ),
+            make_index_isolate(
+                "single-sequence",
+                sequences=[make_index_sequence("sequence-3", segment=None)],
+            ),
+        ],
+    )
+
+    source_index = await WFIndex.create(
+        "test-index",
+        tmp_path / "source.sqlite",
+        None,
+        [otu],
+    )
+    run_subprocess = mocker.AsyncMock()
+    collapsed_path = tmp_path / "collapsed" / "index.sqlite"
+
+    assert await collapse_reference_index(
+        source_index,
+        collapsed_path,
+        2,
+        run_subprocess,
+    ) == {
+        "isolate_count_before": 2,
+        "isolate_count_after": 2,
+        "isolate_count_removed": 0,
+        "otu_count_collapsed": 0,
+        "otu_count_unchanged": 0,
+        "otu_count_skipped": 1,
+    }
+
+    collapsed_index = WFIndex.load(source_index.id, collapsed_path)
+    assert [otu async for otu in collapsed_index.iter_otus()] == [
+        otu async for otu in source_index.iter_otus()
+    ]
+    run_subprocess.assert_not_awaited()
+
+
+async def test_collapse_reference_index_preserves_single_unsegmented_isolate(
+    mocker,
+    tmp_path: Path,
+):
+    otu = make_index_otu(
+        "unsegmented",
+        schema=[],
+        isolates=[
+            make_index_isolate(
+                "only-isolate",
+                default=True,
+                sequences=[
+                    make_index_sequence("sequence-1", segment=None),
+                    make_index_sequence("sequence-2", segment=None),
+                ],
+            ),
+        ],
+    )
+    run_subprocess = mocker.AsyncMock()
+    source_index = await WFIndex.create(
+        "test-index",
+        tmp_path / "source.sqlite",
+        None,
+        [otu],
+    )
+    collapsed_path = tmp_path / "collapsed" / "index.sqlite"
+
+    assert await collapse_reference_index(
+        source_index,
+        collapsed_path,
+        2,
+        run_subprocess,
+    ) == {
+        "isolate_count_before": 1,
+        "isolate_count_after": 1,
+        "isolate_count_removed": 0,
+        "otu_count_collapsed": 0,
+        "otu_count_unchanged": 1,
+        "otu_count_skipped": 0,
+    }
+
+    collapsed_index = WFIndex.load(source_index.id, collapsed_path)
+    collapsed_otus = [otu async for otu in collapsed_index.iter_otus()]
+
+    assert [
+        sequence["id"] for sequence in collapsed_otus[0]["isolates"][0]["sequences"]
+    ] == ["sequence-1", "sequence-2"]
+    run_subprocess.assert_not_awaited()
+
+
+async def test_collapse_reference_index_preserves_single_schema_isolate_without_validation(
+    mocker,
+    tmp_path: Path,
+):
+    otu = make_index_otu(
+        "segmented",
+        schema=["a", "b"],
+        isolates=[
+            make_index_isolate(
+                "only-isolate",
+                default=True,
+                sequences=[
+                    make_index_sequence("sequence-a", segment=None),
+                    make_index_sequence("sequence-b", segment="b"),
+                ],
+            ),
+        ],
+    )
+    run_subprocess = mocker.AsyncMock()
+    source_index = await WFIndex.create(
+        "test-index",
+        tmp_path / "source.sqlite",
+        None,
+        [otu],
+    )
+    collapsed_path = tmp_path / "collapsed" / "index.sqlite"
+
+    assert await collapse_reference_index(
+        source_index,
+        collapsed_path,
+        2,
+        run_subprocess,
+    ) == {
+        "isolate_count_before": 1,
+        "isolate_count_after": 1,
+        "isolate_count_removed": 0,
+        "otu_count_collapsed": 0,
+        "otu_count_unchanged": 1,
+        "otu_count_skipped": 0,
+    }
+
+    collapsed_index = WFIndex.load(source_index.id, collapsed_path)
+    assert [otu async for otu in collapsed_index.iter_otus()] == [
+        otu async for otu in source_index.iter_otus()
+    ]
+    run_subprocess.assert_not_awaited()
+
+
+@pytest.mark.parametrize("segment", [None, ""])
+async def test_collapse_reference_index_skips_invalid_schema_segment_names(
+    mocker,
+    segment,
+    tmp_path: Path,
+):
+    otu = make_index_otu(
+        "segmented",
+        schema=["a", "b"],
+        isolates=[
+            make_index_isolate(
+                "invalid",
+                default=True,
+                sequences=[
+                    make_index_sequence("invalid-a", segment=segment),
+                    make_index_sequence("invalid-b", segment="b"),
+                ],
+            ),
+            make_index_isolate(
+                "valid",
+                sequences=[
+                    make_index_sequence("valid-a", segment="a"),
+                    make_index_sequence("valid-b", segment="b"),
+                ],
+            ),
+        ],
+    )
+    run_subprocess = mocker.AsyncMock()
+    source_index = await WFIndex.create(
+        "test-index",
+        tmp_path / "source.sqlite",
+        None,
+        [otu],
+    )
+    collapsed_path = tmp_path / "collapsed" / "index.sqlite"
+
+    summary = await collapse_reference_index(
+        source_index,
+        collapsed_path,
+        2,
+        run_subprocess,
+    )
+
+    assert summary["otu_count_skipped"] == 1
+    collapsed_index = WFIndex.load(source_index.id, collapsed_path)
+    assert [otu async for otu in collapsed_index.iter_otus()] == [
+        otu async for otu in source_index.iter_otus()
+    ]
+    run_subprocess.assert_not_awaited()
+
+
+def test_otu_collapse_preparation_rejects_non_string_schema_segment():
+    otu = make_index_otu(
+        "segmented",
+        schema=["a"],
+        isolates=[
+            make_index_isolate(
+                "invalid",
+                sequences=[make_index_sequence("invalid-a", segment=42)],
+            ),
+        ],
+    )
+
+    preparation = _prepare_otu_collapse(otu)
+
+    assert preparation.eligible is False
+    assert preparation.sequences_by_segment == {}
+
+
+def test_otu_collapse_preparation_rejects_empty_schemaless_isolate():
+    otu = make_index_otu(
+        "unsegmented",
+        schema=[],
+        isolates=[
+            make_index_isolate("empty", sequences=[]),
+            make_index_isolate(
+                "valid",
+                sequences=[make_index_sequence("valid", segment=None)],
+            ),
+        ],
+    )
+
+    preparation = _prepare_otu_collapse(otu)
+
+    assert preparation.eligible is False
+    assert preparation.sequences_by_segment == {}
+
+
+async def test_collapse_reference_index_rejects_duplicate_isolate_segments(
+    mocker,
+    tmp_path: Path,
+):
+    otu = make_index_otu(
+        "segmented",
+        schema=["a", "b"],
+        isolates=[
+            make_index_isolate(
+                "duplicate",
+                default=True,
+                sequences=[
+                    make_index_sequence("duplicate-a-1", segment="a"),
+                    make_index_sequence("duplicate-a-2", segment="a"),
+                ],
+            ),
+            make_index_isolate(
+                "valid",
+                sequences=[
+                    make_index_sequence("valid-a", segment="a"),
+                    make_index_sequence("valid-b", segment="b"),
+                ],
+            ),
+        ],
+    )
+    source_index = await WFIndex.create(
+        "test-index",
+        tmp_path / "source.sqlite",
+        None,
+        [otu],
+    )
+    run_subprocess = mocker.AsyncMock()
+    collapsed_path = tmp_path / "collapsed" / "index.sqlite"
+
+    summary = await collapse_reference_index(
+        source_index,
+        collapsed_path,
+        2,
+        run_subprocess,
+    )
+
+    assert summary["otu_count_skipped"] == 1
+    collapsed_index = WFIndex.load(source_index.id, collapsed_path)
+    assert [otu async for otu in collapsed_index.iter_otus()] == [
+        otu async for otu in source_index.iter_otus()
+    ]
+    run_subprocess.assert_not_awaited()
+
+
+async def test_collapse_reference_index_rejects_unknown_isolate_segments(
+    mocker,
+    tmp_path: Path,
+):
+    otu = make_index_otu(
+        "segmented",
+        schema=["a", "b"],
+        isolates=[
+            make_index_isolate(
+                "unknown",
+                default=True,
+                sequences=[
+                    make_index_sequence("unknown-c", segment="c"),
+                    make_index_sequence("unknown-b", segment="b"),
+                ],
+            ),
+            make_index_isolate(
+                "valid",
+                sequences=[
+                    make_index_sequence("valid-a", segment="a"),
+                    make_index_sequence("valid-b", segment="b"),
+                ],
+            ),
+        ],
+    )
+    source_index = await WFIndex.create(
+        "test-index",
+        tmp_path / "source.sqlite",
+        None,
+        [otu],
+    )
+    run_subprocess = mocker.AsyncMock()
+    collapsed_path = tmp_path / "collapsed" / "index.sqlite"
+
+    summary = await collapse_reference_index(
+        source_index,
+        collapsed_path,
+        2,
+        run_subprocess,
+    )
+
+    assert summary["otu_count_skipped"] == 1
+    collapsed_index = WFIndex.load(source_index.id, collapsed_path)
+    assert [otu async for otu in collapsed_index.iter_otus()] == [
+        otu async for otu in source_index.iter_otus()
+    ]
+    run_subprocess.assert_not_awaited()
+
+
+async def test_collapse_reference_index_handles_mixed_otu_outcomes(
+    run_subprocess: RunSubprocess,
+    tmp_path: Path,
+):
+    eligible_otu = make_redundant_index_otu()
+    skipped_otu = make_index_otu(
+        "skipped",
+        schema=["a"],
+        isolates=[
+            make_index_isolate(
+                "skipped-invalid",
+                default=True,
+                sequences=[
+                    make_index_sequence("skipped-invalid", segment=None),
+                ],
+            ),
+            make_index_isolate(
+                "skipped-valid",
+                sequences=[
+                    make_index_sequence("skipped-valid", segment="a"),
+                ],
+            ),
+        ],
+    )
+    unchanged_otu = make_index_otu(
+        "unchanged",
+        schema=["a"],
+        isolates=[
+            make_index_isolate(
+                "unchanged-invalid",
+                default=True,
+                sequences=[
+                    make_index_sequence("unchanged-invalid", segment=None),
+                ],
+            ),
+        ],
+    )
+    source_index = await WFIndex.create(
+        "test-index",
+        tmp_path / "source.sqlite",
+        None,
+        [eligible_otu, skipped_otu, unchanged_otu],
+    )
+    collapsed_path = tmp_path / "collapsed" / "index.sqlite"
+    subprocess_commands: list[list[str]] = []
+
+    async def tracked_run_subprocess(command, **kwargs):
+        subprocess_commands.append(command)
+        return await run_subprocess(command, **kwargs)
+
+    assert await collapse_reference_index(
+        source_index,
+        collapsed_path,
+        2,
+        tracked_run_subprocess,
+    ) == {
+        "isolate_count_before": 8,
+        "isolate_count_after": 7,
+        "isolate_count_removed": 1,
+        "otu_count_collapsed": 1,
+        "otu_count_unchanged": 1,
+        "otu_count_skipped": 1,
+    }
+
+    collapsed_index = WFIndex.load(source_index.id, collapsed_path)
+    collapsed_otus = {otu["id"]: otu async for otu in collapsed_index.iter_otus()}
+    source_otus = {otu["id"]: otu async for otu in source_index.iter_otus()}
+
+    assert len(collapsed_otus["collapse-otu"]["isolates"]) == 4
+    assert collapsed_otus["skipped"] == source_otus["skipped"]
+    assert collapsed_otus["unchanged"] == source_otus["unchanged"]
+    assert len(subprocess_commands) == 2
+
+
+async def test_collapse_reference_index_propagates_subprocess_failures(
+    mocker,
+    tmp_path: Path,
+):
+    source_index = await WFIndex.create(
+        "test-index",
+        tmp_path / "source.sqlite",
+        None,
+        [make_redundant_index_otu()],
+    )
+    run_subprocess = mocker.AsyncMock(side_effect=RuntimeError("cd-hit-est failed"))
+
+    with pytest.raises(RuntimeError, match="cd-hit-est failed"):
+        await collapse_reference_index(
+            source_index,
+            tmp_path / "collapsed" / "index.sqlite",
+            2,
+            run_subprocess,
+        )
 
 
 @pytest.fixture()
 def sample(workflow_data: WorkflowData, example_path: Path, work_path: Path):
     workflow_data.sample.library_type = "normal"
 
-    path = work_path / "samples" / workflow_data.sample.id
+    path = work_path / "samples" / str(workflow_data.sample.id)
     path.mkdir(parents=True)
 
     shutil.copyfile(example_path / "sample" / "reads_1.fq.gz", path / "reads_1.fq.gz")
@@ -304,11 +1215,14 @@ def subtractions(workflow_data: WorkflowData, example_path: Path, work_path: Pat
 
 
 async def test_create_reference_index_hit(
+    collapsed_reference_path: Path,
     index: WFIndex,
     reference_index_path: Path,
+    run_subprocess: RunSubprocess,
     tmp_path: Path,
+    workflow_cache: WorkflowCache,
 ):
-    write_reference_json(index.json_path)
+    await create_test_index(collapsed_reference_path)
     source = tmp_path / reference_index_path.parent.name
     write_bowtie2_bundle(
         source,
@@ -316,12 +1230,24 @@ async def test_create_reference_index_hit(
         b"cached-reference",
         {"cache-manifest.json": b"cached-manifest"},
     )
-    cache = FakeWorkflowCache(source)
-    run_subprocess = FakeRunSubprocess()
+    params = await get_mapping_index_cache_params(
+        "reference_mapping_index",
+        index.id,
+        run_subprocess,
+        {
+            "collapse_identity": CD_HIT_EST_IDENTITY,
+            "source": "collapsed_reference",
+            "selection": "default_isolates",
+        },
+    )
+    key = derive_key(params)
+    assert await workflow_cache.put(key, source, params)
+
     logger = get_logger("test")
 
     result_index_path = await create_reference_index(
-        cache,
+        workflow_cache,
+        collapsed_reference_path,
         index,
         logger,
         4,
@@ -329,41 +1255,25 @@ async def test_create_reference_index_hit(
         reference_index_path,
     )
 
-    params = await get_mapping_index_cache_params(
-        "reference_mapping_index",
-        index.id,
-        FakeRunSubprocess(),
-        {
-            "source": "index_json",
-            "selection": "default_isolates",
-        },
-    )
-
-    assert cache.gets == [
-        (
-            derive_key(params),
-            reference_index_path.parent.parent,
-        ),
-    ]
-    assert cache.puts == []
     assert result_index_path == reference_index_path
-    assert run_subprocess.commands == [["bowtie2-build", "--version"]]
     assert read_directory_bytes(reference_index_path.parent) == read_directory_bytes(
         source
     )
 
 
 async def test_create_reference_index_miss(
+    collapsed_reference_path: Path,
     index: WFIndex,
     reference_index_path: Path,
+    run_subprocess: RunSubprocess,
+    workflow_cache: WorkflowCache,
 ):
-    write_reference_json(index.json_path)
-    cache = FakeWorkflowCache()
-    run_subprocess = FakeRunSubprocess()
+    await create_test_index(collapsed_reference_path)
     logger = get_logger("test")
 
     result_index_path = await create_reference_index(
-        cache,
+        workflow_cache,
+        collapsed_reference_path,
         index,
         logger,
         4,
@@ -374,51 +1284,50 @@ async def test_create_reference_index_miss(
     params = await get_mapping_index_cache_params(
         "reference_mapping_index",
         index.id,
-        FakeRunSubprocess(),
+        run_subprocess,
         {
-            "source": "index_json",
+            "collapse_identity": CD_HIT_EST_IDENTITY,
+            "source": "collapsed_reference",
             "selection": "default_isolates",
         },
     )
-    key = derive_key(params)
-    assert cache.gets == [(key, reference_index_path.parent.parent)]
-    assert cache.puts == [(key, reference_index_path.parent, params)]
     assert result_index_path == reference_index_path
-    assert params == {
-        "index_kind": "reference_mapping_index",
-        "workflow": "pathoscope",
-        "workflow_version": "UNKNOWN",
-        "parent_id": index.id,
-        "source": "index_json",
-        "selection": "default_isolates",
-        "tool_name": "bowtie2-build",
-        "tool_version": "2.5.4",
-    }
-    assert len(run_subprocess.commands) == 2
-    assert run_subprocess.commands[0] == ["bowtie2-build", "--version"]
-    assert run_subprocess.commands[1][:3] == [
-        "bowtie2-build",
-        "--threads",
-        "4",
-    ]
-    assert Path(run_subprocess.commands[1][3]).name == "reference.fa"
-    assert run_subprocess.commands[1][4] == str(reference_index_path)
-    assert read_directory_bytes(reference_index_path.parent) == {
-        **bowtie2_bundle_bytes("reference"),
-    }
+    assert_cache_params(
+        params,
+        {
+            "index_kind": "reference_mapping_index",
+            "workflow": "pathoscope",
+            "workflow_version": "UNKNOWN",
+            "parent_id": index.id,
+            "collapse_identity": "0.99",
+            "source": "collapsed_reference",
+            "selection": "default_isolates",
+            "tool_name": "bowtie2-build",
+        },
+    )
+    assert_bowtie2_index_exists(reference_index_path)
 
 
 async def test_create_reference_index_continues_when_cache_put_is_skipped(
+    collapsed_reference_path: Path,
     index: WFIndex,
     reference_index_path: Path,
+    run_subprocess: RunSubprocess,
+    tmp_path: Path,
 ):
-    write_reference_json(index.json_path)
-    cache = FakeWorkflowCache(put_created=False)
-    run_subprocess = FakeRunSubprocess()
+    await create_test_index(collapsed_reference_path)
+    cache = WorkflowCache(
+        _FakeWorkflowCacheAPI(
+            tmp_path / "fake_workflow_cache_api",
+            put_created=False,
+        ),
+        tmp_path / "workflow_cache",
+    )
     logger = get_logger("test")
 
     result_index_path = await create_reference_index(
         cache,
+        collapsed_reference_path,
         index,
         logger,
         4,
@@ -426,36 +1335,31 @@ async def test_create_reference_index_continues_when_cache_put_is_skipped(
         reference_index_path,
     )
 
-    params = await get_mapping_index_cache_params(
-        "reference_mapping_index",
-        index.id,
-        FakeRunSubprocess(),
-        {
-            "source": "index_json",
-            "selection": "default_isolates",
-        },
-    )
-    key = derive_key(params)
-    assert cache.gets == [(key, reference_index_path.parent.parent)]
-    assert cache.puts == [(key, reference_index_path.parent, params)]
     assert result_index_path == reference_index_path
-    assert read_directory_bytes(reference_index_path.parent) == {
-        **bowtie2_bundle_bytes("reference"),
-    }
+    assert_bowtie2_index_exists(reference_index_path)
 
 
 async def test_create_reference_index_raises_unexpected_cache_put_failure(
+    collapsed_reference_path: Path,
     index: WFIndex,
     reference_index_path: Path,
+    run_subprocess: RunSubprocess,
+    tmp_path: Path,
 ):
-    write_reference_json(index.json_path)
-    cache = FakeWorkflowCache(put_exception=RuntimeError("cache upload failed"))
-    run_subprocess = FakeRunSubprocess()
+    await create_test_index(collapsed_reference_path)
+    cache = WorkflowCache(
+        _FakeWorkflowCacheAPI(
+            tmp_path / "fake_workflow_cache_api",
+            put_exception=RuntimeError("cache upload failed"),
+        ),
+        tmp_path / "workflow_cache",
+    )
     logger = get_logger("test")
 
     with pytest.raises(RuntimeError, match="cache upload failed"):
         await create_reference_index(
             cache,
+            collapsed_reference_path,
             index,
             logger,
             4,
@@ -464,24 +1368,13 @@ async def test_create_reference_index_raises_unexpected_cache_put_failure(
         )
 
 
-def test_write_default_isolate_fasta(tmp_path: Path):
-    json_path = tmp_path / "reference.json.gz"
-    target_path = tmp_path / "reference.fa"
-
-    write_reference_json(json_path)
-
-    assert write_default_isolate_fasta(json_path, target_path) == {
-        "default-a": 4,
-        "default-b": 3,
-    }
-    assert target_path.read_text() == ">default-a\nACGT\n>default-b\nTTA\n"
-
-
 async def test_create_subtraction_index_hit(
+    run_subprocess: RunSubprocess,
     subtractions: list[WFSubtraction],
     subtraction_index_path: Path,
     subtraction_indexes_path: Path,
     tmp_path: Path,
+    workflow_cache: WorkflowCache,
 ):
     source = tmp_path / subtraction_index_path.parent.name
     write_bowtie2_bundle(
@@ -490,13 +1383,19 @@ async def test_create_subtraction_index_hit(
         b"cached-subtraction",
         {"cache-manifest.json": b"cached-manifest"},
     )
-    cache = FakeWorkflowCache(source)
-    run_subprocess = FakeRunSubprocess()
-    logger = get_logger("test")
     subtraction = subtractions[0]
+    params = await get_mapping_index_cache_params(
+        "subtraction_mapping_index",
+        subtraction.id,
+        run_subprocess,
+    )
+    key = derive_key(params)
+    assert await workflow_cache.put(key, source, params)
+
+    logger = get_logger("test")
 
     result_indexes_path = await create_subtraction_index(
-        cache,
+        workflow_cache,
         logger,
         4,
         run_subprocess,
@@ -504,38 +1403,24 @@ async def test_create_subtraction_index_hit(
         subtraction_indexes_path,
     )
 
-    params = await get_mapping_index_cache_params(
-        "subtraction_mapping_index",
-        subtraction.id,
-        FakeRunSubprocess(),
-    )
-
-    assert cache.gets == [
-        (
-            derive_key(params),
-            subtraction_index_path.parent.parent,
-        ),
-    ]
-    assert cache.puts == []
     assert result_indexes_path == subtraction_indexes_path
-    assert run_subprocess.commands == [["bowtie2-build", "--version"]]
     assert read_directory_bytes(subtraction_index_path.parent) == read_directory_bytes(
         source
     )
 
 
 async def test_create_subtraction_index_miss(
+    run_subprocess: RunSubprocess,
     subtractions: list[WFSubtraction],
     subtraction_index_path: Path,
     subtraction_indexes_path: Path,
+    workflow_cache: WorkflowCache,
 ):
-    cache = FakeWorkflowCache()
-    run_subprocess = FakeRunSubprocess()
     logger = get_logger("test")
     subtraction = subtractions[0]
 
     result_indexes_path = await create_subtraction_index(
-        cache,
+        workflow_cache,
         logger,
         4,
         run_subprocess,
@@ -546,33 +1431,20 @@ async def test_create_subtraction_index_miss(
     params = await get_mapping_index_cache_params(
         "subtraction_mapping_index",
         subtraction.id,
-        FakeRunSubprocess(),
+        run_subprocess,
     )
-    key = derive_key(params)
-    assert cache.gets == [(key, subtraction_index_path.parent.parent)]
-    assert cache.puts == [(key, subtraction_index_path.parent, params)]
     assert result_indexes_path == subtraction_indexes_path
-    assert params == {
-        "index_kind": "subtraction_mapping_index",
-        "workflow": "pathoscope",
-        "workflow_version": "UNKNOWN",
-        "parent_id": subtraction.id,
-        "tool_name": "bowtie2-build",
-        "tool_version": "2.5.4",
-    }
-    assert run_subprocess.commands == [
-        ["bowtie2-build", "--version"],
-        [
-            "bowtie2-build",
-            "--threads",
-            "4",
-            str(subtraction.fasta_path),
-            str(subtraction_index_path),
-        ],
-    ]
-    assert read_directory_bytes(subtraction_index_path.parent) == bowtie2_bundle_bytes(
-        "subtraction"
+    assert_cache_params(
+        params,
+        {
+            "index_kind": "subtraction_mapping_index",
+            "workflow": "pathoscope",
+            "workflow_version": "UNKNOWN",
+            "parent_id": subtraction.id,
+            "tool_name": "bowtie2-build",
+        },
     )
+    assert_bowtie2_index_exists(subtraction_index_path)
 
 
 async def test_map_default_isolates(
@@ -589,7 +1461,7 @@ async def test_map_default_isolates(
         if "reference" in path.name:
             shutil.copyfile(path, reference_index_path.parent / path.name)
 
-    intermediate = SimpleNamespace(to_otus=set())
+    intermediate = SimpleNamespace(candidate_sequence_ids=set())
 
     logger = get_logger("test")
 
@@ -603,31 +1475,29 @@ async def test_map_default_isolates(
         sample,
     )
 
-    assert sorted(intermediate.to_otus) == snapshot
+    assert sorted(intermediate.candidate_sequence_ids) == snapshot
 
 
 async def test_map_isolates(
     example_path: Path,
     index: WFIndex,
+    isolate_bam_path: Path,
+    isolate_fastq_path: Path,
+    isolate_index_path: Path,
     sample: WFSample,
     run_subprocess: RunSubprocess,
     snapshot: SnapshotAssertion,
-    work_path: Path,
 ):
     for path in (example_path / "index").iterdir():
         if "reference" in path.name:
             shutil.copyfile(
                 path,
-                work_path / path.name.replace("reference", "isolates"),
+                isolate_index_path.parent / path.name.replace("reference", "isolates"),
             )
-
-    isolate_fastq_path = work_path / "mapped.fq"
-    isolate_index_path = work_path / "isolates"
-    isolate_bam_path = work_path / "to_isolates.bam"
 
     proc = 1
 
-    intermediate = SimpleNamespace(lengths={"foo": 100})
+    intermediate = SimpleNamespace(candidate_sequence_ids={"candidate"})
 
     await map_isolates(
         intermediate,
@@ -658,18 +1528,18 @@ async def test_map_isolates(
 )
 async def test_eliminate_subtraction(
     example_path: Path,
+    isolate_bam_path: Path,
+    isolate_fastq_path: Path,
     no_subtractions: bool,
+    subtracted_bam_path: Path,
     subtractions: list[WFSubtraction],
     subtraction_indexes_path: Path,
     run_subprocess: RunSubprocess,
     snapshot: SnapshotAssertion,
     tmp_path: Path,
+    workflow_cache: WorkflowCache,
     work_path: Path,
 ):
-    isolate_fastq_path = work_path / "to_isolates.fq"
-    isolate_bam_path = work_path / "to_isolates.bam"
-    subtracted_path = work_path / "subtracted.bam"
-
     shutil.copyfile(example_path / "to_isolates.bam", isolate_bam_path)
     shutil.copyfile(example_path / "to_isolates.fq", isolate_fastq_path)
 
@@ -680,17 +1550,24 @@ async def test_eliminate_subtraction(
     if no_subtractions:
         subtractions = []
 
-    intermediate = SimpleNamespace(lengths={"foo": 100})
+    intermediate = SimpleNamespace(candidate_sequence_ids={"candidate"})
 
     if subtractions:
         cached_subtraction_path = tmp_path / str(subtractions[0].id)
         shutil.copytree(subtractions[0].path, cached_subtraction_path)
+        params = await get_mapping_index_cache_params(
+            "subtraction_mapping_index",
+            subtractions[0].id,
+            run_subprocess,
+        )
+        key = derive_key(params)
+        assert await workflow_cache.put(key, cached_subtraction_path, params)
 
         await create_subtraction_index(
-            FakeWorkflowCache(cached_subtraction_path),
+            workflow_cache,
             logger,
             proc,
-            FakeRunSubprocess(),
+            run_subprocess,
             subtractions,
             subtraction_indexes_path,
         )
@@ -706,7 +1583,7 @@ async def test_eliminate_subtraction(
         run_subprocess,
         subtraction_indexes_path,
         subtractions,
-        subtracted_path,
+        subtracted_bam_path,
         work_path,
     )
 
@@ -756,8 +1633,8 @@ async def test_eliminate_subtraction(
                 for read in alignment_file
             }
 
-    assert parse_alignments(work_path / "subtracted.bam") == snapshot(name="alignments")
-    assert parse_headers(work_path / "subtracted.bam") == snapshot(name="headers")
+    assert parse_alignments(subtracted_bam_path) == snapshot(name="alignments")
+    assert parse_headers(subtracted_bam_path) == snapshot(name="headers")
 
 
 async def test_pathoscope(
@@ -765,15 +1642,13 @@ async def test_pathoscope(
     example_path: Path,
     index: WFIndex,
     mocker,
-    ref_lengths,
     snapshot: SnapshotAssertion,
+    subtracted_bam_path: Path,
     work_path: Path,
 ):
-    subtracted_bam_path = work_path / "to_isolates.bam"
-
     shutil.copyfile(example_path / "to_isolates.bam", subtracted_bam_path)
 
-    intermediate = SimpleNamespace(lengths=ref_lengths)
+    intermediate = SimpleNamespace(candidate_sequence_ids={"candidate"})
     p_score_cutoff = 0.01
     results = {}
 
@@ -836,7 +1711,9 @@ async def test_pathoscope(
 
 
 async def test_build_isolate_index_no_candidates(
+    collapsed_reference_path: Path,
     index: WFIndex,
+    mocker,
     work_path: Path,
 ):
     """When no candidate OTUs are found the isolate FASTA is empty.
@@ -844,15 +1721,14 @@ async def test_build_isolate_index_no_candidates(
     ``bowtie2-build`` exits 1 on an empty FASTA, so the index build must be skipped
     entirely (VIR-2569) rather than invoking the subprocess.
     """
-    write_reference_json(index.json_path)
-
     isolate_path = work_path / "isolates"
     isolate_path.mkdir()
 
-    run_subprocess = FakeRunSubprocess()
-    intermediate = SimpleNamespace(to_otus=set())
+    run_subprocess = mocker.AsyncMock()
+    intermediate = SimpleNamespace(candidate_sequence_ids=set())
 
     await build_isolate_index(
+        collapsed_reference_path,
         index,
         intermediate,
         isolate_path / "isolate_index.fa",
@@ -861,13 +1737,13 @@ async def test_build_isolate_index_no_candidates(
         2,
     )
 
-    assert intermediate.lengths == {}
-    assert run_subprocess.commands == []
+    run_subprocess.assert_not_awaited()
 
 
 async def test_no_candidates_uploads_empty_result(
     analysis: WFAnalysis,
     index: WFIndex,
+    mocker,
     sample: WFSample,
     work_path: Path,
 ):
@@ -876,8 +1752,8 @@ async def test_no_candidates_uploads_empty_result(
     ``map_isolates``, ``eliminate_subtraction`` and ``reassignment`` must not run any
     subprocess and the analysis is finished with an empty result (VIR-2569).
     """
-    run_subprocess = FakeRunSubprocess()
-    intermediate = SimpleNamespace(lengths={})
+    run_subprocess = mocker.AsyncMock()
+    intermediate = SimpleNamespace(candidate_sequence_ids=set())
     logger = get_logger("test")
     results = {}
 
@@ -919,7 +1795,7 @@ async def test_no_candidates_uploads_empty_result(
         work_path,
     )
 
-    assert run_subprocess.commands == []
+    run_subprocess.assert_not_awaited()
     analysis.upload_result.assert_called_once_with(
         {"subtracted_count": 0, "read_count": 0, "hits": []},
     )
