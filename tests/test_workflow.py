@@ -363,7 +363,7 @@ async def index(workflow_data: WorkflowData, work_path: Path):
 
     return await WFIndex.create(
         workflow_data.index.id,
-        work_path / "indexes" / workflow_data.index.id / "index.sqlite",
+        work_path / "indexes" / str(workflow_data.index.id) / "index.sqlite",
         None,
         otus,
     )
