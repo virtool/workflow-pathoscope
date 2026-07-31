@@ -2,7 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from pyfixtures import fixture
-from virtool.workflow.data.index_sqlite import INDEX_SQLITE_FILE_NAME
+from virtool.indexes.constants import INDEX_SQLITE_FILE_NAME
 
 
 def get_reference_index_path(work_path: Path) -> Path:
