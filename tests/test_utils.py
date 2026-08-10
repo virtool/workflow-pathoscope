@@ -3,7 +3,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from syrupy import SnapshotAssertion
-
 from workflow_pathoscope.utils import (
     write_report,
 )
@@ -38,4 +37,5 @@ def test_write_report(
 
     write_report(report_path, pathoscope_results)
 
-    assert open(report_path).read() == snapshot
+    with open(report_path) as f:
+        assert f.read() == snapshot

@@ -12,7 +12,6 @@ from virtool.workflow.errors import SubprocessFailedError
 from virtool.workflow.runtime.run_subprocess import RunSubprocess
 from virtool.workflow.utils import get_workflow_version
 
-
 CD_HIT_EST_TOOL = "cd-hit-est"
 CD_HIT_EST_IDENTITY = "0.99"
 WORKFLOW_NAME = "pathoscope"
@@ -132,8 +131,9 @@ def _prepare_otu_collapse(otu: dict) -> OtuCollapsePreparation:
 
 def _write_fasta(sequences: list[dict], path: Path) -> None:
     with open(path, "w") as handle:
-        for sequence in sequences:
-            handle.write(f">{sequence['id']}\n{sequence['sequence']}\n")
+        handle.writelines(
+            f">{sequence['id']}\n{sequence['sequence']}\n" for sequence in sequences
+        )
 
 
 def _parse_cd_hit_clusters(cluster_path: Path) -> dict[str, str]:

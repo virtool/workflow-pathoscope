@@ -20,17 +20,16 @@ from workflow_pathoscope.reference import (
     collapse_reference_index,
     get_reference_collapse_cache_params,
 )
+from workflow_pathoscope.rust import (
+    find_candidate_otus_with_bowtie2,
+    init_logging,
+    run_eliminate_subtraction,
+)
 from workflow_pathoscope.utils import (
     build_bowtie2_index,
     create_mapping_index,
     run_pathoscope,
     write_report,
-)
-
-from workflow_pathoscope.rust import (
-    find_candidate_otus_with_bowtie2,
-    init_logging,
-    run_eliminate_subtraction,
 )
 
 # Initialize Rust logging to forward to Python logging system
