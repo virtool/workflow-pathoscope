@@ -1,11 +1,10 @@
 import asyncio
 import re
 import shutil
-
-import pysam
 from pathlib import Path
 from types import SimpleNamespace
 
+import pysam
 import pytest
 from structlog import get_logger
 from syrupy import SnapshotAssertion
@@ -18,6 +17,13 @@ from virtool.workflow.data.samples import WFSample
 from virtool.workflow.data.subtractions import WFSubtraction
 from virtool.workflow.errors import JobsAPINotFoundError
 from virtool.workflow.pytest_plugin import WorkflowData
+from workflow_pathoscope.reference import (
+    CD_HIT_EST_IDENTITY,
+    _prepare_otu_collapse,
+    collapse_reference_index,
+    get_reference_collapse_cache_params,
+)
+from workflow_pathoscope.utils import get_mapping_index_cache_params
 
 from fixtures import (
     get_collapsed_reference_path,
@@ -30,8 +36,8 @@ from fixtures import (
     get_subtraction_indexes_path,
 )
 from workflow import (
-    collapse_reference,
     build_isolate_index,
+    collapse_reference,
     create_reference_index,
     create_subtraction_index,
     eliminate_subtraction,
@@ -40,14 +46,6 @@ from workflow import (
     map_isolates,
     reassignment,
 )
-from workflow_pathoscope.reference import (
-    CD_HIT_EST_IDENTITY,
-    _prepare_otu_collapse,
-    collapse_reference_index,
-    get_reference_collapse_cache_params,
-)
-from workflow_pathoscope.utils import get_mapping_index_cache_params
-
 
 BOWTIE2_INDEX_SUFFIXES = (
     "1.bt2",
@@ -1695,7 +1693,7 @@ async def test_pathoscope(
 
     report: dict[str, list] = {}
 
-    with open(work_path / "report.tsv") as f:
+    with open(work_path / "report.tsv") as f:  # noqa: ASYNC230
         for line in f:
             if "Final Guess" in line:
                 continue

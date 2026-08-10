@@ -3,7 +3,6 @@
 import os
 
 import pytest
-
 from workflow_pathoscope.rust import init_logging
 
 

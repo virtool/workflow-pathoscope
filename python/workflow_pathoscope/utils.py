@@ -10,7 +10,6 @@ from virtool.workflow.utils import get_workflow_version
 
 from workflow_pathoscope.rust import PathoscopeResults, run_expectation_maximization
 
-
 BOWTIE2_BUILD_TOOL = "bowtie2-build"
 WORKFLOW_NAME = "pathoscope"
 WORKFLOW_VERSION = get_workflow_version()
