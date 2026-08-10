@@ -347,7 +347,11 @@ async def collapse_reference_index(
     except ValueError:
         reference = None
 
-    await WFIndex.create(index.id, target_path, reference, collapsed_otus)
+    async def iter_collapsed_otus():
+        for otu in collapsed_otus:
+            yield otu
+
+    await WFIndex.create(index.id, target_path, reference, iter_collapsed_otus())
 
     return {
         "isolate_count_before": before_count,
