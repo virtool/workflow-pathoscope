@@ -216,10 +216,13 @@ def assert_cache_params(
     assert TOOL_VERSION_PATTERN.fullmatch(params["tool_version"])
 
 
-async def _iter_otu_dicts(otus: list[dict]):
-    """Adapt a plain list of OTU dicts to the async iterable WFIndex.create expects."""
-    for otu in otus:
-        yield otu
+async def as_async_iterable(items):
+    for item in items:
+        yield item
+
+
+async def create_wf_index(id_, path, reference, otus):
+    return await WFIndex.create(id_, path, reference, as_async_iterable(otus))
 
 
 async def create_test_index(path: Path) -> WFIndex:
@@ -242,52 +245,50 @@ async def create_test_index(path: Path) -> WFIndex:
             "source_type": "isolate",
         }
 
-    return await WFIndex.create(
+    return await create_wf_index(
         "test-index",
         path,
         None,
-        _iter_otu_dicts(
-            [
-                {
-                    "id": "default-otu",
-                    "abbreviation": "DEFAULT",
-                    "isolates": [
-                        isolate(
-                            "default",
-                            True,
-                            [
-                                sequence("default-a", "ACGT"),
-                                sequence("default-b", "TTA"),
-                            ],
-                        ),
-                        isolate(
-                            "non-default",
-                            False,
-                            [sequence("non-default", "GGGG")],
-                        ),
-                    ],
-                    "name": "Default OTU",
-                    "schema": [],
-                    "taxid": None,
-                    "version": 1,
-                },
-                {
-                    "id": "non-default-otu",
-                    "abbreviation": "NONDEFAULT",
-                    "isolates": [
-                        isolate(
-                            "non-default-only",
-                            False,
-                            [sequence("non-default-only", "CCCC")],
-                        ),
-                    ],
-                    "name": "Non-default OTU",
-                    "schema": [],
-                    "taxid": None,
-                    "version": 1,
-                },
-            ],
-        ),
+        [
+            {
+                "id": "default-otu",
+                "abbreviation": "DEFAULT",
+                "isolates": [
+                    isolate(
+                        "default",
+                        True,
+                        [
+                            sequence("default-a", "ACGT"),
+                            sequence("default-b", "TTA"),
+                        ],
+                    ),
+                    isolate(
+                        "non-default",
+                        False,
+                        [sequence("non-default", "GGGG")],
+                    ),
+                ],
+                "name": "Default OTU",
+                "schema": [],
+                "taxid": None,
+                "version": 1,
+            },
+            {
+                "id": "non-default-otu",
+                "abbreviation": "NONDEFAULT",
+                "isolates": [
+                    isolate(
+                        "non-default-only",
+                        False,
+                        [sequence("non-default-only", "CCCC")],
+                    ),
+                ],
+                "name": "Non-default OTU",
+                "schema": [],
+                "taxid": None,
+                "version": 1,
+            },
+        ],
     )
 
 
@@ -367,11 +368,11 @@ async def index(workflow_data: WorkflowData, work_path: Path):
             },
         )
 
-    return await WFIndex.create(
+    return await create_wf_index(
         workflow_data.index.id,
         work_path / "indexes" / str(workflow_data.index.id) / "index.sqlite",
         None,
-        _iter_otu_dicts(otus),
+        otus,
     )
 
 
@@ -474,11 +475,11 @@ def make_redundant_index_otu() -> dict:
 
 @pytest.fixture()
 async def redundant_index(workflow_data: WorkflowData, tmp_path: Path) -> WFIndex:
-    return await WFIndex.create(
+    return await create_wf_index(
         workflow_data.index.id,
         tmp_path / "redundant-index.sqlite",
         None,
-        _iter_otu_dicts([make_redundant_index_otu()]),
+        [make_redundant_index_otu()],
     )
 
 
@@ -624,11 +625,11 @@ async def test_collapse_reference_index_allows_isolates_missing_schema_segments(
         for sequence in default_isolate["sequences"]
         if sequence["segment"] == "b"
     ]
-    source_index = await WFIndex.create(
+    source_index = await create_wf_index(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        _iter_otu_dicts([otu]),
+        [otu],
     )
     collapsed_path = tmp_path / "collapsed" / "index.sqlite"
 
@@ -716,11 +717,11 @@ async def test_collapse_reference_index_allows_unsegmented_isolates(
         ],
     )
 
-    source_index = await WFIndex.create(
+    source_index = await create_wf_index(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        _iter_otu_dicts([otu]),
+        [otu],
     )
     collapsed_path = tmp_path / "collapsed" / "index.sqlite"
 
@@ -771,11 +772,11 @@ async def test_collapse_reference_index_rejects_multiple_sequences_for_unsegment
         ],
     )
 
-    source_index = await WFIndex.create(
+    source_index = await create_wf_index(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        _iter_otu_dicts([otu]),
+        [otu],
     )
     run_subprocess = mocker.AsyncMock()
     collapsed_path = tmp_path / "collapsed" / "index.sqlite"
@@ -820,11 +821,11 @@ async def test_collapse_reference_index_preserves_single_unsegmented_isolate(
         ],
     )
     run_subprocess = mocker.AsyncMock()
-    source_index = await WFIndex.create(
+    source_index = await create_wf_index(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        _iter_otu_dicts([otu]),
+        [otu],
     )
     collapsed_path = tmp_path / "collapsed" / "index.sqlite"
 
@@ -870,11 +871,11 @@ async def test_collapse_reference_index_preserves_single_schema_isolate_without_
         ],
     )
     run_subprocess = mocker.AsyncMock()
-    source_index = await WFIndex.create(
+    source_index = await create_wf_index(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        _iter_otu_dicts([otu]),
+        [otu],
     )
     collapsed_path = tmp_path / "collapsed" / "index.sqlite"
 
@@ -927,11 +928,11 @@ async def test_collapse_reference_index_skips_invalid_schema_segment_names(
         ],
     )
     run_subprocess = mocker.AsyncMock()
-    source_index = await WFIndex.create(
+    source_index = await create_wf_index(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        _iter_otu_dicts([otu]),
+        [otu],
     )
     collapsed_path = tmp_path / "collapsed" / "index.sqlite"
 
@@ -1012,11 +1013,11 @@ async def test_collapse_reference_index_rejects_duplicate_isolate_segments(
             ),
         ],
     )
-    source_index = await WFIndex.create(
+    source_index = await create_wf_index(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        _iter_otu_dicts([otu]),
+        [otu],
     )
     run_subprocess = mocker.AsyncMock()
     collapsed_path = tmp_path / "collapsed" / "index.sqlite"
@@ -1061,11 +1062,11 @@ async def test_collapse_reference_index_rejects_unknown_isolate_segments(
             ),
         ],
     )
-    source_index = await WFIndex.create(
+    source_index = await create_wf_index(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        _iter_otu_dicts([otu]),
+        [otu],
     )
     run_subprocess = mocker.AsyncMock()
     collapsed_path = tmp_path / "collapsed" / "index.sqlite"
@@ -1122,11 +1123,11 @@ async def test_collapse_reference_index_handles_mixed_otu_outcomes(
             ),
         ],
     )
-    source_index = await WFIndex.create(
+    source_index = await create_wf_index(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        _iter_otu_dicts([eligible_otu, skipped_otu, unchanged_otu]),
+        [eligible_otu, skipped_otu, unchanged_otu],
     )
     collapsed_path = tmp_path / "collapsed" / "index.sqlite"
     subprocess_commands: list[list[str]] = []
@@ -1163,11 +1164,11 @@ async def test_collapse_reference_index_propagates_subprocess_failures(
     mocker,
     tmp_path: Path,
 ):
-    source_index = await WFIndex.create(
+    source_index = await create_wf_index(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        _iter_otu_dicts([make_redundant_index_otu()]),
+        [make_redundant_index_otu()],
     )
     run_subprocess = mocker.AsyncMock(side_effect=RuntimeError("cd-hit-est failed"))
 
@@ -1698,6 +1699,13 @@ async def test_pathoscope(
 
     # Snapshot test for the hits structure
     assert hits == snapshot
+    for hit in hits:
+        if hit["id"].startswith("13TF149_Reovirus"):
+            assert hit["otu"] == {"id": "reo", "version": 5}
+        elif hit["id"] in {"JQ080272", "KX109927"}:
+            assert hit["otu"] == {"id": "baz", "version": 6}
+        else:
+            assert hit["otu"] == {"id": "foobar", "version": 10}
 
     report: dict[str, list] = {}
 
@@ -1714,6 +1722,51 @@ async def test_pathoscope(
             report[split[0]] = [float(f"{float(n):.5g}") for n in split[1:]]
 
     assert report == snapshot
+
+
+async def test_build_isolate_index_resolves_candidate_sequences_to_otus(
+    collapsed_reference_path: Path,
+    index: WFIndex,
+    isolate_index_path: Path,
+    mocker,
+    tmp_path: Path,
+):
+    await create_test_index(collapsed_reference_path)
+    isolate_fasta_path = tmp_path / "isolates.fa"
+    run_subprocess = mocker.AsyncMock()
+    intermediate = SimpleNamespace(
+        candidate_sequence_ids={"default-a", "non-default", "non-default-only"},
+    )
+
+    await build_isolate_index(
+        collapsed_reference_path,
+        index,
+        intermediate,
+        isolate_fasta_path,
+        isolate_index_path,
+        run_subprocess,
+        2,
+    )
+
+    assert isolate_fasta_path.read_text().splitlines() == [
+        ">default-a",
+        "ACGT",
+        ">default-b",
+        "TTA",
+        ">non-default",
+        "GGGG",
+        ">non-default-only",
+        "CCCC",
+    ]
+    run_subprocess.assert_awaited_once_with(
+        [
+            "bowtie2-build",
+            "--threads",
+            "2",
+            str(isolate_fasta_path),
+            str(isolate_index_path),
+        ],
+    )
 
 
 async def test_build_isolate_index_no_candidates(

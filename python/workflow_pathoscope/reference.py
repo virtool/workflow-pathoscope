@@ -1,6 +1,6 @@
 import asyncio
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -300,12 +300,6 @@ async def _collapse_otu_reference(
     )
 
 
-async def _iter_otu_dicts(otus: list[dict]) -> AsyncIterator[dict]:
-    """Adapt a plain list of OTU dicts to the async iterable WFIndex.create expects."""
-    for otu in otus:
-        yield otu
-
-
 async def collapse_reference_index(
     index: WFIndex,
     target_path: Path,
@@ -353,12 +347,11 @@ async def collapse_reference_index(
     except ValueError:
         reference = None
 
-    await WFIndex.create(
-        index.id,
-        target_path,
-        reference,
-        _iter_otu_dicts(collapsed_otus),
-    )
+    async def iter_collapsed_otus():
+        for otu in collapsed_otus:
+            yield otu
+
+    await WFIndex.create(index.id, target_path, reference, iter_collapsed_otus())
 
     return {
         "isolate_count_before": before_count,

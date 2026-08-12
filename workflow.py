@@ -221,10 +221,10 @@ async def build_isolate_index(
         return
 
     collapsed_index = WFIndex.load(index.id, collapsed_reference_path)
-    otu_refs = await collapsed_index.get_otu_summaries_by_sequence_ids(
+    otu_summaries = await collapsed_index.get_otu_summaries_by_sequence_ids(
         intermediate.candidate_sequence_ids,
     )
-    otu_ids = {otu_ref["id"] for otu_ref in otu_refs.values()}
+    otu_ids = {summary["id"] for summary in otu_summaries.values()}
 
     await collapsed_index.write_fasta(
         isolate_fasta_path,
@@ -445,15 +445,18 @@ async def reassignment(
     logger.info("preparing hits")
 
     hits = []
-    otu_refs = await index.get_otu_summaries_by_sequence_ids(report)
+    otu_summaries = await index.get_otu_summaries_by_sequence_ids(report)
 
     for sequence_id, hit in report.items():
-        otu_ref = otu_refs[sequence_id]
+        otu_summary = otu_summaries[sequence_id]
 
         hit["id"] = sequence_id
 
         # Attach "otu" (id, version) to the hit.
-        hit["otu"] = {"id": otu_ref["id"], "version": otu_ref["version"]}
+        hit["otu"] = {
+            "id": otu_summary["id"],
+            "version": otu_summary["version"],
+        }
 
         # Get the coverage for the sequence.
         hit_coverage = pathoscope_results.coverage[sequence_id]
