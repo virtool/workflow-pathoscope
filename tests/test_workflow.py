@@ -216,6 +216,12 @@ def assert_cache_params(
     assert TOOL_VERSION_PATTERN.fullmatch(params["tool_version"])
 
 
+async def _iter_otu_dicts(otus: list[dict]):
+    """Adapt a plain list of OTU dicts to the async iterable WFIndex.create expects."""
+    for otu in otus:
+        yield otu
+
+
 async def create_test_index(path: Path) -> WFIndex:
     def sequence(id_: str, value: str) -> dict:
         return {
@@ -240,46 +246,48 @@ async def create_test_index(path: Path) -> WFIndex:
         "test-index",
         path,
         None,
-        [
-            {
-                "id": "default-otu",
-                "abbreviation": "DEFAULT",
-                "isolates": [
-                    isolate(
-                        "default",
-                        True,
-                        [
-                            sequence("default-a", "ACGT"),
-                            sequence("default-b", "TTA"),
-                        ],
-                    ),
-                    isolate(
-                        "non-default",
-                        False,
-                        [sequence("non-default", "GGGG")],
-                    ),
-                ],
-                "name": "Default OTU",
-                "schema": [],
-                "taxid": None,
-                "version": 1,
-            },
-            {
-                "id": "non-default-otu",
-                "abbreviation": "NONDEFAULT",
-                "isolates": [
-                    isolate(
-                        "non-default-only",
-                        False,
-                        [sequence("non-default-only", "CCCC")],
-                    ),
-                ],
-                "name": "Non-default OTU",
-                "schema": [],
-                "taxid": None,
-                "version": 1,
-            },
-        ],
+        _iter_otu_dicts(
+            [
+                {
+                    "id": "default-otu",
+                    "abbreviation": "DEFAULT",
+                    "isolates": [
+                        isolate(
+                            "default",
+                            True,
+                            [
+                                sequence("default-a", "ACGT"),
+                                sequence("default-b", "TTA"),
+                            ],
+                        ),
+                        isolate(
+                            "non-default",
+                            False,
+                            [sequence("non-default", "GGGG")],
+                        ),
+                    ],
+                    "name": "Default OTU",
+                    "schema": [],
+                    "taxid": None,
+                    "version": 1,
+                },
+                {
+                    "id": "non-default-otu",
+                    "abbreviation": "NONDEFAULT",
+                    "isolates": [
+                        isolate(
+                            "non-default-only",
+                            False,
+                            [sequence("non-default-only", "CCCC")],
+                        ),
+                    ],
+                    "name": "Non-default OTU",
+                    "schema": [],
+                    "taxid": None,
+                    "version": 1,
+                },
+            ],
+        ),
     )
 
 
@@ -363,7 +371,7 @@ async def index(workflow_data: WorkflowData, work_path: Path):
         workflow_data.index.id,
         work_path / "indexes" / str(workflow_data.index.id) / "index.sqlite",
         None,
-        otus,
+        _iter_otu_dicts(otus),
     )
 
 
@@ -470,7 +478,7 @@ async def redundant_index(workflow_data: WorkflowData, tmp_path: Path) -> WFInde
         workflow_data.index.id,
         tmp_path / "redundant-index.sqlite",
         None,
-        [make_redundant_index_otu()],
+        _iter_otu_dicts([make_redundant_index_otu()]),
     )
 
 
@@ -620,7 +628,7 @@ async def test_collapse_reference_index_allows_isolates_missing_schema_segments(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        [otu],
+        _iter_otu_dicts([otu]),
     )
     collapsed_path = tmp_path / "collapsed" / "index.sqlite"
 
@@ -712,7 +720,7 @@ async def test_collapse_reference_index_allows_unsegmented_isolates(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        [otu],
+        _iter_otu_dicts([otu]),
     )
     collapsed_path = tmp_path / "collapsed" / "index.sqlite"
 
@@ -767,7 +775,7 @@ async def test_collapse_reference_index_rejects_multiple_sequences_for_unsegment
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        [otu],
+        _iter_otu_dicts([otu]),
     )
     run_subprocess = mocker.AsyncMock()
     collapsed_path = tmp_path / "collapsed" / "index.sqlite"
@@ -816,7 +824,7 @@ async def test_collapse_reference_index_preserves_single_unsegmented_isolate(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        [otu],
+        _iter_otu_dicts([otu]),
     )
     collapsed_path = tmp_path / "collapsed" / "index.sqlite"
 
@@ -866,7 +874,7 @@ async def test_collapse_reference_index_preserves_single_schema_isolate_without_
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        [otu],
+        _iter_otu_dicts([otu]),
     )
     collapsed_path = tmp_path / "collapsed" / "index.sqlite"
 
@@ -923,7 +931,7 @@ async def test_collapse_reference_index_skips_invalid_schema_segment_names(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        [otu],
+        _iter_otu_dicts([otu]),
     )
     collapsed_path = tmp_path / "collapsed" / "index.sqlite"
 
@@ -1008,7 +1016,7 @@ async def test_collapse_reference_index_rejects_duplicate_isolate_segments(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        [otu],
+        _iter_otu_dicts([otu]),
     )
     run_subprocess = mocker.AsyncMock()
     collapsed_path = tmp_path / "collapsed" / "index.sqlite"
@@ -1057,7 +1065,7 @@ async def test_collapse_reference_index_rejects_unknown_isolate_segments(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        [otu],
+        _iter_otu_dicts([otu]),
     )
     run_subprocess = mocker.AsyncMock()
     collapsed_path = tmp_path / "collapsed" / "index.sqlite"
@@ -1118,7 +1126,7 @@ async def test_collapse_reference_index_handles_mixed_otu_outcomes(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        [eligible_otu, skipped_otu, unchanged_otu],
+        _iter_otu_dicts([eligible_otu, skipped_otu, unchanged_otu]),
     )
     collapsed_path = tmp_path / "collapsed" / "index.sqlite"
     subprocess_commands: list[list[str]] = []
@@ -1159,7 +1167,7 @@ async def test_collapse_reference_index_propagates_subprocess_failures(
         "test-index",
         tmp_path / "source.sqlite",
         None,
-        [make_redundant_index_otu()],
+        _iter_otu_dicts([make_redundant_index_otu()]),
     )
     run_subprocess = mocker.AsyncMock(side_effect=RuntimeError("cd-hit-est failed"))
 

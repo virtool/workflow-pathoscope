@@ -221,7 +221,7 @@ async def build_isolate_index(
         return
 
     collapsed_index = WFIndex.load(index.id, collapsed_reference_path)
-    otu_refs = await collapsed_index.get_otu_refs_by_sequence_ids(
+    otu_refs = await collapsed_index.get_otu_summaries_by_sequence_ids(
         intermediate.candidate_sequence_ids,
     )
     otu_ids = {otu_ref["id"] for otu_ref in otu_refs.values()}
@@ -445,7 +445,7 @@ async def reassignment(
     logger.info("preparing hits")
 
     hits = []
-    otu_refs = await index.get_otu_refs_by_sequence_ids(report)
+    otu_refs = await index.get_otu_summaries_by_sequence_ids(report)
 
     for sequence_id, hit in report.items():
         otu_ref = otu_refs[sequence_id]
